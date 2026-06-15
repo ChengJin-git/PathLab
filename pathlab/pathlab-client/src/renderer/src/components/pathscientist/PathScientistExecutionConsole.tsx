@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bug, ChevronDown, Loader2 } from 'lucide-react'
-<<<<<<< HEAD
-=======
 import { cn } from '../../lib/utils'
->>>>>>> auto-frontend/main
 import { Button } from '../ui/button'
 import { buildPathScientistExecutionView } from '../../lib/pathscientistEventSelectors'
 import type { PathScientistEvent, PathScientistSessionDetail } from '../../types/pathscientist'
@@ -19,10 +16,7 @@ interface PathScientistExecutionConsoleProps {
   events: PathScientistEvent[]
   streamStatus: SessionStreamStatus
   streamError?: string
-<<<<<<< HEAD
-=======
   variant?: 'default' | 'clinical'
->>>>>>> auto-frontend/main
 }
 
 function renderJson(value: unknown) {
@@ -110,9 +104,6 @@ function RunningIterationPlaceholder({ iteration, maxIterations }: { iteration: 
   )
 }
 
-<<<<<<< HEAD
-export default function PathScientistExecutionConsole({ session, events, streamStatus, streamError }: PathScientistExecutionConsoleProps) {
-=======
 export default function PathScientistExecutionConsole({
   session,
   events,
@@ -121,7 +112,6 @@ export default function PathScientistExecutionConsole({
   variant = 'default',
 }: PathScientistExecutionConsoleProps) {
   const isClinical = variant === 'clinical'
->>>>>>> auto-frontend/main
   const [debugOpen, setDebugOpen] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const isLive = isLiveStatus(session?.status) || streamStatus === 'open' || streamStatus === 'reconnecting'
@@ -144,11 +134,7 @@ export default function PathScientistExecutionConsole({
     ? view.iterations.some((iteration) => iteration.index === displayCurrentIteration)
     : false
   const activeStages = view.stages.filter((stage) => stage.status !== 'pending' || stage.eventCount > 0)
-<<<<<<< HEAD
-  const nonExecutionStages = activeStages.filter((stage) => stage.id !== 'execution')
-=======
   const nonExecutionStages = (isClinical ? view.stages : activeStages).filter((stage) => stage.id !== 'execution')
->>>>>>> auto-frontend/main
 
   return (
     <div className="space-y-5">
@@ -158,26 +144,6 @@ export default function PathScientistExecutionConsole({
         </div>
       )}
 
-<<<<<<< HEAD
-      <StageTimeline stages={view.stages} currentIteration={displayCurrentIteration} maxIterations={maxIterations} />
-
-      <div
-        className="grid items-stretch gap-5 xl:h-[calc(100vh-18rem)] xl:min-h-[920px] xl:grid-cols-[minmax(0,1fr)_360px]"
-        data-testid="pathscientist-console-layout"
-      >
-        <div className="flex h-full min-h-0 flex-col gap-5 xl:overflow-hidden" data-testid="pathscientist-main-column">
-          <RunSummaryCard summary={view.runSummary} />
-
-          <section
-            className="flex min-h-[520px] flex-1 flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5 xl:min-h-0"
-            data-testid="pathscientist-events-card"
-          >
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Execution console</p>
-                <h2 className="mt-1 text-lg font-extrabold text-gray-950">Compressed transcript</h2>
-                <p className="mt-1 text-sm text-gray-500">One readable card per stage or iteration; raw gateway events stay in debug.</p>
-=======
       {!isClinical && (
         <StageTimeline stages={view.stages} currentIteration={displayCurrentIteration} maxIterations={maxIterations} />
       )}
@@ -214,7 +180,6 @@ export default function PathScientistExecutionConsole({
                     <p className="mt-1 text-sm text-gray-500">One readable card per stage or iteration; raw gateway events stay in debug.</p>
                   </>
                 )}
->>>>>>> auto-frontend/main
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {isExecutionRunning && displayCurrentIteration && (
@@ -232,9 +197,6 @@ export default function PathScientistExecutionConsole({
               </div>
             </div>
 
-<<<<<<< HEAD
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1" data-testid="pathscientist-events-scroll">
-=======
             <div
               className={cn(
                 'space-y-3 overflow-y-auto overscroll-contain pr-1 custom-scrollbar',
@@ -242,7 +204,6 @@ export default function PathScientistExecutionConsole({
               )}
               data-testid="pathscientist-events-scroll"
             >
->>>>>>> auto-frontend/main
               {nonExecutionStages.map((stage) => (
                 <StageCard
                   key={stage.id}
@@ -273,11 +234,7 @@ export default function PathScientistExecutionConsole({
               )}
             </div>
 
-<<<<<<< HEAD
-            <div className="mt-4 border-t border-gray-100 pt-4">
-=======
             <div className="mt-4 flex-shrink-0 border-t border-gray-100 pt-4">
->>>>>>> auto-frontend/main
               <Button
                 type="button"
                 variant="outline"
@@ -299,10 +256,7 @@ export default function PathScientistExecutionConsole({
         </div>
 
         <IterationLadder
-<<<<<<< HEAD
-=======
           variant={isClinical ? 'clinical' : 'default'}
->>>>>>> auto-frontend/main
           iterations={view.iterations}
           bestMetric={view.bestMetric}
           sessionMetadata={view.sessionMetadata}

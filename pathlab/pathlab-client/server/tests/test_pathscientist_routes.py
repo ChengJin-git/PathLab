@@ -22,7 +22,6 @@ def load_route_module():
     assert spec and spec.loader
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-<<<<<<< HEAD
     module.pathscientist_persistence.persist_session_created = lambda **kwargs: None
     module.pathscientist_persistence.persist_event = lambda **kwargs: None
     module.pathscientist_persistence.persist_session_state = lambda **kwargs: None
@@ -43,11 +42,6 @@ def disable_persistence(route_module):
     route_module.pathscientist_persistence.delete_session = lambda session_id: None
 
 
-=======
-    return module
-
-
->>>>>>> auto-frontend/main
 def make_app():
     route_module = load_route_module()
     registry_dir = Path(tempfile.mkdtemp(prefix="pathscientist-route-test-"))
@@ -69,17 +63,11 @@ def make_app():
 
     manager.create_runner = fake_runner
     route_module._SESSION_MANAGER = manager
-<<<<<<< HEAD
     disable_persistence(route_module)
 
     app = FastAPI()
     app.include_router(route_module.router)
     install_fake_user(app, route_module)
-=======
-
-    app = FastAPI()
-    app.include_router(route_module.router)
->>>>>>> auto-frontend/main
     return app
 
 
@@ -127,7 +115,6 @@ def test_create_session_returns_pending_title_without_waiting_for_llm_title():
 
     manager.create_runner = fake_runner
     route_module._SESSION_MANAGER = manager
-<<<<<<< HEAD
     route_module.pathscientist_persistence.persist_session_created = lambda **kwargs: None
     route_module.pathscientist_persistence.persist_event = lambda **kwargs: None
     route_module.pathscientist_persistence.persist_session_state = lambda **kwargs: None
@@ -135,11 +122,6 @@ def test_create_session_returns_pending_title_without_waiting_for_llm_title():
     app = FastAPI()
     app.include_router(route_module.router)
     app.dependency_overrides[route_module.current_active_user] = lambda: SimpleNamespace(id="user-test")
-=======
-
-    app = FastAPI()
-    app.include_router(route_module.router)
->>>>>>> auto-frontend/main
     client = TestClient(app)
     question = (
         "我想训练一个 chronic gastritis inflammation grading 的 WSI MIL 分类任务，"
@@ -156,7 +138,6 @@ def test_create_session_returns_pending_title_without_waiting_for_llm_title():
     assert queued == [data["session_id"]]
 
 
-<<<<<<< HEAD
 def test_create_session_persists_current_user_id():
     route_module = load_route_module()
     registry_dir = Path(tempfile.mkdtemp(prefix="pathscientist-route-test-"))
@@ -188,8 +169,6 @@ def test_create_session_persists_current_user_id():
     assert calls[0]["question"] == "persist me"
 
 
-=======
->>>>>>> auto-frontend/main
 def test_background_title_generation_updates_record_title():
     route_module = load_route_module()
     registry_dir = Path(tempfile.mkdtemp(prefix="pathscientist-route-test-"))
@@ -388,10 +367,7 @@ def test_stop_session_endpoint_returns_interrupted_summary():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.post("/pathscientist/sessions/s-stop-api/stop")
@@ -429,10 +405,7 @@ def test_delete_session_endpoint_removes_terminal_gateway_session():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.delete("/pathscientist/sessions/s-delete")
@@ -473,10 +446,7 @@ def test_delete_session_endpoint_removes_safe_workspace(tmp_path):
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.delete("/pathscientist/sessions/s-delete-workspace")
@@ -523,10 +493,7 @@ def test_delete_session_endpoint_does_not_remove_workspace_outside_base(tmp_path
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.delete("/pathscientist/sessions/s-delete-outside-workspace")
@@ -561,10 +528,7 @@ def test_delete_session_endpoint_rejects_running_session():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.delete("/pathscientist/sessions/s-delete-running")
@@ -593,10 +557,7 @@ def test_delete_session_hides_legacy_conversation():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     assert any(item["session_id"] == "legacydelete" for item in client.get("/pathscientist/sessions").json()["items"])
@@ -710,10 +671,7 @@ def test_create_session_returns_503_when_config_unavailable():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.post(
@@ -742,10 +700,7 @@ def test_create_session_returns_fast_and_marks_failed_when_runtime_unavailable()
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.post(
@@ -819,10 +774,7 @@ def test_events_carry_monotonic_seq():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     created = client.post("/pathscientist/sessions", json={"question": "seq"}).json()
@@ -862,10 +814,7 @@ def test_gateway_events_survive_manager_restart():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     created = client.post(
@@ -884,10 +833,7 @@ def test_gateway_events_survive_manager_restart():
     route_module._SESSION_MANAGER = route_module.PathScientistSessionManager()
     restarted_app = FastAPI()
     restarted_app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(restarted_app, route_module)
-=======
->>>>>>> auto-frontend/main
     restarted_client = TestClient(restarted_app)
 
     restored = restarted_client.get(
@@ -1064,10 +1010,7 @@ def test_list_sessions_includes_curated_legacy_by_default():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     listed = client.get("/pathscientist/sessions").json()
@@ -1106,10 +1049,7 @@ def test_list_sessions_deduplicates_legacy_rows_when_gateway_has_same_conversati
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     listed = client.get("/pathscientist/sessions").json()
@@ -1150,10 +1090,7 @@ def test_list_sessions_deduplicates_legacy_rows_when_gateway_has_live_state_conv
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     listed = client.get("/pathscientist/sessions").json()
@@ -1204,10 +1141,7 @@ def test_list_sessions_deduplicates_legacy_rows_after_restart_using_persisted_st
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     listed = client.get("/pathscientist/sessions").json()
@@ -1240,10 +1174,7 @@ def test_deleted_legacy_tombstone_does_not_hide_gateway_session_with_same_conver
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     listed = client.get("/pathscientist/sessions").json()
@@ -1275,10 +1206,7 @@ def test_legacy_sessions_include_generated_title():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     listed = client.get("/pathscientist/sessions").json()
@@ -1620,10 +1548,7 @@ def test_include_persisted_exposes_uncurated_legacy():
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     listed = client.get("/pathscientist/sessions").json()
@@ -1973,10 +1898,7 @@ def test_downloads_run_artifacts_as_zip(tmp_path):
 
     app = FastAPI()
     app.include_router(route_module.router)
-<<<<<<< HEAD
     install_fake_user(app, route_module)
-=======
->>>>>>> auto-frontend/main
     client = TestClient(app)
 
     response = client.get("/pathscientist/sessions/s1/runs/run_a/download")

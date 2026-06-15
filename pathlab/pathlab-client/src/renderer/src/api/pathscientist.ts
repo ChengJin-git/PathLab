@@ -1,9 +1,5 @@
 import { API_BASE } from '../config'
-<<<<<<< HEAD
-import { apiFetch } from './client'
-=======
 import { apiFetch, downloadApiFile } from './client'
->>>>>>> auto-frontend/main
 import type {
   DeletePathScientistSessionResponse,
   PathScientistSessionDetail,
@@ -38,8 +34,7 @@ export function startPathScientistSession(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...input, model: input.model || DEFAULT_MODEL }),
     },
-    'Start PathScientist session',
-    true
+    'Start PathScientist session'
   )
 }
 
@@ -86,8 +81,6 @@ export function getPathScientistEventsUrl(sessionId: string): string {
 export function getPathScientistRunDownloadUrl(sessionId: string, runId: string): string {
   return `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/download`
 }
-<<<<<<< HEAD
-=======
 
 export function getPathScientistSessionDownloadUrl(sessionId: string): string {
   return `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/download`
@@ -129,4 +122,3 @@ export async function sharePathScientistSession(sessionId: string): Promise<'cli
   }
   throw new Error('Sharing is not supported in this browser')
 }
->>>>>>> auto-frontend/main

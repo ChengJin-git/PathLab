@@ -1275,8 +1275,6 @@
       "randomSplitUnavailable": "Random split is not available"
     }
   },
-<<<<<<< HEAD
-=======
   "pathScientist": {
     "backToChat": "Back to Chat",
     "newSession": "New Session",
@@ -1342,7 +1340,6 @@
       "deleteFailed": "Failed to delete session"
     }
   },
->>>>>>> auto-frontend/main
   "taskList": {
     "title": "Experiment Records",
     "description": "Coordinate, run, and monitor AI analysis tasks",
@@ -1485,10 +1482,7 @@
       "tools": "Tools",
       "dataRepository": "Data Repository",
       "analysisLab": "Experiment Records",
-<<<<<<< HEAD
-=======
       "autoExperiment": "Auto Experiment",
->>>>>>> auto-frontend/main
       "insightsReports": "More Tools",
       "registerData": "Register Data"
     },

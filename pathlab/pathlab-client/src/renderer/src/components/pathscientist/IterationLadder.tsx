@@ -19,10 +19,7 @@ interface IterationLadderProps {
   currentIteration?: number | null
   maxIterations?: number | null
   isRunning?: boolean
-<<<<<<< HEAD
-=======
   variant?: 'default' | 'clinical'
->>>>>>> auto-frontend/main
   className?: string
 }
 
@@ -79,15 +76,10 @@ export default function IterationLadder({
   currentIteration,
   maxIterations,
   isRunning = false,
-<<<<<<< HEAD
-  className,
-}: IterationLadderProps) {
-=======
   variant = 'default',
   className,
 }: IterationLadderProps) {
   const isClinical = variant === 'clinical'
->>>>>>> auto-frontend/main
   const toolCounts = Object.entries(countTools(toolCards)).sort((a, b) => b[1] - a[1])
   const visibleToolCounts = toolCounts.slice(0, MAX_VISIBLE_TOOLS)
   const hiddenToolCount = Math.max(0, toolCounts.length - visibleToolCounts.length)
@@ -98,10 +90,6 @@ export default function IterationLadder({
   const liveLabel = showRunning ? runningIterationLabel(currentIteration, maxIterations) : ''
 
   return (
-<<<<<<< HEAD
-    <aside className={cn('space-y-4 xl:flex xl:self-start xl:flex-col xl:gap-4 xl:space-y-0', className)} data-testid="pathscientist-sidebar">
-      <section className="rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5 shadow-sm xl:flex-none">
-=======
     <aside
       className={cn(
         'space-y-4 xl:flex xl:self-start xl:flex-col xl:gap-4 xl:space-y-0',
@@ -110,7 +98,6 @@ export default function IterationLadder({
       data-testid="pathscientist-sidebar"
     >
       <section className={cn('flex-shrink-0 rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5 shadow-sm', !isClinical && 'xl:flex-none')}>
->>>>>>> auto-frontend/main
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Task setup</p>
           <Activity className="h-4 w-4 text-blue-600" />
@@ -124,11 +111,7 @@ export default function IterationLadder({
         </div>
       </section>
 
-<<<<<<< HEAD
-      <section className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm xl:flex-none">
-=======
       <section className={cn('flex-shrink-0 rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm', !isClinical && 'xl:flex-none')}>
->>>>>>> auto-frontend/main
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Best so far</p>
           <Trophy className="h-4 w-4 text-emerald-600" />
@@ -150,10 +133,6 @@ export default function IterationLadder({
         <p className="mt-1 truncate text-xs font-semibold text-gray-500">{formatMetricName(bestMetric)}{bestMetric?.runId ? ` from ${bestMetric.runId}` : ''}</p>
       </section>
 
-<<<<<<< HEAD
-      <section className="flex min-h-[320px] flex-col rounded-3xl border border-gray-200 bg-white p-5 shadow-sm xl:min-h-[320px]" data-testid="pathscientist-iteration-ladder-card">
-        <div className="mb-4 flex items-center justify-between gap-3">
-=======
       <section
         className={cn(
           'flex min-h-[280px] flex-col overflow-hidden rounded-3xl border border-gray-200 bg-white p-5 shadow-sm',
@@ -162,7 +141,6 @@ export default function IterationLadder({
         data-testid="pathscientist-iteration-ladder-card"
       >
         <div className="mb-4 flex flex-shrink-0 items-center justify-between gap-3">
->>>>>>> auto-frontend/main
           <div>
             <h2 className="text-sm font-extrabold text-gray-950">Iteration ladder</h2>
             <p className="mt-1 text-xs text-gray-500">Metric progression and ratchet status.</p>
@@ -183,12 +161,6 @@ export default function IterationLadder({
           </div>
         )}
 
-<<<<<<< HEAD
-        {iterations.length === 0 && !showRunningPlaceholder ? (
-          <p className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">No execution iterations yet.</p>
-        ) : (
-          <div className="space-y-2" data-testid="pathscientist-iteration-ladder-scroll">
-=======
         <div
           className={cn(
             'min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1 custom-scrollbar',
@@ -199,7 +171,6 @@ export default function IterationLadder({
           <p className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">No execution iterations yet.</p>
         ) : (
           <>
->>>>>>> auto-frontend/main
             {showRunningPlaceholder && (
               <div
                 className="rounded-2xl border border-dashed border-blue-200 bg-blue-50/80 p-3 text-sm text-blue-700"
@@ -256,13 +227,6 @@ export default function IterationLadder({
                 )}
               </div>
             ))}
-<<<<<<< HEAD
-          </div>
-        )}
-      </section>
-
-      <section className="flex flex-col rounded-3xl border border-gray-200 bg-white p-5 shadow-sm xl:flex-none" data-testid="pathscientist-tools-card">
-=======
           </>
         )}
         </div>
@@ -275,7 +239,6 @@ export default function IterationLadder({
         )}
         data-testid="pathscientist-tools-card"
       >
->>>>>>> auto-frontend/main
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm font-extrabold text-gray-950">Tools used</h2>
           <Wrench className="h-4 w-4 text-gray-400" />

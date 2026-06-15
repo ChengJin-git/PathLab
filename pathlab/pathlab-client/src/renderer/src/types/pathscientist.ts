@@ -28,7 +28,7 @@ export interface PathScientistSessionSummary {
   title?: string
   title_pending?: boolean
   question: string
-  model: string
+  model?: string
   status: PathScientistSessionStatus | string
   stage?: string
   created_at?: number

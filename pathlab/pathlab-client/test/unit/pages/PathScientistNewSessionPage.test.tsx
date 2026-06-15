@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-import { cleanup, render, screen } from '@testing-library/react'
-=======
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
->>>>>>> auto-frontend/main
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PathScientistNewSessionPage from '@renderer/pages/PathScientistNewSessionPage'
@@ -30,10 +26,7 @@ describe('PathScientistNewSessionPage', () => {
       </MemoryRouter>,
     )
 
-<<<<<<< HEAD
-=======
     fireEvent.click(screen.getByRole('button', { name: 'Session options' }))
->>>>>>> auto-frontend/main
     expect(screen.getByLabelText('Max iter')).toHaveValue(5)
   })
 })

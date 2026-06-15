@@ -1,25 +1,15 @@
 # Local IDE/agent state
-<<<<<<< HEAD
-=======
 .DS_Store
->>>>>>> auto-frontend/main
 .specstory/
 **/.codex/
 .codex
 **/.codex
 .worktrees/
+.agent
 
 # Runtime outputs and caches
 __pycache__/
 .pytest_cache/
-<<<<<<< HEAD
-*.py[cod]
-node_modules/
-dist/
-*.log
-
-# PathScientist generated artifacts
-=======
 **/.vite/
 *.py[cod]
 .venv/
@@ -30,16 +20,17 @@ build/
 out/
 *.log
 *.pid
+__manifest/_transactions/*.txn
 
 # PathScientist generated artifacts
 pathlab/pathlab-client/data/
 pathlab/pathlab-client/logs/
 pathlab/pathlab-client/out/
 pathlab/pathlab-client/src/renderer/dev-dist/
->>>>>>> auto-frontend/main
 pathlab/pathlab-client/server/backend/pathscientist/output/
 pathlab/pathlab-client/server/backend/pathscientist/sota_cache.json
 pathlab/pathlab-client/server/backend/auto_research_old/
+pathlab/pathlab-client/.local/pathscientist/
 
 # Local env and credentials
 .env

@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-=======
 import type React from 'react'
->>>>>>> auto-frontend/main
 import { useTranslation } from 'react-i18next'
 import { Routes, Route, Link, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
@@ -20,11 +17,8 @@ import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
 import ToolsPage from './pages/ToolsPage'
 import PathScientistLayout from './components/pathscientist/PathScientistLayout'
-<<<<<<< HEAD
 import PathScientistSessionsPage from './pages/PathScientistSessionsPage'
-=======
 import PathScientistWorkspaceLayout from './components/pathscientist/PathScientistWorkspaceLayout'
->>>>>>> auto-frontend/main
 import PathScientistNewSessionPage from './pages/PathScientistNewSessionPage'
 import PathScientistSessionPage from './pages/PathScientistSessionPage'
 import { isPathScientistStandaloneMode } from './lib/pathscientistStandalone'
@@ -45,15 +39,6 @@ interface AppProps {
   pathScientistStandalone?: boolean
 }
 
-<<<<<<< HEAD
-function pathScientistRouteElements() {
-  return (
-    <>
-      <Route path="/pathscientist" element={<PathScientistLayout><PathScientistSessionsPage /></PathScientistLayout>} />
-      <Route path="/pathscientist/new" element={<PathScientistLayout><PathScientistNewSessionPage /></PathScientistLayout>} />
-      <Route path="/pathscientist/sessions/:id" element={<PathScientistLayout><PathScientistSessionPage /></PathScientistLayout>} />
-    </>
-=======
 function pathScientistRouteElements(useMainLayout: boolean) {
   const workspace = <PathScientistWorkspaceLayout />
   const shell = useMainLayout ? (
@@ -70,7 +55,6 @@ function pathScientistRouteElements(useMainLayout: boolean) {
       <Route path="new" element={<PathScientistNewSessionPage />} />
       <Route path="sessions/:id" element={<PathScientistSessionPage />} />
     </Route>
->>>>>>> auto-frontend/main
   )
 }
 
@@ -82,17 +66,10 @@ export default function App({ pathScientistStandalone }: AppProps = {}) {
   if (standalone) {
     return (
       <Routes>
-<<<<<<< HEAD
-        <Route path="/" element={<Navigate to="/pathscientist" replace />} />
-        <Route path="/login" element={<Navigate to="/pathscientist" replace />} />
-        {pathScientistRouteElements()}
-        <Route path="*" element={<Navigate to="/pathscientist" replace />} />
-=======
         <Route path="/" element={<Navigate to="/pathscientist/new" replace />} />
         <Route path="/login" element={<Navigate to="/pathscientist/new" replace />} />
         {pathScientistRouteElements(false)}
         <Route path="*" element={<Navigate to="/pathscientist/new" replace />} />
->>>>>>> auto-frontend/main
       </Routes>
     )
   }
@@ -102,15 +79,9 @@ export default function App({ pathScientistStandalone }: AppProps = {}) {
       {/* Public Routes */}
       <Route path="/" element={<IntroductionPage />} />
       <Route path="/login" element={<LoginPage />} />
-<<<<<<< HEAD
-      {pathScientistRouteElements()}
-
-      {/* Protected Routes - Require Authentication */}
-=======
 
       {/* Protected Routes - Require Authentication */}
       {pathScientistRouteElements(true)}
->>>>>>> auto-frontend/main
       <Route path="/dashboard" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/dashboard/:conversationId" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><Layout><ToolsPage /></Layout></ProtectedRoute>} />

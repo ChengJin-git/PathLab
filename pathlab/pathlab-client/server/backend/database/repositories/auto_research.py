@@ -6,11 +6,7 @@ Follows the same patterns as research_job.py for event batching and cursor-based
 import logging
 from typing import Any, Optional
 
-<<<<<<< HEAD
 from sqlalchemy import delete, select, update, desc
-=======
-from sqlalchemy import select, update, desc
->>>>>>> auto-frontend/main
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import AutoResearchSession, AutoResearchExperiment, AutoResearchEvent, utc_now
@@ -65,7 +61,6 @@ class AutoResearchRepository:
         )
         await db.flush()
 
-<<<<<<< HEAD
     @staticmethod
     async def upsert_session(
         db: AsyncSession,
@@ -103,8 +98,6 @@ class AutoResearchRepository:
         await db.flush()
         return result.rowcount > 0
 
-=======
->>>>>>> auto-frontend/main
     # ── Experiments ───────────────────────────────────────────────
 
     @staticmethod
@@ -116,7 +109,6 @@ class AutoResearchRepository:
         return exp
 
     @staticmethod
-<<<<<<< HEAD
     async def upsert_experiment_by_run_id(
         db: AsyncSession,
         data: dict[str, Any],
@@ -152,8 +144,6 @@ class AutoResearchRepository:
         return existing
 
     @staticmethod
-=======
->>>>>>> auto-frontend/main
     async def get_session_experiments(
         db: AsyncSession,
         session_id: str,
@@ -214,7 +204,6 @@ class AutoResearchRepository:
         return start_seq + len(events)
 
     @staticmethod
-<<<<<<< HEAD
     async def append_event_once(
         db: AsyncSession,
         session_id: str,
@@ -242,8 +231,6 @@ class AutoResearchRepository:
         return True
 
     @staticmethod
-=======
->>>>>>> auto-frontend/main
     async def get_events_after(
         db: AsyncSession,
         session_id: str,

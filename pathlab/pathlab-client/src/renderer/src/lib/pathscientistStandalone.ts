@@ -1,6 +1,7 @@
 type PathScientistStandaloneEnv = {
-  VITE_PATHSCIENTIST_STANDALONE?: string
-  VITE_DEBUG?: string
+  VITE_PATHSCIENTIST_STANDALONE?: unknown
+  VITE_DEBUG?: unknown
+  [key: string]: unknown
 }
 
 interface PathScientistStandaloneOptions {

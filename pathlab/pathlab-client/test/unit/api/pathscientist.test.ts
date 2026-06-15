@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ok } from '../../helpers/apiHelpers'
+import { setAuthToken } from '@renderer/api/client'
 
 vi.mock('@renderer/config', () => ({
   API_BASE: 'http://localhost:6100',
@@ -9,11 +10,8 @@ import {
   deletePathScientistSession,
   getPathScientistEventsUrl,
   getPathScientistSession,
-<<<<<<< HEAD
-=======
   getPathScientistSessionDownloadUrl,
   getPathScientistSessionShareUrl,
->>>>>>> auto-frontend/main
   listPathScientistSessions,
   listPathScientistSkills,
   startPathScientistSession,
@@ -37,6 +35,7 @@ describe('pathscientist api', () => {
   })
 
   it('starts a session with gpt-5.5 default when model is omitted', async () => {
+    setAuthToken('session-token')
     mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', conversation_id: '', model: 'gpt-5.5', status: 'queued' }))
 
     await startPathScientistSession({ question: 'hello' })
@@ -44,6 +43,7 @@ describe('pathscientist api', () => {
     const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toBe('http://localhost:6100/pathscientist/sessions')
     expect(opts?.method).toBe('POST')
+    expect(new Headers(opts?.headers).get('Authorization')).toBe('Bearer session-token')
     expect(JSON.parse(opts?.body as string).model).toBe('gpt-5.5')
   })
 
@@ -84,8 +84,6 @@ describe('pathscientist api', () => {
     expect(url).toBe('http://localhost:6100/pathscientist/sessions/abc')
     expect(opts?.method).toBe('DELETE')
   })
-<<<<<<< HEAD
-=======
 
   it('builds session download and share URLs', () => {
     expect(getPathScientistSessionDownloadUrl('abc')).toBe(
@@ -93,5 +91,4 @@ describe('pathscientist api', () => {
     )
     expect(getPathScientistSessionShareUrl('abc')).toContain('/pathscientist/sessions/abc')
   })
->>>>>>> auto-frontend/main
 })

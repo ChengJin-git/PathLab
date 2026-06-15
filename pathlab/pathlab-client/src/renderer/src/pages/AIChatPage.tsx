@@ -1,8 +1,5 @@
 import {
-<<<<<<< HEAD
-=======
 	Beaker,
->>>>>>> auto-frontend/main
 	Bot,
 	ChevronDown,
 	ChevronLeft,
@@ -3412,8 +3409,6 @@ export default function AIChatPage() {
 							<button
 								type="button"
 								onClick={() => {
-<<<<<<< HEAD
-=======
 									navigate("/pathscientist/new");
 									setShowHistory(false);
 								}}
@@ -3428,7 +3423,6 @@ export default function AIChatPage() {
 							<button
 								type="button"
 								onClick={() => {
->>>>>>> auto-frontend/main
 									navigate("/tools");
 									setShowHistory(false);
 								}}

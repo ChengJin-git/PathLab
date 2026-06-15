@@ -1,6 +1,7 @@
 import React from 'react'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
+import { describe, expect, it, vi } from 'vitest'
 import App from '@renderer/App'
 
 vi.mock('@renderer/pages/IntroductionPage', () => ({ default: () => <div>Intro page</div> }))
@@ -16,9 +17,9 @@ vi.mock('@renderer/pages/UploadPage', () => ({ default: () => <div>Upload</div> 
 vi.mock('@renderer/pages/ResultsViewerPage', () => ({ default: () => <div>Results</div> }))
 vi.mock('@renderer/pages/ReportGeneratorPage', () => ({ default: () => <div>Reports</div> }))
 vi.mock('@renderer/pages/ToolsPage', () => ({ default: () => <div>Tools</div> }))
-vi.mock('@renderer/pages/PathScientistSessionsPage', () => ({ default: () => <div>PathScientist sessions</div> }))
 vi.mock('@renderer/pages/PathScientistNewSessionPage', () => ({ default: () => <div>PathScientist new</div> }))
 vi.mock('@renderer/pages/PathScientistSessionPage', () => ({ default: () => <div>PathScientist detail</div> }))
+vi.mock('@renderer/components/pathscientist/PathScientistSessionSidebar', () => ({ default: () => <div>PathScientist sidebar</div> }))
 vi.mock('@renderer/components/Layout', () => ({ default: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }))
 vi.mock('@renderer/components/ProtectedRoute', () => ({ ProtectedRoute: ({ children }: { children: React.ReactNode }) => <div data-testid="protected-route">{children}</div> }))
 
@@ -40,32 +41,32 @@ describe('App PathScientist standalone routing', () => {
   it('redirects the root page to PathScientist when standalone mode is enabled', async () => {
     renderApp('/', true)
 
-    expect(await screen.findByText('PathScientist sessions')).toBeInTheDocument()
+    expect(await screen.findByText('PathScientist new')).toBeInTheDocument()
     expect(screen.queryByText('Intro page')).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/pathscientist'))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/pathscientist/new'))
   })
 
   it('redirects the login page to PathScientist when standalone mode is enabled', async () => {
     renderApp('/login', true)
 
-    expect(await screen.findByText('PathScientist sessions')).toBeInTheDocument()
+    expect(await screen.findByText('PathScientist new')).toBeInTheDocument()
     expect(screen.queryByText('Login page')).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/pathscientist'))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/pathscientist/new'))
   })
 
   it('keeps the normal login page when standalone mode is disabled', () => {
     renderApp('/login', false)
 
     expect(screen.getByText('Login page')).toBeInTheDocument()
-    expect(screen.queryByText('PathScientist sessions')).not.toBeInTheDocument()
+    expect(screen.queryByText('PathScientist new')).not.toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent('/login')
   })
 
   it('redirects unknown routes to PathScientist instead of protected 404 in standalone mode', async () => {
     renderApp('/some-pathlab-route', true)
 
-    expect(await screen.findByText('PathScientist sessions')).toBeInTheDocument()
+    expect(await screen.findByText('PathScientist new')).toBeInTheDocument()
     expect(screen.queryByTestId('protected-route')).not.toBeInTheDocument()
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/pathscientist'))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/pathscientist/new'))
   })
 })

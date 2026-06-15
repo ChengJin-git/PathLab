@@ -4,14 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PathScientistSessionPage from '@renderer/pages/PathScientistSessionPage'
 import { deletePathScientistSession, getPathScientistEventsUrl, getPathScientistSession, stopPathScientistSession } from '@renderer/api/pathscientist'
 import type { PathScientistEvent, PathScientistSessionDetail } from '@renderer/types/pathscientist'
-<<<<<<< HEAD
-=======
 import { useAuth } from '@renderer/contexts/AuthContext'
 
 vi.mock('@renderer/contexts/AuthContext', () => ({
   useAuth: vi.fn(),
 }))
->>>>>>> auto-frontend/main
 
 vi.mock('@renderer/api/pathscientist', () => ({
   deletePathScientistSession: vi.fn(),
@@ -65,9 +62,6 @@ const session: PathScientistSessionDetail = {
   events,
 }
 
-<<<<<<< HEAD
-function renderPage() {
-=======
 function mockAuth(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
   vi.mocked(useAuth).mockReturnValue({
     isAdmin: role === 'admin',
@@ -81,16 +75,11 @@ function mockAuth(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
 
 function renderPage(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
   mockAuth(role)
->>>>>>> auto-frontend/main
   return render(
     <MemoryRouter initialEntries={["/pathscientist/sessions/s1"]}>
       <Routes>
         <Route path="/pathscientist/sessions/:id" element={<PathScientistSessionPage />} />
-<<<<<<< HEAD
-        <Route path="/pathscientist" element={<div>sessions</div>} />
-=======
         <Route path="/pathscientist/new" element={<div>new session</div>} />
->>>>>>> auto-frontend/main
       </Routes>
     </MemoryRouter>,
   )
@@ -110,10 +99,12 @@ describe('PathScientistSessionPage', () => {
     })
     vi.mocked(getPathScientistEventsUrl).mockReturnValue('/api/pathscientist/sessions/s1/events')
     vi.mocked(stopPathScientistSession).mockResolvedValue({
-      ...session,
+      session_id: session.session_id,
+      conversation_id: session.conversation_id,
+      question: session.question,
+      model: session.model,
       status: 'interrupted',
       stage: 'interrupted',
-      events,
     })
     vi.mocked(deletePathScientistSession).mockResolvedValue({ session_id: 's1', deleted: true, workspace_deleted: true })
   })
@@ -218,9 +209,6 @@ describe('PathScientistSessionPage', () => {
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('workspace'))
     expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('kept'))
     await waitFor(() => expect(deletePathScientistSession).toHaveBeenCalledWith('s1'))
-<<<<<<< HEAD
-    expect(await screen.findByText('sessions')).toBeInTheDocument()
-=======
     expect(await screen.findByText('new session')).toBeInTheDocument()
   })
 
@@ -233,7 +221,6 @@ describe('PathScientistSessionPage', () => {
     expect(screen.getByText('pathScientist.clinical.technicalDetails')).toBeInTheDocument()
     expect(screen.queryByText('Execution console')).not.toBeInTheDocument()
     expect(screen.queryByText('Workspace')).not.toBeInTheDocument()
->>>>>>> auto-frontend/main
   })
 
   it('keeps a completed session completed when older stream events still say running', async () => {

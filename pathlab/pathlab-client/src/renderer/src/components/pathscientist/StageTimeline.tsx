@@ -7,10 +7,7 @@ interface StageTimelineProps {
   currentIteration?: number | null
   maxIterations?: number | null
   className?: string
-<<<<<<< HEAD
-=======
   embedded?: boolean
->>>>>>> auto-frontend/main
 }
 
 function statusIcon(status: PathScientistStageStatus) {
@@ -40,9 +37,6 @@ function statusClasses(status: PathScientistStageStatus) {
   }
 }
 
-<<<<<<< HEAD
-export default function StageTimeline({ stages, currentIteration, maxIterations, className }: StageTimelineProps) {
-=======
 export default function StageTimeline({
   stages,
   currentIteration,
@@ -50,7 +44,6 @@ export default function StageTimeline({
   className,
   embedded = false,
 }: StageTimelineProps) {
->>>>>>> auto-frontend/main
   const showIteration = typeof currentIteration === 'number' && currentIteration > 0
   const iterLabel = showIteration
     ? maxIterations && maxIterations > 0
@@ -58,22 +51,8 @@ export default function StageTimeline({
       : `iter ${currentIteration}`
     : ''
 
-<<<<<<< HEAD
-  return (
-    <section aria-label="Stage timeline" className={cn('rounded-3xl border border-gray-200 bg-white p-4 shadow-sm', className)}>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Stage timeline</p>
-          <p className="mt-1 text-sm text-gray-500">Compressed view of the PathScientist research pipeline.</p>
-        </div>
-        {iterLabel && <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white shadow-sm">{iterLabel}</span>}
-      </div>
-
-      <ol className="flex gap-2 overflow-x-auto pb-1" role="list">
-=======
   const timeline = (
     <ol className="flex gap-2 overflow-x-auto pb-1" role="list">
->>>>>>> auto-frontend/main
         {stages.map((stage, index) => (
           <li key={stage.id} className="min-w-[128px] flex-1">
             <div
@@ -98,9 +77,6 @@ export default function StageTimeline({
             </div>
           </li>
         ))}
-<<<<<<< HEAD
-      </ol>
-=======
     </ol>
   )
 
@@ -127,7 +103,6 @@ export default function StageTimeline({
         {iterLabel && <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white shadow-sm">{iterLabel}</span>}
       </div>
       {timeline}
->>>>>>> auto-frontend/main
     </section>
   )
 }

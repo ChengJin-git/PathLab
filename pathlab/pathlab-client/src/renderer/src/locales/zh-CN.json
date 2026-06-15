@@ -1275,8 +1275,6 @@
       "randomSplitUnavailable": "随机分割不可用"
     }
   },
-<<<<<<< HEAD
-=======
   "pathScientist": {
     "backToChat": "返回对话",
     "newSession": "新建会话",
@@ -1342,7 +1340,6 @@
       "deleteFailed": "删除失败"
     }
   },
->>>>>>> auto-frontend/main
   "taskList": {
     "title": "实验记录",
     "description": "协调、运行和监控 AI 分析任务",
@@ -1485,10 +1482,7 @@
       "tools": "工具",
       "dataRepository": "数据仓库",
       "analysisLab": "实验记录",
-<<<<<<< HEAD
-=======
       "autoExperiment": "自动实验",
->>>>>>> auto-frontend/main
       "insightsReports": "更多工具",
       "registerData": "注册数据"
     },

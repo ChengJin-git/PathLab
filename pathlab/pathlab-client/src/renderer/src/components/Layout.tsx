@@ -47,13 +47,9 @@ export default function Layout({ children }: LayoutProps) {
 
   // Check if current page is Dashboard (ChatGPT-style home page)
   const isAIChatPage = location.pathname.startsWith('/dashboard')
-<<<<<<< HEAD
-  const isRegisterPage = location.pathname === '/register'
-=======
   const isPathScientistPage = location.pathname.startsWith('/pathscientist')
   const isRegisterPage = location.pathname === '/register'
   const isFullHeightPage = isAIChatPage || isPathScientistPage || location.pathname === '/task-setup'
->>>>>>> auto-frontend/main
 
   const handleLogout = async () => {
     await logout()
@@ -122,11 +118,7 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   return (
-<<<<<<< HEAD
-    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup'
-=======
     <div className={`bg-gray-50 flex flex-col ${isFullHeightPage
->>>>>>> auto-frontend/main
       ? 'h-screen overflow-hidden'
       : isRegisterPage
         ? 'h-screen' // Allow main to handle scroll
@@ -294,11 +286,7 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Main Content */}
       <main
-<<<<<<< HEAD
-        className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
-=======
         className={`flex-1 ${isFullHeightPage
->>>>>>> auto-frontend/main
           ? 'h-full overflow-hidden'
           : isRegisterPage
             ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'

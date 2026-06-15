@@ -106,13 +106,8 @@ describe('PathScientistExecutionConsole', () => {
     expect(screen.getByText('2 iterations')).toBeInTheDocument()
     expect(screen.getByText('AUC 0.810')).toBeInTheDocument()
     expect(screen.getAllByText('Grounding').length).toBeGreaterThan(0)
-<<<<<<< HEAD
-    expect(screen.getByText('20s')).toBeInTheDocument()
-    expect(screen.getByText('40s')).toBeInTheDocument()
-=======
     expect(screen.getByTestId('pathscientist-stage-duration-grounding')).toHaveTextContent('20s')
     expect(screen.getAllByText('40s').length).toBeGreaterThan(0)
->>>>>>> auto-frontend/main
   })
 
   it('does not duplicate terminal completed badges in the run summary header', () => {
@@ -468,8 +463,6 @@ describe('PathScientistExecutionConsole', () => {
     expect(screen.getByTestId('pathscientist-events-scroll')).not.toHaveClass('min-h-[720px]')
   })
 
-<<<<<<< HEAD
-=======
   it('shows all pipeline stages with durations in clinical execution console cards', () => {
     render(<PathScientistExecutionConsole session={session} events={events} streamStatus="open" variant="clinical" />)
 
@@ -507,7 +500,6 @@ describe('PathScientistExecutionConsole', () => {
     expect(screen.getByText('Iteration ladder')).toBeVisible()
   })
 
->>>>>>> auto-frontend/main
   it('places run summary in the same left column as the execution console and lifts task setup to the right column top', () => {
     render(<PathScientistExecutionConsole session={session} events={events} streamStatus="open" />)
 
@@ -527,11 +519,7 @@ describe('PathScientistExecutionConsole', () => {
     expect(screen.getByTestId('pathscientist-iteration-ladder-card')).not.toHaveClass('xl:flex-1')
     expect(screen.getByTestId('pathscientist-iteration-ladder-card')).toHaveClass('xl:min-h-[320px]')
     expect(screen.getByTestId('pathscientist-iteration-ladder-card')).not.toHaveClass('xl:overflow-hidden')
-<<<<<<< HEAD
-    expect(screen.getByTestId('pathscientist-iteration-ladder-scroll')).not.toHaveClass('xl:overflow-y-auto')
-=======
     expect(screen.getByTestId('pathscientist-iteration-ladder-scroll')).toHaveClass('overflow-y-auto')
->>>>>>> auto-frontend/main
     expect(screen.getByTestId('pathscientist-tools-card')).not.toHaveClass('xl:mt-auto')
   })
 })
