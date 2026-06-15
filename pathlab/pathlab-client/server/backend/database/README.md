@@ -110,11 +110,57 @@
 
 ## PathScientist 自动化实验存储
 
-Web PathScientist 流程会 best-effort 写入现有 `auto_research_*` 表：
+Web PathScientist 流程会 best-effort 写入现有 `auto_research_*` 表。当前目标是
+**DB 索引 + 磁盘权威**：
+
+- DB 负责历史列表、用户过滤、摘要、metrics、可回放的 Gateway 投影事件、恢复定位信息。
+- 磁盘负责完整 OpenHands/PathScientist 状态、原始 OpenHands 事件、workspace、模型文件、实验 artifact、`base_state.json`。
+
+### 表内容
 
 - `auto_research_sessions`：按 `session_id` 唯一保存一次自动化实验会话，包含 `user_id`、`research_question`、`status`、`phase`、`best_metric`、`best_experiment`、`comparison_results`、`final_report`。
+  - 为历史恢复新增的字段：
+    - `conversation_id`：PathScientist/OpenHands conversation id，用于定位磁盘会话。
+    - `persistence_dir`：conversation 持久化目录，通常包含 `base_state.json` 与 OpenHands events。
+    - `workspace_path`：session workspace 路径，用于 artifact 下载和调试。
+    - `resume_available`：是否检测到可恢复 checkpoint。当前判断标准是 `persistence_dir/base_state.json` 存在。
+    - `event_source_version`：Gateway 事件投影版本，当前默认 `gateway-v1`。
+    - `recovery_metadata`：恢复相关 compact JSON，包含路径、artifact policy，以及 external test / review / integrity 等辅助摘要。
 - `auto_research_experiments`：按 `(session_id, training_task_id)` 逻辑幂等保存每次 run，其中 `training_task_id` 使用 PathScientist `run_id`，`metrics` 保存 `metrics.json` 的结构化内容，`hyperparams` 保存 compact config/path metadata。
 - `auto_research_events`：按 `(session_id, sequence)` 逻辑幂等保存 Gateway SSE/event payload，供审计和回放使用。
+  - ORM 和启动初始化都确保 `(session_id, sequence)` 唯一，重复写入不会产生重复历史事件。
+  - `AutoResearchRepository.append_event_once()` 先查重，再通过数据库唯一约束兜底；真实 `AsyncSession` 下使用 nested transaction 捕获 `IntegrityError`。
+  - `AutoResearchRepository.get_session_events()` 按 `sequence` 顺序读取事件，供历史 session detail/events replay 使用。
+
+### JSON 摘要策略
+
+`comparison_results` 和 `recovery_metadata` 只保存 compact JSON：
+
+- `comparison_results.run_history`：run 级别摘要。
+- `comparison_results.external_test_history`：external test 历史的 compact list。
+- `comparison_results.review_history`：review 阶段历史的 compact list。
+- `comparison_results.integrity_report`：数据完整性/执行完整性摘要。
+- `recovery_metadata.artifact_policy`：明确说明数据库只保存 metadata/path，较大的原始产物仍在磁盘。
+
+不把完整 OpenHands 原始会话塞进数据库。也就是说，原始交互消息、完整工具调用参数、完整工具输出、terminal output、workspace 文件和模型 artifact 仍主要在磁盘的 conversation/workspace 目录里。
+
+### 初始化与迁移
+
+`database.py:init_db()` 会在启动时幂等确保以下结构：
+
+- 给 `auto_research_sessions` 补齐 `conversation_id`、`persistence_dir`、`workspace_path`、`resume_available`、`event_source_version`、`recovery_metadata`。
+- 创建 `idx_auto_research_sessions_conversation_id`，加速通过 conversation id 定位历史。
+- 清理 `auto_research_events` 中已有的 `(session_id, sequence)` 重复行，只保留较早记录。
+- 创建 `uq_auto_research_events_session_seq` 唯一索引。
+
+历史 Gateway 文件态 session 可以通过 `server/scripts/migrate_pathscientist_file_sessions_to_db.py` 导入数据库。脚本现在会：
+
+- 读取 Gateway registry：`gateway_sessions.json`。
+- 读取 Gateway JSONL events：`gateway_events/*.jsonl`。
+- 根据 `conversation_id` 定位 PathScientist/OpenHands conversation 目录。
+- 合并 conversation summary，补齐 `persistence_dir`、`workspace_path`、`resume_available`。
+- 当 Gateway JSONL 缺失时，尝试用 OpenHands `events/event-*.json` 投影生成 DB replay events。
+- 复用 `AutoResearchRepository` 的幂等 upsert / append 逻辑，重复迁移不会重复显示同一 sequence 的事件。
 
 数据库只保存可查询索引、状态、metrics、摘要和路径。大型产物仍保存在文件系统：
 
@@ -122,8 +168,6 @@ Web PathScientist 流程会 best-effort 写入现有 `auto_research_*` 表：
 - dataset cache：`PATHSCIENTIST_DATASET_CACHE_DIR`
 - feature outputs：`<dataset_root>/patches/*.h5` 和 `<dataset_root>/pt_files/<extractor>/*.pt`
 - model/checkpoint/run artifacts：以路径或 compact summary 进入 JSON 字段，不复制二进制内容进库
-
-历史 Gateway 文件态 session 可以通过 `server/scripts/migrate_pathscientist_file_sessions_to_db.py` 导入数据库。脚本读取 `gateway_sessions.json` 和 `gateway_events/*.jsonl`，并复用 `AutoResearchRepository` 的幂等 upsert 逻辑。
 
 ## 初始化与使用方式
 

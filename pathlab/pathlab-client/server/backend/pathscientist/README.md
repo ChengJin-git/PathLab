@@ -772,15 +772,23 @@ Web PathScientist sessions also best-effort sync structured metadata into the
 existing PostgreSQL `auto_research_*` tables:
 
 ```text
-auto_research_sessions     # session owner, question, stage/status, best metric, summaries
+auto_research_sessions     # session owner, question, stage/status, best metric, summaries, recovery pointers
 auto_research_experiments  # per-run run_id, metrics, compact config/path metadata
 auto_research_events       # replay/audit events keyed by session_id + sequence
 ```
 
-The database is an index and metadata layer. Large artifacts remain on disk:
-workspace files stay under `PATHSCIENTIST_BASE_DIR`, reusable datasets/features
-stay under `PATHSCIENTIST_DATASET_CACHE_DIR`, and model/run artifacts are stored
-as paths or compact summaries in PostgreSQL rather than copied into JSON fields.
+For web sessions, `auto_research_sessions` stores recovery pointers such as
+`conversation_id`, `persistence_dir`, `workspace_path`, `resume_available`,
+`event_source_version`, and compact `recovery_metadata`. `auto_research_events`
+has a unique `(session_id, sequence)` key so Gateway event replay can be written
+idempotently.
+
+The database is an index, replay, and metadata layer. The authoritative
+PathScientist/OpenHands conversation still lives on disk: `base_state.json`,
+OpenHands event files, terminal/tool output, workspace files, reusable
+datasets/features, and model/run artifacts stay under `PATHSCIENTIST_BASE_DIR`
+or `PATHSCIENTIST_DATASET_CACHE_DIR`. PostgreSQL stores paths and compact
+summaries rather than copying those artifacts into JSON fields.
 
 ---
 
