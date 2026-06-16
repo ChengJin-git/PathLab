@@ -1,5 +1,5 @@
 # PathLab 中文模块地图
-> 最后更新：2026-06-05  
+> 最后更新：2026-06-05
 > 适用版本：V 1.0.5
 ---
 
@@ -102,9 +102,9 @@
 
 ### `/pathlab/pathlab-client`
 
-**Role:** 主应用包，聚合 Electron、React、Python sidecar、测试和部署配置。  
-**Sub-README:** 有，说明 v1.0.5 的入口文件、运行方式、测试命令和阅读顺序。  
-**Depends on:** Node.js、Python、PostgreSQL、Redis / Garnet、OpenSlide / 图像依赖。  
+**Role:** 主应用包，聚合 Electron、React、Python sidecar、测试和部署配置。
+**Sub-README:** 有，说明 v1.0.5 的入口文件、运行方式、测试命令和阅读顺序。
+**Depends on:** Node.js、Python、PostgreSQL、Redis / Garnet、OpenSlide / 图像依赖。
 **Used by:** 开发者、桌面打包脚本、固定端口部署脚本。
 
 #### Files
@@ -137,9 +137,9 @@
 
 ### `/pathlab/pathlab-client/src/main`
 
-**Role:** Electron 主进程，负责窗口生命周期、深链登录、IPC、嵌入式 PostgreSQL / Redis 和 Python sidecar 启停。  
-**Sub-README:** 无。  
-**Depends on:** Electron、`sidecar-manager.ts`、`services-manager.ts`、preload bundle。  
+**Role:** Electron 主进程，负责窗口生命周期、深链登录、IPC、嵌入式 PostgreSQL / Redis 和 Python sidecar 启停。
+**Sub-README:** 无。
+**Depends on:** Electron、`sidecar-manager.ts`、`services-manager.ts`、preload bundle。
 **Used by:** Electron 桌面运行和打包产物。
 
 #### Files
@@ -174,9 +174,9 @@
 
 ### `/pathlab/pathlab-client/src/preload`
 
-**Role:** Electron preload 桥接层，向前端暴露安全的 Electron API。  
-**Sub-README:** 无。  
-**Depends on:** Electron `contextBridge` / `ipcRenderer`。  
+**Role:** Electron preload 桥接层，向前端暴露安全的 Electron API。
+**Sub-README:** 无。
+**Depends on:** Electron `contextBridge` / `ipcRenderer`。
 **Used by:** `src/renderer/src/config.ts`、登录回调、上传 / 注册页面的文件选择能力。
 
 #### Files
@@ -204,9 +204,9 @@
 
 ### `/pathlab/pathlab-client/src/renderer/src`
 
-**Role:** React 应用真实源码，包含路由、页面、组件、API client、Context、工具和本地化。  
-**Sub-README:** 有，记录路由、API client 拆分、运行时端口发现和组件分层。  
-**Depends on:** React、React Router、React Query、preload API、Gateway / Preprocessing / AI HTTP API。  
+**Role:** React 应用真实源码，包含路由、页面、组件、API client、Context、工具和本地化。
+**Sub-README:** 有，记录路由、API client 拆分、运行时端口发现和组件分层。
+**Depends on:** React、React Router、React Query、preload API、Gateway / Preprocessing / AI HTTP API。
 **Used by:** Electron renderer、浏览器部署静态资源。
 
 #### Files
@@ -251,9 +251,9 @@
 
 ### `/pathlab/pathlab-client/src/renderer/src/api`
 
-**Role:** 前端模块化 API client，按业务域封装 Gateway / Preprocessing / AI 请求。  
-**Sub-README:** 无，概览记录在 `src/renderer/src/README.md`。  
-**Depends on:** `api/client.ts`、`config.ts`、浏览器 `fetch`。  
+**Role:** 前端模块化 API client，按业务域封装 Gateway / Preprocessing / AI 请求。
+**Sub-README:** 无，概览记录在 `src/renderer/src/README.md`。
+**Depends on:** `api/client.ts`、`config.ts`、浏览器 `fetch`。
 **Used by:** 页面、Context、组件和前端测试。
 
 #### Files
@@ -296,9 +296,9 @@
 
 ### `/pathlab/pathlab-client/server`
 
-**Role:** Python sidecar 目录，不是单一 FastAPI 应用；`main.py` 统一拉起 Gateway / Preprocessing / AI / TaskWorker。  
-**Sub-README:** 有，说明端口模式、服务职责、任务调度边界和测试方式。  
-**Depends on:** `backend.common.config`、`backend.common.port_utils`、uvicorn、multiprocessing。  
+**Role:** Python sidecar 目录，不是单一 FastAPI 应用；`main.py` 统一拉起 Gateway / Preprocessing / AI / TaskWorker。
+**Sub-README:** 有，说明端口模式、服务职责、任务调度边界和测试方式。
+**Depends on:** `backend.common.config`、`backend.common.port_utils`、uvicorn、multiprocessing。
 **Used by:** Electron 主进程、`deploy/start.sh`、systemd 模板。
 
 #### Files
@@ -332,9 +332,9 @@
 
 ### `/pathlab/pathlab-client/server/gateway`
 
-**Role:** 对外 API Gateway，负责认证、业务聚合、静态资源挂载、任务描述符入队和内部服务协作。  
-**Sub-README:** 有，详细记录直接注册的 router、任务边界、静态资源和模块职责。  
-**Depends on:** `backend/` 共享模块、Preprocessing / AI 内部服务、Redis、PostgreSQL。  
+**Role:** 对外 API Gateway，负责认证、业务聚合、静态资源挂载、任务描述符入队和内部服务协作。
+**Sub-README:** 有，详细记录直接注册的 router、任务边界、静态资源和模块职责。
+**Depends on:** `backend/` 共享模块、Preprocessing / AI 内部服务、Redis、PostgreSQL。
 **Used by:** React API client、Nginx 反向代理、Electron renderer。
 
 #### Files
@@ -381,9 +381,9 @@
 
 ### `/pathlab/pathlab-client/server/task_worker`
 
-**Role:** 后台任务执行边界，消费 Redis 描述符队列，初始化 GPU 队列运行时，执行训练、推理、分析和聊天 patch inference。  
-**Sub-README:** 无，职责记录在 `server/README.md` 和 `gateway/README.md`。  
-**Depends on:** `gateway.task_dispatch`、`gateway.task_queue`、`backend.common.gpu_utils`、AI / Gateway job wrapper。  
+**Role:** 后台任务执行边界，消费 Redis 描述符队列，初始化 GPU 队列运行时，执行训练、推理、分析和聊天 patch inference。
+**Sub-README:** 无，职责记录在 `server/README.md` 和 `gateway/README.md`。
+**Depends on:** `gateway.task_dispatch`、`gateway.task_queue`、`backend.common.gpu_utils`、AI / Gateway job wrapper。
 **Used by:** `server/main.py`、Gateway `/queue` 状态、长任务执行流程。
 
 #### Files
@@ -421,9 +421,9 @@
 
 ### `/pathlab/pathlab-client/server/backend/common`
 
-**Role:** 后端共享基础设施，包含配置、Redis、端口、GPU、文件类型、进度、日志和 split 生成。  
-**Sub-README:** 无，概览记录在 `backend/README.md`。  
-**Depends on:** OS 环境变量、Redis、PyTorch / pynvml、文件系统。  
+**Role:** 后端共享基础设施，包含配置、Redis、端口、GPU、文件类型、进度、日志和 split 生成。
+**Sub-README:** 无，概览记录在 `backend/README.md`。
+**Depends on:** OS 环境变量、Redis、PyTorch / pynvml、文件系统。
 **Used by:** Gateway、AI、Preprocessing、TaskWorker、Storage。
 
 #### Files
@@ -463,9 +463,9 @@
 
 ### `/pathlab/pathlab-client/server/backend/database`
 
-**Role:** SQLAlchemy 数据访问层，负责 ORM 模型、异步 session、初始化和 Repository。  
-**Sub-README:** 有，记录 22 个 ORM 表、annotation 命名规范、Repository 现状和旧文档差异。  
-**Depends on:** SQLAlchemy async、PostgreSQL、`backend.auth.models.User`。  
+**Role:** SQLAlchemy 数据访问层，负责 ORM 模型、异步 session、初始化和 Repository。
+**Sub-README:** 有，记录 22 个 ORM 表、annotation 命名规范、Repository 现状和旧文档差异。
+**Depends on:** SQLAlchemy async、PostgreSQL、`backend.auth.models.User`。
 **Used by:** Gateway、Preprocessing、AI、Storage、TaskWorker。
 
 #### Files
@@ -505,9 +505,9 @@
 
 ### `/pathlab/pathlab-client/server/backend/auth`
 
-**Role:** 用户模型、JWT / FastAPI-Users 配置和认证 schema。  
-**Sub-README:** 无，认证现状记录在 Gateway 和 Database README。  
-**Depends on:** FastAPI-Users、SQLAlchemy、JWT strategy。  
+**Role:** 用户模型、JWT / FastAPI-Users 配置和认证 schema。
+**Sub-README:** 无，认证现状记录在 Gateway 和 Database README。
+**Depends on:** FastAPI-Users、SQLAlchemy、JWT strategy。
 **Used by:** Gateway route dependency、用户管理、权限系统。
 
 #### Files
@@ -540,9 +540,9 @@
 
 ### `/pathlab/pathlab-client/server/backend/preprocessing`
 
-**Role:** 内部 Preprocessing FastAPI 服务，提供 WSI 图像读取、缩略图、DZI、tile、patch、ROI 提取和部分 COCO 缓存生成。  
-**Sub-README:** 无，职责记录在 `backend/README.md`。  
-**Depends on:** OpenSlide / slide SDK、PIL、数据库、uploads 目录、annotation helper。  
+**Role:** 内部 Preprocessing FastAPI 服务，提供 WSI 图像读取、缩略图、DZI、tile、patch、ROI 提取和部分 COCO 缓存生成。
+**Sub-README:** 无，职责记录在 `backend/README.md`。
+**Depends on:** OpenSlide / slide SDK、PIL、数据库、uploads 目录、annotation helper。
 **Used by:** Gateway、前端阅片器、AI / 训练数据准备。
 
 #### Files
@@ -578,9 +578,9 @@
 
 ### `/pathlab/pathlab-client/server/backend/ai`
 
-**Role:** 内部 AI 服务和训练 / 推理实现，包含特征提取器、aggregator、classifier、task trainer、schema 和 route。  
-**Sub-README:** 无，概览记录在 `backend/README.md`。  
-**Depends on:** PyTorch、模型 checkpoint、uploads、数据库、GPU 工具。  
+**Role:** 内部 AI 服务和训练 / 推理实现，包含特征提取器、aggregator、classifier、task trainer、schema 和 route。
+**Sub-README:** 无，概览记录在 `backend/README.md`。
+**Depends on:** PyTorch、模型 checkpoint、uploads、数据库、GPU 工具。
 **Used by:** Gateway、TaskWorker、Preprocessing 生成的数据。
 
 #### Files
@@ -626,9 +626,9 @@
 
 ### `/pathlab/pathlab-client/server/backend/annotation`
 
-**Role:** 标注共享辅助模块，不是独立服务；提供 COCO 导出、summary 缓存、协作 pub/sub 和 presence。  
-**Sub-README:** 无，概览记录在 `backend/README.md`。  
-**Depends on:** Redis、uploads、database annotation model。  
+**Role:** 标注共享辅助模块，不是独立服务；提供 COCO 导出、summary 缓存、协作 pub/sub 和 presence。
+**Sub-README:** 无，概览记录在 `backend/README.md`。
+**Depends on:** Redis、uploads、database annotation model。
 **Used by:** Gateway annotation route、Preprocessing ROI / COCO 流程。
 
 #### Files
@@ -661,9 +661,9 @@
 
 ### `/pathlab/pathlab-client/server/backend/storage`
 
-**Role:** 文件系统存储管理层，负责统计、迁移、孤立文件 / 记录检测和清理。  
-**Sub-README:** 有，记录 uploads 目录优先级、统计类别、孤立项检测和 Gateway 暴露接口。  
-**Depends on:** `Config.get_uploads_dir()`、database repositories、文件系统。  
+**Role:** 文件系统存储管理层，负责统计、迁移、孤立文件 / 记录检测和清理。
+**Sub-README:** 有，记录 uploads 目录优先级、统计类别、孤立项检测和 Gateway 暴露接口。
+**Depends on:** `Config.get_uploads_dir()`、database repositories、文件系统。
 **Used by:** Gateway `/storage` route、设置页存储管理视图、部署运维。
 
 #### Files
@@ -697,9 +697,9 @@
 
 ### `/pathlab/pathlab-client/deploy`
 
-**Role:** 固定端口 Web 部署与运维脚本，面向服务器部署、热更新、Nginx 和 systemd。  
-**Sub-README:** 有，记录桌面打包、固定端口部署、GPU 控制、脚本行为和代理模板。  
-**Depends on:** Node / npm、Python、Redis、PostgreSQL、Nginx、systemd。  
+**Role:** 固定端口 Web 部署与运维脚本，面向服务器部署、热更新、Nginx 和 systemd。
+**Sub-README:** 有，记录桌面打包、固定端口部署、GPU 控制、脚本行为和代理模板。
+**Depends on:** Node / npm、Python、Redis、PostgreSQL、Nginx、systemd。
 **Used by:** 浏览器调试和服务器部署。
 
 #### Files
@@ -735,9 +735,9 @@
 
 ### `/pathlab/pathlab-client/test` 与 `/pathlab/pathlab-client/server/tests`
 
-**Role:** 前端 Vitest 和后端 pytest 测试套件。  
-**Sub-README:** 前端测试有 README；后端测试概览在 `server/README.md`。  
-**Depends on:** Vitest、Testing Library、jsdom、pytest、pytest-asyncio、httpx。  
+**Role:** 前端 Vitest 和后端 pytest 测试套件。
+**Sub-README:** 前端测试有 README；后端测试概览在 `server/README.md`。
+**Depends on:** Vitest、Testing Library、jsdom、pytest、pytest-asyncio、httpx。
 **Used by:** 开发回归、CI 和重构验证。
 
 #### Files

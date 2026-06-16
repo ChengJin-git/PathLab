@@ -1499,10 +1499,16 @@ def _load_deleted_gateway_sessions() -> tuple[set[str], set[str]]:
 def _is_deleted_gateway_session(
     record: SessionRecord,
     deleted: tuple[set[str], set[str]] | None = None,
+    *,
+    match_conversation: bool = True,
 ) -> bool:
     session_ids, conversation_ids = deleted or _load_deleted_gateway_sessions()
-    return record.session_id in session_ids or (
-        bool(record.conversation_id) and record.conversation_id in conversation_ids
+    if record.session_id in session_ids:
+        return True
+    return bool(
+        match_conversation
+        and record.conversation_id
+        and record.conversation_id in conversation_ids
     )
 
 
@@ -2117,7 +2123,7 @@ def _merge_session_records(*groups: list[SessionRecord]) -> list[SessionRecord]:
     conversation_seen: dict[str, str] = {}
     for group in groups:
         for record in group:
-            if _is_deleted_gateway_session(record):
+            if _is_deleted_gateway_session(record, match_conversation=False):
                 continue
             existing_key = selected.get(record.session_id)
             if existing_key is None:

@@ -93,7 +93,7 @@ Structure:
 | `my_func(a, b)` | function | [API] | Returns Z given A and B |
 
 **Where to edit when you want to:**
-- Add a new route → `router.py: register_route()`  
+- Add a new route → `router.py: register_route()`
 - Change auth logic → `middleware/auth.py: verify_token()`
 - Modify DB schema → `models/user.py: User class`
 ```
