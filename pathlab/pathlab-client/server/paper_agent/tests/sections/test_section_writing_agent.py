@@ -262,6 +262,35 @@ async def test_section_agent_prompt_contains_all_m9_inputs_and_normalizes_intro_
 
 
 @pytest.mark.asyncio
+async def test_section_agent_can_generate_one_section_per_llm_call(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_per_section", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    llm = MockLLM(_sections_payload())
+    agent = SectionWritingAgent(llm, generation_mode="per_section")
+
+    result = agent.generate(SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8"))))
+
+    assert set(result.sections) == {
+        "abstract",
+        "introduction",
+        "related_work",
+        "methods",
+        "experiments",
+        "results",
+        "discussion",
+        "conclusion",
+    }
+    assert len(llm.calls) == 8
+    first_payload = _payload_from_prompt(llm.calls[0]["messages"][1].content)
+    second_payload = _payload_from_prompt(llm.calls[1]["messages"][1].content)
+    assert first_payload["section_contract"]["generation_mode"] == "per_section"
+    assert first_payload["section_contract"]["required_section_slugs"] == ["abstract"]
+    assert second_payload["section_contract"]["required_section_slugs"] == ["introduction"]
+    assert second_payload["section_contract"]["previous_section_slugs"] == ["abstract"]
+    assert "\\cite{CLINVAL2022}" in result.sections["related_work"]
+
+
+@pytest.mark.asyncio
 async def test_section_agent_prompt_uses_user_selected_nature_guidelines(tmp_path) -> None:
     request = CreatePaperRequest(
         source_tasks=[SourceTaskRef(task_id="paper_dev_source")],

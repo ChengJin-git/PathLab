@@ -146,8 +146,11 @@ _DEFAULT_LOCKED_BLOCKS_BY_SECTION = {
 }
 _SECTION_LLM_REASONING_ENV = "PAPER_GEN_SECTION_LLM_REASONING_EFFORT"
 _SECTION_LLM_MAX_TOKENS_ENV = "PAPER_GEN_SECTION_LLM_MAX_COMPLETION_TOKENS"
+_SECTION_WRITING_MODE_ENV = "PAPER_GEN_SECTION_WRITING_MODE"
 _DEFAULT_SECTION_LLM_REASONING_EFFORT = "medium"
 _DEFAULT_SECTION_LLM_MAX_COMPLETION_TOKENS = 32_768
+_DEFAULT_SECTION_WRITING_MODE = "single_call"
+_SECTION_WRITING_MODES = {"single_call", "per_section"}
 
 
 class SectionWritingAgentError(RuntimeError):
@@ -223,7 +226,7 @@ class SectionWritingResult:
 
 
 class SectionWritingAgent:
-    """Generate all manuscript sections with one LLM call and deterministic renderers."""
+    """Generate manuscript sections and render deterministic citations/metrics."""
 
     def __init__(
         self,
@@ -232,11 +235,15 @@ class SectionWritingAgent:
         prompt_template: str | None = None,
         min_selected_coverage: float = 0.9,
         event_sink: EventSink | None = None,
+        generation_mode: str | None = None,
     ) -> None:
         self.llm_client = llm_client or _default_llm_client()
         self.prompt_template = prompt_template or _load_prompt_template()
         self.min_selected_coverage = min_selected_coverage
         self.event_sink = event_sink
+        self.generation_mode = _normalize_generation_mode(
+            generation_mode or os.environ.get(_SECTION_WRITING_MODE_ENV) or _DEFAULT_SECTION_WRITING_MODE
+        )
 
     def generate(self, inputs: SectionWritingInputs) -> SectionWritingResult:
         required_sections = required_section_slugs(inputs)
@@ -249,67 +256,13 @@ class SectionWritingAgent:
             required_cite_count=len(inputs.required_cites),
             locked_block_count=len(inputs.locked_blocks),
             table_count=len(inputs.tables),
+            generation_mode=self.generation_mode,
         )
         try:
-            prompt = self.build_prompt(inputs)
-            self._emit("prompt_built", prompt_length=len(prompt))
-            messages = [
-                LLMMessage(
-                    role="system",
-                    content=(
-                        "You are PathLab's Section Writing Agent. Return only JSON sections. "
-                        "Use [CITE:key] and {{m:key}} placeholders; never raw \\cite{} or metric numbers."
-                    ),
-                ),
-                LLMMessage(role="user", content=prompt),
-            ]
-            response_format = {"type": "json_object"}
-            emit_llm_request(
-                self.event_sink,
-                "section_writing",
-                messages=messages,
-                temperature=0.25,
-                response_format=response_format,
-            )
-            started = now_counter()
-            try:
-                response = self.llm_client.complete(
-                    messages,
-                    temperature=0.25,
-                    response_format=response_format,
-                )
-            except Exception as exc:
-                emit_llm_failure(self.event_sink, "section_writing", started=started, error=exc)
-                raise
-            emit_llm_response(
-                self.event_sink,
-                "section_writing",
-                response,
-                duration_ms=elapsed_ms(started),
-            )
-            raw_sections = parse_sections_json(_response_text(response))
-            self._emit("parse_completed", raw_section_keys=sorted(raw_sections.keys()))
-            normalized = normalize_sections(raw_sections, required_sections)
-            _assert_no_private_identifiers(normalized, context="section-writing output")
-            _assert_no_private_source_identifiers(
-                normalized,
-                inputs.private_source_ids,
-                context="section-writing output",
-            )
-            _assert_no_private_source_placeholders(normalized, context="section-writing output")
-            _assert_no_raw_cites(normalized)
-            _assert_no_raw_metric_values(normalized)
-            used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
-            normalized = _repair_missing_locked_block_inputs(normalized, inputs)
-            _assert_locked_block_contract(normalized, inputs)
-            _assert_figure_table_contract(normalized, inputs)
-            rendered = _render_sections(normalized, inputs)
-            _assert_no_private_source_identifiers(
-                rendered,
-                inputs.private_source_ids,
-                context="rendered section-writing output",
-            )
-            _assert_no_private_source_placeholders(rendered, context="rendered section-writing output")
+            if self.generation_mode == "per_section":
+                result = self._generate_per_section(inputs, required_sections)
+            else:
+                result = self._generate_single_call(inputs, required_sections)
         except Exception as exc:
             self._emit(
                 "generate_failed",
@@ -319,25 +272,173 @@ class SectionWritingAgent:
             raise
         self._emit(
             "contract_checks_completed",
-            used_citation_count=len(used),
-            rendered_section_count=len(rendered),
+            used_citation_count=len(result.used_citations),
+            rendered_section_count=len(result.sections),
         )
         self._emit(
             "generate_completed",
-            section_keys=sorted(rendered),
-            used_citations=sorted(used),
+            section_keys=sorted(result.sections),
+            used_citations=sorted(result.used_citations),
         )
+        return result
+
+    def _generate_single_call(
+        self,
+        inputs: SectionWritingInputs,
+        required_sections: Sequence[str],
+    ) -> SectionWritingResult:
+        prompt = self.build_prompt(inputs)
+        self._emit("prompt_built", prompt_length=len(prompt))
+        raw_sections = self._request_raw_sections(prompt, step="section_writing")
+        self._emit("parse_completed", raw_section_keys=sorted(raw_sections.keys()))
+        normalized = normalize_sections(raw_sections, required_sections)
+        _assert_no_private_identifiers(normalized, context="section-writing output")
+        _assert_no_private_source_identifiers(
+            normalized,
+            inputs.private_source_ids,
+            context="section-writing output",
+        )
+        _assert_no_private_source_placeholders(normalized, context="section-writing output")
+        _assert_no_raw_cites(normalized)
+        _assert_no_raw_metric_values(normalized)
+        used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
+        normalized = _repair_missing_locked_block_inputs(normalized, inputs)
+        _assert_locked_block_contract(normalized, inputs)
+        _assert_figure_table_contract(normalized, inputs)
+        rendered = _render_sections(normalized, inputs)
+        _assert_no_private_source_identifiers(
+            rendered,
+            inputs.private_source_ids,
+            context="rendered section-writing output",
+        )
+        _assert_no_private_source_placeholders(rendered, context="rendered section-writing output")
         return SectionWritingResult(
             sections=rendered,
             raw_sections=normalized,
             used_citations=tuple(sorted(used)),
         )
 
+    def _generate_per_section(
+        self,
+        inputs: SectionWritingInputs,
+        required_sections: Sequence[str],
+    ) -> SectionWritingResult:
+        normalized: dict[str, str] = {}
+        for slug in required_sections:
+            self._emit("section_generate_start", section=slug)
+            prompt = self.build_prompt(
+                inputs,
+                required_sections_override=[slug],
+                previous_sections=normalized,
+            )
+            self._emit("section_prompt_built", section=slug, prompt_length=len(prompt))
+            raw_sections = self._request_raw_sections(prompt, step=f"section_writing:{slug}")
+            self._emit(
+                "section_parse_completed",
+                section=slug,
+                raw_section_keys=sorted(raw_sections.keys()),
+            )
+            _assert_no_private_identifiers(raw_sections, context=f"section-writing output for {slug}")
+            _assert_no_private_source_identifiers(
+                raw_sections,
+                inputs.private_source_ids,
+                context=f"section-writing output for {slug}",
+            )
+            _assert_no_private_source_placeholders(
+                raw_sections,
+                context=f"section-writing output for {slug}",
+            )
+            section_only = normalize_sections(raw_sections, [slug])
+            section_only = {slug: section_only[slug]}
+            _assert_no_raw_cites(section_only)
+            _assert_no_raw_metric_values(section_only)
+            section_only = _repair_missing_locked_block_inputs(section_only, inputs)
+            _assert_locked_block_contract(section_only, inputs)
+            normalized[slug] = section_only[slug]
+            self._emit("section_generate_completed", section=slug)
+
+        _assert_no_private_identifiers(normalized, context="section-writing output")
+        _assert_no_private_source_identifiers(
+            normalized,
+            inputs.private_source_ids,
+            context="section-writing output",
+        )
+        _assert_no_private_source_placeholders(normalized, context="section-writing output")
+        _assert_no_raw_cites(normalized)
+        _assert_no_raw_metric_values(normalized)
+        used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
+        normalized = _repair_missing_locked_block_inputs(normalized, inputs)
+        _assert_locked_block_contract(normalized, inputs)
+        _assert_figure_table_contract(normalized, inputs)
+        rendered = _render_sections(normalized, inputs)
+        _assert_no_private_source_identifiers(
+            rendered,
+            inputs.private_source_ids,
+            context="rendered section-writing output",
+        )
+        _assert_no_private_source_placeholders(rendered, context="rendered section-writing output")
+        return SectionWritingResult(
+            sections=rendered,
+            raw_sections=normalized,
+            used_citations=tuple(sorted(used)),
+        )
+
+    def _request_raw_sections(self, prompt: str, *, step: str) -> dict[str, str]:
+        messages = [
+            LLMMessage(
+                role="system",
+                content=(
+                    "You are PathLab's Section Writing Agent. Return only JSON sections. "
+                    "Use [CITE:key] and {{m:key}} placeholders; never raw \\cite{} or metric numbers."
+                ),
+            ),
+            LLMMessage(role="user", content=prompt),
+        ]
+        response_format = {"type": "json_object"}
+        emit_llm_request(
+            self.event_sink,
+            step,
+            messages=messages,
+            temperature=0.25,
+            response_format=response_format,
+        )
+        started = now_counter()
+        try:
+            response = self.llm_client.complete(
+                messages,
+                temperature=0.25,
+                response_format=response_format,
+            )
+        except Exception as exc:
+            emit_llm_failure(self.event_sink, step, started=started, error=exc)
+            raise
+        emit_llm_response(
+            self.event_sink,
+            step,
+            response,
+            duration_ms=elapsed_ms(started),
+        )
+        return parse_sections_json(_response_text(response))
+
     def _emit(self, event: str, **payload: Any) -> None:
         emit_event(self.event_sink, event, **payload)
 
-    def build_prompt(self, inputs: SectionWritingInputs) -> str:
-        payload = _redact_private_source_identifiers(_prompt_payload(inputs), inputs.private_source_ids)
+    def build_prompt(
+        self,
+        inputs: SectionWritingInputs,
+        *,
+        required_sections_override: Sequence[str] | None = None,
+        previous_sections: Mapping[str, str] | None = None,
+    ) -> str:
+        payload = _redact_private_source_identifiers(
+            _prompt_payload(
+                inputs,
+                required_sections_override=required_sections_override,
+                previous_sections=previous_sections,
+                generation_mode=self.generation_mode,
+            ),
+            inputs.private_source_ids,
+        )
         _assert_no_private_source_identifiers(
             payload,
             inputs.private_source_ids,
@@ -487,7 +588,13 @@ def _sections_from_list(items: Sequence[Any]) -> dict[str, str]:
     return sections
 
 
-def _prompt_payload(inputs: SectionWritingInputs) -> dict[str, Any]:
+def _prompt_payload(
+    inputs: SectionWritingInputs,
+    *,
+    required_sections_override: Sequence[str] | None = None,
+    previous_sections: Mapping[str, str] | None = None,
+    generation_mode: str = _DEFAULT_SECTION_WRITING_MODE,
+) -> dict[str, Any]:
     selected_keys = sorted(_ref_keys(inputs.selected_refs))
     required_keys = sorted(_ref_keys(inputs.required_cites))
     metrics = _metric_placeholder_catalog(inputs.evidence_lock)
@@ -495,6 +602,7 @@ def _prompt_payload(inputs: SectionWritingInputs) -> dict[str, Any]:
     section_guidelines = primary_template.get("section_guidelines")
     if not isinstance(section_guidelines, Mapping):
         section_guidelines = {}
+    required_sections = list(required_sections_override) if required_sections_override else required_section_slugs(inputs)
     return {
         "paper_title": inputs.title,
         "language": inputs.language,
@@ -506,7 +614,10 @@ def _prompt_payload(inputs: SectionWritingInputs) -> dict[str, Any]:
         "primary_template_style": primary_template,
         "section_guidelines": dict(section_guidelines),
         "section_contract": {
-            "required_section_slugs": required_section_slugs(inputs),
+            "generation_mode": generation_mode,
+            "required_section_slugs": required_sections,
+            "previous_section_slugs": sorted(previous_sections or {}),
+            "previous_sections_context": dict(previous_sections or {}),
             "write_destination": "drafts/sections",
             "intro_rw_draft_is_input_only": True,
             "generation_template_id": primary_template.get("template_id"),
@@ -1293,6 +1404,16 @@ def _extra_private_paths(value: Any) -> list[str]:
 def _load_prompt_template() -> str:
     prompt_ref = resources.files("pathlab_paper_agent") / "prompts" / _PROMPT_NAME
     return Path(str(prompt_ref)).read_text(encoding="utf-8")
+
+
+def _normalize_generation_mode(value: str) -> str:
+    cleaned = value.strip().lower().replace("-", "_")
+    if cleaned not in _SECTION_WRITING_MODES:
+        allowed = ", ".join(sorted(_SECTION_WRITING_MODES))
+        raise SectionWritingAgentError(
+            f"{_SECTION_WRITING_MODE_ENV} must be one of: {allowed}"
+        )
+    return cleaned
 
 
 def _default_llm_client() -> LLMClient:
