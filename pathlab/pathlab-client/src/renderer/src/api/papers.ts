@@ -62,6 +62,17 @@ export type AddCitationPreview = components['schemas']['AddCitationPreview']
 export type AddCitationResponse = components['schemas']['AddCitationResponse']
 export type CitationDeleteResponse = components['schemas']['CitationDeleteResponse']
 
+export interface PutPaperSectionBody {
+  text: string
+  source_hash?: string
+}
+
+export interface PutPaperSectionResponse {
+  section: PaperSection
+  downstream_stale: boolean
+  stale_artifacts: string[]
+}
+
 export interface PostSectionRegenerateBody {
   mode: RegenerateMode
   target_section?: string
@@ -79,6 +90,24 @@ export interface PostSectionRegenerateResponse {
   paper_id: string
   regen_id: string
   enqueued_at: string
+}
+
+export interface PutPaperOutlineBody {
+  outline: OutlineDocument
+  approve: boolean
+}
+
+export interface PutPaperOutlineResponse {
+  paper_id: string
+  approved: boolean
+  current_stage: PaperRunStage
+}
+
+export interface PostPaperRenderExportResponse {
+  paper_id: string
+  status: PaperRunStatus
+  current_stage: PaperRunStage
+  message?: string
 }
 
 type BackendErrorDetail = {
@@ -142,11 +171,56 @@ export function getPaperRun(paperId: string): Promise<PaperRunDetail> {
   return apiFetch<PaperRunDetail>(`${API_BASE}/papers/${encodeURIComponent(paperId)}`, undefined, 'Get paper run')
 }
 
+export function putPaperOutline(
+  paperId: string,
+  body: PutPaperOutlineBody,
+): Promise<PutPaperOutlineResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PutPaperOutlineResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/outline`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      'Update paper outline',
+    ),
+  )
+}
+
+export function postPaperRenderExport(paperId: string): Promise<PostPaperRenderExportResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PostPaperRenderExportResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/render-export`,
+      { method: 'POST' },
+      'Render/export paper',
+    ),
+  )
+}
+
 export function getPaperSections(paperId: string): Promise<PaperSectionListResponse> {
   return apiFetch<PaperSectionListResponse>(
     `${API_BASE}/papers/${encodeURIComponent(paperId)}/sections`,
     undefined,
     'Get paper sections',
+  )
+}
+
+export function putPaperSection(
+  paperId: string,
+  sectionName: string,
+  body: PutPaperSectionBody,
+): Promise<PutPaperSectionResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PutPaperSectionResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/sections/${encodeURIComponent(sectionName)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      'Update paper section',
+    ),
   )
 }
 

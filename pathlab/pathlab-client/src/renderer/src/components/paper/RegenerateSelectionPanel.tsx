@@ -122,14 +122,23 @@ export function RegenerateSelectionPanel({
       const section = sections.sections?.find((item) => item.section_name === sectionName)
       if (!section) throw new Error(`Section source is not available: ${sectionName}`)
 
+      // For PDF-sourced selections we don't have precise char offsets; the
+      // panel uses negative sentinels (-1) to signal "no hint, let backend
+      // selection_locator do fuzzy match". Backend Pydantic schema requires
+      // `ge=0` on char_start/char_end, so we must omit them instead of
+      // sending the sentinel.
+      const charStart = selection.charStart
+      const charEnd = selection.charEnd
+      const hasCharRange =
+        typeof charStart === 'number' && typeof charEnd === 'number' && charStart >= 0 && charEnd >= 0
       return postSectionRegenerate(paperId, sectionName, {
         mode: 'selection',
         target_section: sectionName,
-        target_paragraph: selection.paragraphIndex,
+        target_paragraph: hasCharRange ? selection.paragraphIndex : undefined,
         selected_text: selection.text,
         source_hash: section.content_hash,
-        char_start: selection.charStart,
-        char_end: selection.charEnd,
+        char_start: hasCharRange ? charStart : undefined,
+        char_end: hasCharRange ? charEnd : undefined,
         user_note: note.trim() || undefined,
         template_id: templateId,
       })

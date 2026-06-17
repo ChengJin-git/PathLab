@@ -56,7 +56,7 @@ export default function PaperRunDetailPage() {
       <div className="flex w-full flex-col gap-5">
         <PageHeader
           title={run?.title || paperId || 'Paper run'}
-          description="PathLab paper workspace. Read-only v1.5 surface."
+          description="PathLab paper workspace. Review, edit sections, and inspect generated artifacts."
         >
           <div className="flex flex-wrap items-center gap-2">
             {run ? <Badge variant={statusBadgeVariant(run.status)}>{run.status}</Badge> : null}

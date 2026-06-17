@@ -1,21 +1,24 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { BookOpen, Download, FileCode2, Loader2, Maximize2, MousePointer2, ZoomIn, ZoomOut } from 'lucide-react'
+import { BookOpen, Download, FileCode2, Loader2, Maximize2, MousePointer2, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
   downloadPaperExport,
   getPaperFileBlob,
   getPaperFileUrl,
   getPaperSections,
+  postPaperRenderExport,
+  type PaperRunArtifact,
   type PaperSectionListResponse,
   type PaperRunDetail,
 } from '../../api/papers'
 import { normalizeForMatch, pdfMatchSection } from '../../lib/pdfSectionMatch'
+import { expandPdfSelectionToSourceSentences } from '../../lib/sentenceBoundary'
 import { Button } from '../ui/button'
 import { Card, CardContent } from '../ui/card'
 import { RegenerateSelectionPanel, type SelectionInfo } from './RegenerateSelectionPanel'
-import { SECTION_ORDER, labelForSection } from './SectionsTab'
+import { SECTION_ORDER, labelForSection, sectionBodyView } from './SectionsTab'
 
 const PdfViewer = lazy(() => import('./PdfViewer').then((module) => ({ default: module.PdfViewer })))
 
@@ -55,6 +58,10 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
   const pdfPath = `final/${template}/main.pdf`
   const bundlePath = `exports/${template}_bundle.zip`
   const pdfArtifact = (run.artifacts ?? []).find((artifact) => artifact.path === pdfPath)
+  const pdfArtifactMeta = pdfArtifact as (PaperRunArtifact & { stale?: boolean }) | undefined
+  const pdfArtifactStale = Boolean(pdfArtifactMeta?.stale)
+  const pipelineBlocksRender =
+    run.status === 'pending' || run.status === 'running' || run.status === 'awaiting_outline_approval'
   const isPdfPublished = Boolean(
     pdfArtifact &&
       pdfArtifact.visibility === 'public' &&
@@ -97,6 +104,14 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
 
   const downloadMutation = useMutation({
     mutationFn: () => downloadPaperExport(paperId, template),
+  })
+  const renderExportMutation = useMutation({
+    mutationFn: () => postPaperRenderExport(paperId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['paper-run', paperId] })
+      await queryClient.invalidateQueries({ queryKey: ['paper-file', paperId] })
+      onPdfRefreshNeeded()
+    },
   })
 
   const isMissing = !isPdfPublished || artifactUnavailable(pdfQuery.error)
@@ -148,14 +163,32 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       }
 
       setSourceSection(match.section_name)
+      // Expand the PDF selection to whole source sentences. If the user only
+      // grabbed half a sentence, walk into the matched section's LaTeX source
+      // and round outwards to sentence boundaries there. Strip the section /
+      // abstract wrapper first so the expansion can never absorb commands
+      // like `\begin{abstract}` or `\section{Methods}` into the selection.
+      const matchedSection = sections.find((s) => s.section_name === match.section_name)
+      const matchedBodyView = matchedSection
+        ? sectionBodyView(matchedSection.text, match.section_name)
+        : null
+      const sourceText = matchedBodyView?.bodyText ?? matchedSection?.text ?? ''
+      const expansion = expandPdfSelectionToSourceSentences(text, sourceText)
+      const snappedText = expansion?.text ?? text
+      const expanded = expansion?.expanded ?? false
+      const expansionNote = expanded
+        ? ' Selection expanded to whole sentences.'
+        : expansion === null
+          ? " Couldn't align selection with source sentences; sending raw text."
+          : ''
       setSelectionMessage({
         tone: 'success',
-        text: `Matched ${labelForSection(match.section_name)} (${Math.round(match.confidence * 100)}%).`,
+        text: `Matched ${labelForSection(match.section_name)} (${Math.round(match.confidence * 100)}%).${expansionNote}`,
       })
       setPdfSelection({
         sectionName: match.section_name,
         selection: {
-          text,
+          text: snappedText,
           paragraphIndex: 0, // backend selection_locator resolves precise paragraph from selected_text
           charStart: -1,     // negative ⇒ "from PDF, no precise char hint"
           charEnd: -1,
@@ -186,6 +219,29 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
           <p className="mt-1 text-sm text-slate-500">
             {pdfPath} is not available yet. Rendering/exporting will publish the PDF.
           </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="gap-2"
+              onClick={() => renderExportMutation.mutate()}
+              disabled={pipelineBlocksRender || renderExportMutation.isPending}
+            >
+              {renderExportMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {pipelineBlocksRender ? `Pipeline ${run.current_stage}` : 'Render PDF/export'}
+            </Button>
+          </div>
+          {renderExportMutation.error ? (
+            <p className="mt-3 text-sm text-red-600">
+              {renderExportMutation.error instanceof Error
+                ? renderExportMutation.error.message
+                : String(renderExportMutation.error)}
+            </p>
+          ) : null}
         </CardContent>
       </Card>
     )
@@ -249,6 +305,37 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           {downloadMutation.error instanceof Error ? downloadMutation.error.message : String(downloadMutation.error)} (
           {bundlePath})
+        </div>
+      ) : null}
+      {pdfArtifactStale ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div>
+            <div className="font-semibold">PDF/export may be stale.</div>
+            <div className="mt-0.5 text-amber-800">
+              Section source changed after the last render. Re-render before using the PDF as final.
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="gap-2 bg-amber-900 text-white hover:bg-amber-950"
+            onClick={() => renderExportMutation.mutate()}
+            disabled={pipelineBlocksRender || renderExportMutation.isPending}
+          >
+            {renderExportMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {pipelineBlocksRender ? `Pipeline ${run.current_stage}` : 'Re-render PDF/export'}
+          </Button>
+        </div>
+      ) : null}
+      {renderExportMutation.error ? (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {renderExportMutation.error instanceof Error
+            ? renderExportMutation.error.message
+            : String(renderExportMutation.error)}
         </div>
       ) : null}
       <div

@@ -99,7 +99,7 @@ export function WorkspaceTabs({
       </div>
 
       <Tabs.Content value="outline" className="p-4 focus:outline-none sm:p-5">
-        <OutlineTab paperId={paperId} />
+        <OutlineTab paperId={paperId} run={run} />
       </Tabs.Content>
       <Tabs.Content value="sections" className="p-4 focus:outline-none sm:p-5">
         <SectionsTab paperId={paperId} templateId={templateId} onPdfRefreshNeeded={onPdfRefreshNeeded} />

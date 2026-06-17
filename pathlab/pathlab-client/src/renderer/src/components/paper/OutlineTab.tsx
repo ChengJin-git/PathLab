@@ -1,13 +1,15 @@
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, Braces, Loader2 } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, Braces, CheckCircle2, Loader2, PlayCircle } from 'lucide-react'
 import { ApiError } from '../../api/client'
-import { getPaperFileJson, type OutlineDocument } from '../../api/papers'
+import { getPaperFileJson, putPaperOutline, type OutlineDocument, type PaperRunDetail } from '../../api/papers'
 import { Card, CardContent } from '../ui/card'
 import { Badge } from '../ui/badge'
+import { Button } from '../ui/button'
 
 interface OutlineTabProps {
   paperId: string
+  run: PaperRunDetail
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -70,15 +72,38 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
   )
 }
 
-export function OutlineTab({ paperId }: OutlineTabProps) {
+const POST_OUTLINE_STAGES = new Set([
+  'plotting',
+  'literature_review',
+  'section_writing',
+  'validating',
+  'refining',
+  'rendering',
+  'exporting',
+])
+
+export function OutlineTab({ paperId, run }: OutlineTabProps) {
+  const queryClient = useQueryClient()
   const outlineQuery = useQuery({
     queryKey: ['paper-file', paperId, 'drafts/outline.json'],
     queryFn: () => getPaperFileJson<OutlineDocument>(paperId, 'drafts/outline.json'),
     retry: false,
   })
+  const approveMutation = useMutation({
+    mutationFn: () => {
+      if (!outlineQuery.data) throw new Error('Outline is not loaded yet.')
+      return putPaperOutline(paperId, { outline: outlineQuery.data, approve: true })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['paper-run', paperId] })
+      await queryClient.invalidateQueries({ queryKey: ['paper-file', paperId, 'drafts/outline.json'] })
+    },
+  })
 
   const validation = useMemo(() => validateOutlineDocument(outlineQuery.data), [outlineQuery.data])
   const isMissing = artifactUnavailable(outlineQuery.error)
+  const awaitingApproval = run.status === 'awaiting_outline_approval'
+  const continuingAfterOutline = run.status === 'running' && POST_OUTLINE_STAGES.has(run.current_stage)
 
   if (outlineQuery.isLoading) {
     return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading outline...</div>
@@ -105,10 +130,52 @@ export function OutlineTab({ paperId }: OutlineTabProps) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">Outline JSON</h2>
-          <p className="text-sm text-slate-500">Read-only tree view from drafts/outline.json.</p>
+          <p className="text-sm text-slate-500">Review the generated outline before the agent writes sections.</p>
         </div>
-        {validation ? <Badge variant="secondary">OutlineDocument</Badge> : <Badge variant="destructive">Schema mismatch</Badge>}
+        <div className="flex flex-wrap items-center gap-2">
+          {awaitingApproval ? <Badge variant="secondary">Awaiting approval</Badge> : null}
+          {continuingAfterOutline ? <Badge variant="secondary">Continuing: {run.current_stage}</Badge> : null}
+          {validation ? <Badge variant="secondary">OutlineDocument</Badge> : <Badge variant="destructive">Schema mismatch</Badge>}
+        </div>
       </div>
+
+      {awaitingApproval ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="flex min-w-0 items-start gap-2">
+            <PlayCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="font-semibold">Outline is ready for review.</div>
+              <div className="mt-0.5 text-amber-800">
+                Approving continues through plotting, citations, sections, validation, and PDF/export.
+              </div>
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="gap-2 bg-amber-900 text-white hover:bg-amber-950"
+            onClick={() => approveMutation.mutate()}
+            disabled={!validation || approveMutation.isPending}
+          >
+            {approveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Approve & continue
+          </Button>
+        </div>
+      ) : null}
+
+      {continuingAfterOutline ? (
+        <div className="flex items-start gap-2 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
+          <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+          The outline has been approved. The paper agent is now running the post-outline stages.
+        </div>
+      ) : null}
+
+      {approveMutation.error ? (
+        <div className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {approveMutation.error instanceof Error ? approveMutation.error.message : String(approveMutation.error)}
+        </div>
+      ) : null}
 
       {!validation ? (
         <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
