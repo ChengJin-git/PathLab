@@ -193,3 +193,26 @@ def test_get_citations_includes_coverage_report(client: TestClient) -> None:
         "threshold": 0.9,
         "status": "passed",
     }
+
+
+def test_dev_server_get_citations_route_is_available(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    from backend.common.config import Config
+    from pathlab_paper_agent.dev_server import create_app
+
+    monkeypatch.setattr(Config, "get_uploads_dir", classmethod(lambda cls: tmp_path))
+    app = create_app(auto_run=False)
+    paths = _make_run("paper_dev_citations")
+    ref = _selected_ref("Dev2024")
+    _write_json(paths.citations_dir / "selected_refs.json", {"items": [ref.to_dict()]})
+    _write_json(
+        paths.outline_json,
+        {"section_plan": [{"section": "Introduction", "required_cites": ["Dev2024"]}]},
+    )
+
+    response = TestClient(app).get("/papers/paper_dev_citations/citations")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["paper_id"] == "paper_dev_citations"
+    assert body["selected_refs"][0]["key"] == "Dev2024"
+    assert body["required_keys"] == ["Dev2024"]

@@ -354,3 +354,35 @@ def test_delete_required_ref_returns_409(client: TestClient) -> None:
 
     assert response.status_code == 409
     assert response.json()["code"] == "still_required"
+
+
+def test_dev_server_manual_add_and_delete_routes_are_available(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    from backend.common.config import Config
+    from pathlab_paper_agent.dev_server import create_app
+
+    monkeypatch.setattr(Config, "get_uploads_dir", classmethod(lambda cls: tmp_path))
+    paths = _make_run("paper_dev_manual_add_delete")
+    client = TestClient(create_app(auto_run=False))
+
+    add_response = client.post(
+        "/papers/paper_dev_manual_add_delete/citations",
+        json={
+            "mode": "manual",
+            "manual": {
+                "title": "Dev server citation workflow",
+                "authors": ["Dev D"],
+                "year": 2026,
+            },
+        },
+    )
+
+    assert add_response.status_code == 201, add_response.text
+    key = add_response.json()["key"]
+    assert _read_selected(paths)[0]["key"] == key
+    assert key in paths.refs_bib.read_text(encoding="utf-8")
+
+    delete_response = client.delete(f"/papers/paper_dev_manual_add_delete/citations/{key}")
+
+    assert delete_response.status_code == 200, delete_response.text
+    assert delete_response.json() == {"deleted": True, "key": key}
+    assert _read_selected(paths) == []
