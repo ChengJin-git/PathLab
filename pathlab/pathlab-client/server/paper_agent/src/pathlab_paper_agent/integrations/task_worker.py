@@ -206,3 +206,24 @@ async def run_after_outline(paper_id: str, **kwargs: Any) -> None:
         success_stage="completed",
         runner=_runner,
     )
+
+
+async def run_render_export(paper_id: str, **kwargs: Any) -> None:
+    """Re-render PDFs/exports after a user-edited section source."""
+    from pathlab_paper_agent.pipeline import run_render_export as _run_render_export
+
+    def _runner(paper_id_arg: str, uploads_dir: Path, config_path: Path) -> object:
+        return _run_render_export(
+            paper_id_arg,
+            uploads_dir=uploads_dir,
+            config_path=config_path,
+        )
+
+    await _run_pipeline_job(
+        paper_id,
+        dict(kwargs),
+        start_stage="rendering",
+        success_status="completed",
+        success_stage="completed",
+        runner=_runner,
+    )

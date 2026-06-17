@@ -74,6 +74,11 @@ _STAGES_AFTER_OUTLINE: tuple[PaperRunStage, ...] = (
     PaperRunStage.exporting,
 )
 
+_STAGES_RENDER_EXPORT: tuple[PaperRunStage, ...] = (
+    PaperRunStage.rendering,
+    PaperRunStage.exporting,
+)
+
 
 # ---------------------------------------------------------------------------
 # Manifest helpers
@@ -542,6 +547,29 @@ def run_after_outline(
         uploads_dir=uploads_dir,
         config_path=config_path,
         message="Standalone paper-agent scaffold completed.",
+    )
+
+
+def run_render_export(
+    paper_id: str,
+    *,
+    uploads_dir: Optional[str | Path] = None,
+    config_path: Optional[str | Path] = None,
+) -> PaperManifest:
+    """Re-render final templates and export bundles from the current sections."""
+    for stage in _STAGES_RENDER_EXPORT:
+        run_stage(
+            paper_id,
+            stage,
+            uploads_dir=uploads_dir,
+            config_path=config_path,
+        )
+    return run_stage(
+        paper_id,
+        PaperRunStage.completed,
+        uploads_dir=uploads_dir,
+        config_path=config_path,
+        message="Standalone paper-agent render/export completed.",
     )
 
 

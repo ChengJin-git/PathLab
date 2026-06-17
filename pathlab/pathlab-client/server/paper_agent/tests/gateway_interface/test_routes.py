@@ -462,6 +462,124 @@ def test_get_paper_sections_returns_registered_public_section_text(client) -> No
     ]
 
 
+def test_put_paper_section_replaces_text_and_marks_downstream_stale(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Section edit",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    original = "\\section{Results}\nOriginal results.\n"
+    updated = "\\section{Results}\nUser edited results.\n"
+    _register_public_section(paths, "results", original)
+    _register_artifact(
+        paths,
+        "final/miccai/main.pdf",
+        b"%PDF-1.4\n",
+        label="miccai compiled PDF",
+        content_type="application/pdf",
+    )
+    source_hash = hashlib.sha256(original.encode("utf-8")).hexdigest()
+
+    response = client.put(
+        f"/papers/{paper_id}/sections/results",
+        json={"text": updated, "source_hash": source_hash},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["section"]["text"] == updated
+    assert body["section"]["content_hash"] == hashlib.sha256(updated.encode("utf-8")).hexdigest()
+    assert body["downstream_stale"] is True
+    assert "final/miccai/main.pdf" in body["stale_artifacts"]
+    assert (paths.sections_dir / "results.tex").read_text(encoding="utf-8") == updated
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest["artifact_index"]["drafts/sections/results.tex"]["stale"] is False
+    assert manifest["artifact_index"]["final/miccai/main.pdf"]["stale"] is True
+    assert manifest["stage_log"][-1]["status"] == "user_edited"
+
+
+def test_put_paper_section_rejects_stale_source_hash(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Section stale edit",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    original = "\\section{Results}\nOriginal results.\n"
+    _register_public_section(paths, "results", original)
+
+    response = client.put(
+        f"/papers/{paper_id}/sections/results",
+        json={"text": "\\section{Results}\nLate edit.\n", "source_hash": "sha256:not-current"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "stale_section"
+    assert (paths.sections_dir / "results.tex").read_text(encoding="utf-8") == original
+
+
+@pytest.mark.asyncio
+async def test_post_render_export_sets_running_and_enqueues_handler(client, db_session, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Render edited sections",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    _register_public_section(paths, "results", "\\section{Results}\nEdited results.\n")
+    await PaperGenerationRunRepository.update(
+        db_session,
+        paper_id,
+        status=PaperRunStatus.completed.value,
+        current_stage=PaperRunStage.completed.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db_session.commit()
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    manifest["status"] = PaperRunStatus.completed.value
+    manifest["current_stage"] = PaperRunStage.completed.value
+    paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    enqueued: list[tuple[str, str]] = []
+
+    async def _capture_enqueue(paper_id_arg: str, handler: str):
+        enqueued.append((paper_id_arg, handler))
+        return {"paper_id": paper_id_arg, "handler": handler}
+
+    monkeypatch.setattr(api_routes, "_enqueue_paper_generation_job", _capture_enqueue)
+
+    response = client.post(f"/papers/{paper_id}/render-export")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "paper_id": paper_id,
+        "status": "running",
+        "current_stage": "rendering",
+        "message": "Render/export job queued.",
+    }
+    assert enqueued == [(paper_id, "paper_generation.render_export")]
+    detail = client.get(f"/papers/{paper_id}").json()
+    assert detail["status"] == "running"
+    assert detail["current_stage"] == "rendering"
+    assert detail["stage_log"][-1]["status"] == "queued"
+
+
 def test_post_regenerate_section_official_route_returns_summary(
     client,
     monkeypatch,

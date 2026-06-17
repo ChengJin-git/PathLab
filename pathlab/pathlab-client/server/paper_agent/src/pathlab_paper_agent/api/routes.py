@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import uuid
 from collections import Counter
@@ -65,6 +66,8 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     PaperSection,
     PaperSectionListResponse,
     PaperSectionRegenerateResponse,
+    PaperSectionUpdateRequest,
+    PaperSectionUpdateResponse,
     RegenerateJobEntry,
     RegenerateRejectRequest,
     RegenerateRejectResponse,
@@ -135,6 +138,9 @@ _REFINEMENT_LOG_PATH = "validation/refinement_log.json"
 _MAX_SAMPLE_ISSUES = 3
 _RUN_UNTIL_OUTLINE_HANDLER = "paper_generation.run_until_outline"
 _RUN_AFTER_OUTLINE_HANDLER = "paper_generation.run_after_outline"
+_RENDER_EXPORT_HANDLER = "paper_generation.render_export"
+_SECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,80}$")
+_SECTION_EDIT_STALE_PREFIXES = ("final/", "exports/", "validation/")
 
 
 # ---------------------------------------------------------------------------
@@ -653,6 +659,72 @@ def _section_from_file(paths: PaperRunPaths, path) -> PaperSection:
     )
 
 
+def _section_path_for_edit(paths: PaperRunPaths, manifest: Optional[PaperManifest], section_name: str) -> tuple[Path, str]:
+    if not _SECTION_NAME_PATTERN.fullmatch(section_name):
+        raise HTTPException(status_code=400, detail=f"Invalid section_name: {section_name!r}")
+    path = paths.sections_dir / f"{section_name}.tex"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Section {section_name} not found")
+    rel_path = path.relative_to(paths.root).as_posix()
+    if not is_path_allowed_for_download(rel_path):
+        raise HTTPException(status_code=403, detail="Section path is not editable.")
+    if not _is_registered_public_artifact(manifest, rel_path):
+        raise HTTPException(status_code=403, detail="Section is not registered public.")
+    return path, rel_path
+
+
+def _normalized_hash(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return text.removeprefix("sha256:") or None
+
+
+def _mark_downstream_artifacts_stale(manifest: PaperManifest) -> list[str]:
+    stale_paths: list[str] = []
+    for rel_path, raw in manifest.artifact_index.items():
+        if not rel_path.startswith(_SECTION_EDIT_STALE_PREFIXES) or not isinstance(raw, dict):
+            continue
+        raw["stale"] = True
+        stale_paths.append(rel_path)
+    return sorted(stale_paths)
+
+
+def _register_edited_section(manifest: PaperManifest, section_name: str, rel_path: str) -> None:
+    previous = manifest.artifact_index.get(rel_path)
+    payload = dict(previous) if isinstance(previous, dict) else {}
+    payload.update(
+        {
+            "status": "ready",
+            "visibility": "public",
+            "downloadable": True,
+            "label": payload.get("label") or f"Section: {section_name.replace('_', ' ').title()}",
+            "content_type": payload.get("content_type") or "text/x-tex",
+            "stale": False,
+        }
+    )
+    manifest.artifact_index[rel_path] = payload
+
+
+def _append_section_edit_stage_log(
+    manifest: PaperManifest,
+    *,
+    section_name: str,
+    stale_count: int,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.section_writing.value,
+            "status": "user_edited",
+            "ts": now,
+            "started_at": now,
+            "finished_at": now,
+            "duration_ms": 0,
+            "message": f"User edited section {section_name}; {stale_count} downstream artifact(s) marked stale.",
+            "section_name": section_name,
+        }
+    )
+
+
 def _public_sections(paths: PaperRunPaths, manifest: Optional[PaperManifest]) -> list[PaperSection]:
     if manifest is None or not paths.sections_dir.is_dir():
         return []
@@ -959,6 +1031,138 @@ async def update_paper_outline(
 
 
 # ---------------------------------------------------------------------------
+# POST /papers/{paper_id}/render-export — rerender edited section source
+# ---------------------------------------------------------------------------
+
+@router.post("/{paper_id}/render-export")
+async def rerender_paper_export(
+    paper_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    row = await _load_or_404(db, paper_id, user)
+    if row.status in {PaperRunStatus.pending.value, PaperRunStatus.running.value}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"render/export cannot be started while run status is {row.status}",
+        )
+    if row.status == PaperRunStatus.awaiting_outline_approval.value:
+        raise HTTPException(
+            status_code=409,
+            detail="approve the outline before rendering/exporting the paper",
+        )
+
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+    if manifest.status in {PaperRunStatus.pending, PaperRunStatus.running}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"render/export cannot be started while manifest status is {manifest.status.value}",
+        )
+    if manifest.status == PaperRunStatus.awaiting_outline_approval:
+        raise HTTPException(
+            status_code=409,
+            detail="approve the outline before rendering/exporting the paper",
+        )
+    if not paths.sections_dir.is_dir() or not any(paths.sections_dir.glob("*.tex")):
+        raise HTTPException(status_code=409, detail="section source has not been generated yet")
+
+    now = datetime.now(UTC)
+    manifest.status = PaperRunStatus.running
+    manifest.current_stage = PaperRunStage.rendering
+    manifest.error_message = None
+    manifest.finished_at = None
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.rendering.value,
+            "status": "queued",
+            "ts": now.isoformat(),
+            "started_at": now.isoformat(),
+            "finished_at": None,
+            "duration_ms": None,
+            "message": "Render/export requested after section edits.",
+        }
+    )
+    append_pipeline_event(
+        paths,
+        manifest,
+        "render_export_requested",
+        stage=PaperRunStage.rendering.value,
+        status="queued",
+        started_at=now.isoformat(),
+        message="Render/export requested after section edits.",
+    )
+    _save_manifest(paths, manifest)
+    await PaperGenerationRunRepository.update(
+        db,
+        paper_id,
+        status=PaperRunStatus.running.value,
+        current_stage=PaperRunStage.rendering.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db.commit()
+
+    try:
+        await _enqueue_paper_generation_job(paper_id, _RENDER_EXPORT_HANDLER)
+    except Exception as exc:
+        logger.exception("paper_generation: failed to enqueue render/export job for %s", paper_id)
+        failed_at = datetime.now(UTC)
+        manifest.status = PaperRunStatus.failed
+        manifest.current_stage = PaperRunStage.rendering
+        manifest.error_message = f"render/export enqueue failed: {exc}"
+        manifest.finished_at = failed_at
+        manifest.stage_log.append(
+            {
+                "stage": PaperRunStage.rendering.value,
+                "status": "failed",
+                "ts": failed_at.isoformat(),
+                "started_at": now.isoformat(),
+                "finished_at": failed_at.isoformat(),
+                "duration_ms": max(0, int((failed_at - now).total_seconds() * 1000)),
+                "message": manifest.error_message,
+                "error_message": str(exc),
+            }
+        )
+        append_pipeline_event(
+            paths,
+            manifest,
+            "render_export_enqueue_failed",
+            stage=PaperRunStage.rendering.value,
+            status="failed",
+            started_at=now.isoformat(),
+            finished_at=failed_at.isoformat(),
+            duration_ms=max(0, int((failed_at - now).total_seconds() * 1000)),
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            message=manifest.error_message,
+        )
+        _save_manifest(paths, manifest)
+        await PaperGenerationRunRepository.update(
+            db,
+            paper_id,
+            status=PaperRunStatus.failed.value,
+            current_stage=PaperRunStage.rendering.value,
+            error_message=manifest.error_message,
+            finished_at=failed_at,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to enqueue render/export paper job: {exc}",
+        ) from exc
+
+    return {
+        "paper_id": paper_id,
+        "status": PaperRunStatus.running.value,
+        "current_stage": PaperRunStage.rendering.value,
+        "message": "Render/export job queued.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # GET /papers/{paper_id}/sections — editable public section text
 # ---------------------------------------------------------------------------
 
@@ -972,6 +1176,47 @@ async def get_paper_sections(
     paths = PaperRunPaths.for_paper(paper_id)
     manifest = _load_manifest(paths)
     return PaperSectionListResponse(sections=_public_sections(paths, manifest))
+
+
+@router.put("/{paper_id}/sections/{section_name}", response_model=PaperSectionUpdateResponse)
+async def update_paper_section(
+    paper_id: str,
+    section_name: str,
+    body: PaperSectionUpdateRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> PaperSectionUpdateResponse | JSONResponse:
+    await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+    path, rel_path = _section_path_for_edit(paths, manifest, section_name)
+    current_text = path.read_text(encoding="utf-8")
+    current_hash = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+    expected_hash = _normalized_hash(body.source_hash)
+    if expected_hash and expected_hash != current_hash:
+        return _error_response(
+            409,
+            "stale_section",
+            "Section changed since it was loaded. Refresh before saving.",
+            current_source_hash=current_hash,
+        )
+
+    _atomic_write_text(path, body.text)
+    _register_edited_section(manifest, section_name, rel_path)
+    stale_artifacts = _mark_downstream_artifacts_stale(manifest)
+    _append_section_edit_stage_log(
+        manifest,
+        section_name=section_name,
+        stale_count=len(stale_artifacts),
+    )
+    _save_manifest(paths, manifest)
+    return PaperSectionUpdateResponse(
+        section=_section_from_file(paths, path),
+        downstream_stale=bool(stale_artifacts),
+        stale_artifacts=stale_artifacts,
+    )
 
 
 # ---------------------------------------------------------------------------

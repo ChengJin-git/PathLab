@@ -79,3 +79,29 @@ async def test_initialize_paper_run_idempotent(db_session) -> None:
     paths2 = await initialize_paper_run(db_session, config)
     assert paths1.root == paths2.root
     assert paths2.manifest.is_file()
+
+
+def test_run_render_export_replays_only_render_and_export(monkeypatch) -> None:
+    from pathlab_paper_agent import pipeline
+
+    calls: list[tuple[str, str, str | None]] = []
+
+    def fake_run_stage(paper_id: str, stage, **kwargs):  # noqa: ANN001, ANN003
+        stage_value = stage.value if hasattr(stage, "value") else str(stage)
+        calls.append((paper_id, stage_value, kwargs.get("message")))
+        return {"paper_id": paper_id, "stage": stage_value}
+
+    monkeypatch.setattr(pipeline, "run_stage", fake_run_stage)
+
+    result = pipeline.run_render_export(
+        "paper_render_export",
+        uploads_dir="/tmp/uploads",
+        config_path="/tmp/config.json",
+    )
+
+    assert result == {"paper_id": "paper_render_export", "stage": "completed"}
+    assert calls == [
+        ("paper_render_export", "rendering", None),
+        ("paper_render_export", "exporting", None),
+        ("paper_render_export", "completed", "Standalone paper-agent render/export completed."),
+    ]

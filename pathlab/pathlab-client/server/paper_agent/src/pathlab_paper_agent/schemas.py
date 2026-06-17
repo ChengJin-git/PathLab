@@ -114,6 +114,7 @@ class PaperRunArtifact(BaseModel):
     downloadable: bool = True
     label: Optional[str] = None
     content_type: Optional[str] = None
+    stale: bool = False
 
 
 class PaperArtifactIndexEntry(BaseModel):
@@ -412,6 +413,19 @@ class PaperSection(BaseModel):
 
 class PaperSectionListResponse(BaseModel):
     sections: list[PaperSection] = Field(default_factory=list)
+
+
+class PaperSectionUpdateRequest(BaseModel):
+    """User edit payload for replacing one public section source file."""
+
+    text: str = Field(min_length=1)
+    source_hash: Optional[str] = None
+
+
+class PaperSectionUpdateResponse(BaseModel):
+    section: PaperSection
+    downstream_stale: bool = False
+    stale_artifacts: list[str] = Field(default_factory=list)
 
 
 class SelectionLocatorResult(BaseModel):

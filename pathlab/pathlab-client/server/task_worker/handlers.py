@@ -212,6 +212,11 @@ async def handle_paper_generation_run_after_outline(descriptor: TaskDescriptor) 
     await paper_generation_jobs.run_after_outline(paper_id, **kwargs)
 
 
+async def handle_paper_generation_render_export(descriptor: TaskDescriptor) -> None:
+    paper_id, kwargs = _paper_generation_payload(descriptor)
+    await paper_generation_jobs.run_render_export(paper_id, **kwargs)
+
+
 _register("training.preflight", handle_training_preflight)
 _register("training.run", handle_training_run)
 _register("training.patch_then_run", handle_training_patch_then_run)
@@ -224,3 +229,4 @@ _register("paper_generation.run", handle_paper_generation_run)
 _register("paper_generation.regenerate_section", handle_paper_generation_regenerate_section)
 _register("paper_generation.run_until_outline", handle_paper_generation_run_until_outline)
 _register("paper_generation.run_after_outline", handle_paper_generation_run_after_outline)
+_register("paper_generation.render_export", handle_paper_generation_render_export)
