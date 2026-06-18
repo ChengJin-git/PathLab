@@ -354,6 +354,7 @@ def _manual_patch_loader(wsi_path, coords_h5, transforms, batch_size, patch_erro
         with h5py.File(coords_h5, "r") as f:
             coords = f["coords"][:]
             attrs = dict(f["coords"].attrs) if "coords" in f else dict(f.attrs)
+            coords = np.asarray(coords)
     except Exception as exc:
         patch_errors.append(f"coords_read_failed: {type(exc).__name__}: {exc}")
         return None

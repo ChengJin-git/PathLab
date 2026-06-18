@@ -45,6 +45,26 @@ import time
 from pathlib import Path
 from typing import Any
 
+
+def _ensure_template_common_on_path() -> None:
+    """Make domain/templates/common importable from copied sandbox scripts."""
+    candidates: list[Path] = []
+    here = Path(__file__).resolve()
+    candidates.append(here.parent)
+    for parent in here.parents:
+        candidates.append(parent / "server" / "backend" / "pathscientist" / "domain" / "templates")
+
+    for candidate in candidates:
+        registry = candidate / "common" / "extractors" / "registry.py"
+        if registry.exists():
+            value = str(candidate)
+            if value not in sys.path:
+                sys.path.insert(0, value)
+            return
+
+
+_ensure_template_common_on_path()
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -320,6 +340,32 @@ def _split_items(items: list[tuple[Path, int]], train_ratio=0.7, val_ratio=0.15)
     return {"train": train, "val": val, "test": test}
 
 
+def _ensure_validation_split_from_train(
+    splits: dict[str, list[tuple[Path, int]]],
+    val_ratio: float = 0.1,
+) -> dict[str, list[tuple[Path, int]]]:
+    """Match PathLab PatchClassificationTrainer for train/test-only splits.
+
+    Native PathLab patch classification auto-creates validation data from
+    train when ``val`` is absent. It must not reuse the held-out test split
+    for model selection or early stopping.
+    """
+    train_items = list(splits.get("train", []))
+    val_items = list(splits.get("val", []))
+    test_items = list(splits.get("test", []))
+    if val_items or len(train_items) <= 1:
+        return {"train": train_items, "val": val_items, "test": test_items}
+
+    n_val = max(1, int(len(train_items) * val_ratio))
+    rng = random.Random(SEED)
+    rng.shuffle(train_items)
+    return {
+        "train": train_items[n_val:],
+        "val": train_items[:n_val],
+        "test": test_items,
+    }
+
+
 def _load_splits_json(splits_file: Path, items_root: Path) -> dict[str, list[tuple[Path, int]]] | None:
     if not splits_file.exists():
         return None
@@ -379,6 +425,9 @@ def _load_pathlab_training_manifest(
             if isinstance(item, dict) and str(item.get("label") or "").strip()
         }
     )
+    positive_label = os.getenv("PATHLAB_POSITIVE_CLASS", "MSIH")
+    if positive_label in labels and len(labels) == 2:
+        labels = [label for label in labels if label != positive_label] + [positive_label]
     if not labels:
         return None
     class_to_idx = {label: idx for idx, label in enumerate(labels)}
@@ -471,8 +520,8 @@ def _build_loss(class_counts: list[int]) -> nn.Module:
 
 
 # ── Training loop ──────────────────────────────────────────────────────────
-def _evaluate(model, loader, device, n_classes) -> dict[str, float]:
-    from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+def _evaluate(model, loader, device, n_classes) -> dict[str, Any]:
+    from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_score
     model.eval()
     all_logits, all_labels = [], []
     with torch.no_grad():
@@ -482,22 +531,96 @@ def _evaluate(model, loader, device, n_classes) -> dict[str, float]:
             all_logits.append(logits.cpu())
             all_labels.append(labels)
     if not all_logits:
-        return {"auc": 0.0, "accuracy": 0.0, "f1": 0.0}
+        return {"auc": 0.0, "accuracy": 0.0, "f1": 0.0, "confusion_matrix": []}
     logits = torch.cat(all_logits)
     labels = torch.cat(all_labels)
     preds = logits.argmax(dim=1).numpy()
     probs = F.softmax(logits, dim=1).numpy()
-    metrics: dict[str, float] = {}
+    metrics: dict[str, Any] = {}
     metrics["accuracy"] = float(accuracy_score(labels, preds))
     metrics["f1"] = float(f1_score(labels, preds, average="macro", zero_division=0))
+    metrics["confusion_matrix"] = confusion_matrix(
+        labels, preds, labels=list(range(n_classes))
+    ).astype(int).tolist()
     if n_classes == 2:
-        metrics["auc"] = float(roc_auc_score(labels, probs[:, 1]))
+        try:
+            metrics["auc"] = float(roc_auc_score(labels, probs[:, 1]))
+        except ValueError:
+            metrics["auc"] = 0.0
     else:
         try:
             metrics["auc"] = float(roc_auc_score(labels, probs, multi_class="ovr"))
         except ValueError:
             metrics["auc"] = 0.0
     return metrics
+
+
+def _split_class_counts(
+    splits: dict[str, list[tuple[Path, int]]],
+    classes: list[str],
+) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for split_name, items in splits.items():
+        split_counts = {label: 0 for label in classes}
+        for _path, label_idx in items:
+            if 0 <= int(label_idx) < len(classes):
+                split_counts[classes[int(label_idx)]] += 1
+        counts[split_name] = split_counts
+    return counts
+
+
+def _build_metrics_payload(
+    *,
+    test_metrics: dict[str, Any],
+    best_val_metrics: dict[str, Any],
+    feature_dim: int | None,
+    classes: list[str],
+    train_items: list[tuple[Path, int]],
+    val_items: list[tuple[Path, int]],
+    test_items: list[tuple[Path, int]],
+    classifier_head_name: str,
+    checkpoint_path: Path,
+    epochs_completed: int,
+    training_duration: float,
+    wall_duration: float,
+) -> dict[str, Any]:
+    positive_class = os.getenv("PATHLAB_POSITIVE_CLASS", "MSIH")
+    if positive_class not in classes and classes:
+        positive_class = classes[-1]
+    split_items = {"train": train_items, "val": val_items, "test": test_items}
+    return {
+        "auc": test_metrics.get("auc", 0.0),
+        "accuracy": test_metrics.get("accuracy", 0.0),
+        "f1": test_metrics.get("f1", 0.0),
+        "val_auc": best_val_metrics.get("auc", 0.0),
+        "val_accuracy": best_val_metrics.get("accuracy", 0.0),
+        "val_f1": best_val_metrics.get("f1", 0.0),
+        "epochs": epochs_completed if epochs_completed else EPOCHS,
+        "epochs_max": EPOCHS,
+        "early_stopping_patience": EARLY_STOPPING_PATIENCE,
+        "early_stopped": epochs_completed < EPOCHS if epochs_completed else False,
+        "feature_dim": int(feature_dim or 0),
+        "extractor": DEFAULT_EXTRACTOR,
+        "classifier_head": classifier_head_name,
+        "n_classes": len(classes),
+        "classes": classes,
+        "positive_class": positive_class,
+        "n_train": len(train_items),
+        "n_val": len(val_items),
+        "n_test": len(test_items),
+        "split_class_counts": _split_class_counts(split_items, classes),
+        "val_metrics": best_val_metrics,
+        "test_metrics": test_metrics,
+        "confusion_matrix": test_metrics.get("confusion_matrix", []),
+        "checkpoint_path": str(checkpoint_path),
+        "task_level": "patch",
+        "mil_aggregation": False,
+        "duration_sec": round(training_duration, 2),
+        "training_duration_sec": round(training_duration, 2),
+        "wall_duration_sec": round(wall_duration, 2),
+        "quick_check": QUICK_CHECK,
+        "run_mode": RUN_MODE,
+    }
 
 
 def main() -> None:
@@ -586,8 +709,9 @@ def main() -> None:
         splits = _load_splits_json(splits_path, images_root_for_csv)
     if splits is None:
         splits = _split_items(items)
+    splits = _ensure_validation_split_from_train(splits)
     train_items = splits["train"]
-    val_items = splits["val"] or splits["test"]
+    val_items = splits["val"]
     test_items = splits["test"] or splits["val"]
 
     # Plan-2026-04-28 P1 #4: stratified caps so a class with few samples
@@ -660,6 +784,7 @@ def main() -> None:
 
     # 5. Train.
     best_val_auc = -1.0
+    best_val_metrics: dict[str, Any] = {}
     best_state: dict[str, Any] | None = None
     epochs_without_improvement = 0
     last_epoch_completed = 0
@@ -685,6 +810,7 @@ def main() -> None:
         last_epoch_completed = epoch + 1
         if val_metrics["auc"] > best_val_auc:
             best_val_auc = val_metrics["auc"]
+            best_val_metrics = dict(val_metrics)
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             epochs_without_improvement = 0
         else:
@@ -705,36 +831,21 @@ def main() -> None:
     test_metrics = _evaluate(model, test_loader, device, n_classes)
     training_duration = time.time() - started
     wall_duration = time.time() - wall_started
-    metrics = {
-        "auc": test_metrics["auc"],
-        "accuracy": test_metrics["accuracy"],
-        "f1": test_metrics["f1"],
-        "val_auc": best_val_auc,
-        "epochs": last_epoch_completed if last_epoch_completed else EPOCHS,
-        "epochs_max": EPOCHS,
-        "early_stopping_patience": EARLY_STOPPING_PATIENCE,
-        "early_stopped": last_epoch_completed < EPOCHS if last_epoch_completed else False,
-        "feature_dim": int(feature_dim or 0),
-        "extractor": DEFAULT_EXTRACTOR,
-        "n_classes": n_classes,
-        "n_train": len(train_items),
-        "n_val": len(val_items),
-        "n_test": len(test_items),
-        # Plan-2026-04-28 P2 #8: report BOTH timings. ``duration_sec``
-        # stays as the inner training-loop time for backward
-        # compatibility (existing tests/tools), while
-        # ``wall_duration_sec`` includes data loading + feature
-        # materialization. The orchestrator should prefer wall time for
-        # scheduling.
-        "duration_sec": round(training_duration, 2),
-        "training_duration_sec": round(training_duration, 2),
-        "wall_duration_sec": round(wall_duration, 2),
-        # Plan T6 contract: report whether this run honored PATHLAB_QUICK_CHECK.
-        # The orchestrator refuses to mark quick_check passed when this is False
-        # while the agent claimed to be running quick_check.
-        "quick_check": QUICK_CHECK,
-        "run_mode": RUN_MODE,
-    }
+    checkpoint_path = OUTPUT_DIR / "best_model.pth"
+    metrics = _build_metrics_payload(
+        test_metrics=test_metrics,
+        best_val_metrics=best_val_metrics or {"auc": best_val_auc},
+        feature_dim=feature_dim,
+        classes=classes,
+        train_items=train_items,
+        val_items=val_items,
+        test_items=test_items,
+        classifier_head_name=type(model).__name__,
+        checkpoint_path=checkpoint_path,
+        epochs_completed=last_epoch_completed if last_epoch_completed else EPOCHS,
+        training_duration=training_duration,
+        wall_duration=wall_duration,
+    )
     (OUTPUT_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2))
     logger.info("Wrote metrics.json: %s", json.dumps(metrics))
 

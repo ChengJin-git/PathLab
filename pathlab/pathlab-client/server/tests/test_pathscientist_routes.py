@@ -1,4 +1,5 @@
 import importlib.util
+import asyncio
 import io
 import json
 import os
@@ -812,6 +813,115 @@ def test_create_session_resolves_pathlab_dataset_name_from_question_without_clie
     assert captured_mounts == [{str(prepared_dir): "/data/pathscientist_tcga_luad"}]
 
 
+def test_resolve_pathlab_dataset_mounts_uses_explicit_dataset_data_type(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    selected_dataset_id = "patch-dataset"
+    selected_group_id = "patch-group"
+    captured_data_types: list[str | None] = []
+    captured_group_ids: list[str] = []
+
+    class DatasetWithLazyDataGroup:
+        dataset_id = selected_dataset_id
+        name = "CRC-MSI-100patches"
+        is_public = True
+        user_id = None
+        parent_dataset_id = None
+        source_organ = "colorectal"
+        group_id = selected_group_id
+
+        @property
+        def data_group(self):
+            raise AssertionError("data_group relationship should not be lazy-loaded")
+
+    dataset = DatasetWithLazyDataGroup()
+    slides = [
+        SimpleNamespace(
+            wsi_id="patch-1",
+            wsi_path=str(tmp_path / "patch-1.jpg"),
+            label="MSIH",
+            split="train",
+            original_filename="patch-1.jpg",
+        ),
+        SimpleNamespace(
+            wsi_id="patch-2",
+            wsi_path=str(tmp_path / "patch-2.jpg"),
+            label="nonMSIH",
+            split="test",
+            original_filename="patch-2.jpg",
+        ),
+        SimpleNamespace(
+            wsi_id="patch-3",
+            wsi_path=str(tmp_path / "patch-3.jpg"),
+            label="MSIH",
+            split="train",
+            original_filename="patch-3.jpg",
+        ),
+    ]
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        assert dataset_id == selected_dataset_id
+        return dataset
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return []
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            assert dataset_id == selected_dataset_id
+            captured_data_types.append(kwargs.get("data_type"))
+            return slides
+
+    class FakeDataGroupRepository:
+        @staticmethod
+        async def get_by_id(db, group_id):
+            captured_group_ids.append(group_id)
+            assert group_id == selected_group_id
+            return SimpleNamespace(data_type="patch")
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(route_module, "_pathlab_dataset_view_parent", lambda: tmp_path / "views")
+    monkeypatch.setattr(
+        route_module,
+        "_prepare_pathlab_dataset_view",
+        lambda *, dataset, slides, view_dir: view_dir,
+    )
+    monkeypatch.setattr(
+        route_module,
+        "safe_session",
+        lambda: FakeSafeSession(),
+    )
+
+    repositories = types.ModuleType("backend.database.repositories")
+    repositories.WSIRepository = FakeWSIRepository
+    repositories.DataGroupRepository = FakeDataGroupRepository
+    sys.modules["backend.database.repositories"] = repositories
+
+    dependencies = types.ModuleType("backend.auth.dependencies")
+    dependencies.get_dataset_with_access = fake_get_dataset_with_access
+    dependencies.get_permitted_dataset_ids = fake_get_permitted_dataset_ids
+    sys.modules["backend.auth.dependencies"] = dependencies
+
+    mounts = asyncio.run(
+        route_module._resolve_pathlab_dataset_mounts(
+            [selected_dataset_id],
+            SimpleNamespace(id="admin", is_admin=lambda: True),
+            question="patch level classification",
+        )
+    )
+
+    assert captured_data_types == ["patch"]
+    assert captured_group_ids == [selected_group_id]
+    assert len(mounts) == 1
+    assert list(mounts.values())[0].startswith("/data/crc_msi_100patches")
+
+
 def test_match_pathlab_datasets_from_question_prefers_visible_name_matches():
     route_module = load_route_module()
 
@@ -993,6 +1103,76 @@ def test_prepare_pathlab_dataset_view_uses_symlinks_and_generates_contract(tmp_p
     assert set(splits) >= {"train", "val", "test", "labels"}
     assert all(splits[key] for key in ("train", "val", "test"))
 
+
+def test_prepare_pathlab_patch_dataset_view_is_patch_readiness_ready(tmp_path):
+    route_module = load_route_module()
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    slides = []
+    specs = [
+        ("patch-1", "MSIH", "train"),
+        ("patch-2", "nonMSIH", "train"),
+        ("patch-3", "MSIH", "test"),
+        ("patch-4", "nonMSIH", "test"),
+    ]
+    for wsi_id, label, split in specs:
+        source = source_dir / f"{wsi_id}.jpg"
+        source.write_bytes(b"image")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=wsi_id,
+                wsi_path=str(source),
+                original_filename=source.name,
+                label=label,
+                split=split,
+            )
+        )
+    dataset = SimpleNamespace(
+        dataset_id="patch-dataset",
+        name="CRC-MSI-100patches",
+        source_organ="colorectal",
+        data_group=SimpleNamespace(data_type="patch"),
+    )
+
+    view_dir = route_module._prepare_pathlab_dataset_view(
+        dataset=dataset,
+        slides=slides,
+        view_dir=tmp_path / "patch-view",
+    )
+
+    assert sorted(p.name for p in (view_dir / "images").iterdir()) == ["MSIH", "nonMSIH"]
+    assert len(list((view_dir / "images" / "MSIH").iterdir())) == 2
+    assert len(list((view_dir / "images" / "nonMSIH").iterdir())) == 2
+    pathlab_manifest = json.loads(
+        (view_dir / "pathlab_training_manifest.json").read_text(encoding="utf-8")
+    )
+    assert [item["split"] for item in pathlab_manifest["items"]] == [
+        "train",
+        "train",
+        "test",
+        "test",
+    ]
+    assert all(str(view_dir / "images") in item["wsi_path"] for item in pathlab_manifest["items"])
+
+    from backend.pathscientist.dataset.readiness import assess_data_readiness
+    from backend.pathscientist.dataset.types import TaskProfile
+
+    readiness = assess_data_readiness(
+        TaskProfile.from_dict(
+            {
+                "task_type": "patch_classification",
+                "asset_level": "patch",
+                "input_modality": "patch_images",
+                "label_granularity": "patch",
+                "preferred_skill": "patch_classification",
+            }
+        ),
+        data_mounts={str(view_dir): "/data/crc_msi_100patches"},
+    )
+
+    assert readiness.status == "patch_images_ready"
+    assert readiness.data_dir == "/data/crc_msi_100patches"
+    assert readiness.images_dir == "/data/crc_msi_100patches/images"
 
 
 def test_prepare_pathlab_dataset_view_links_tcga_patches_features_by_view_slide_id(tmp_path):

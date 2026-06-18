@@ -3018,6 +3018,22 @@ def _normalized_split(value: Any) -> str:
     return split if split in {"train", "val", "test"} else ""
 
 
+def _dataset_data_type_value(dataset: Any) -> str:
+    value = getattr(dataset, "data_type", None)
+    if not value:
+        try:
+            value = getattr(getattr(dataset, "data_group", None), "data_type", None)
+        except Exception:
+            value = None
+    return str(value or "").strip().lower()
+
+
+def _safe_label_dir(value: str) -> str:
+    raw = str(value or "").strip()
+    cleaned = re.sub(r"[\\/]+", "_", raw).strip("._ ")
+    return cleaned or "unlabeled"
+
+
 def _unique_container_mount(container: str, used: set[str]) -> str:
     normalized = str(container or "").strip()
     if not normalized:
@@ -3130,6 +3146,10 @@ async def _resolve_pathlab_dataset_mounts(
         from backend.database.repositories import WSIRepository
     except Exception as exc:
         raise RuntimeError(f"PathLab dataset repository unavailable: {exc}") from exc
+    try:
+        from backend.database.repositories import DataGroupRepository
+    except Exception:
+        DataGroupRepository = None
 
     mounts: dict[str, str] = {}
     used_containers: set[str] = set()
@@ -3161,11 +3181,21 @@ async def _resolve_pathlab_dataset_mounts(
                     not_found_detail=f"Dataset not found: {dataset_id}",
                     forbidden_detail="You don't have permission to use this dataset in PathScientist",
                 )
+                dataset_data_type = getattr(dataset, "data_type", None)
+                if not dataset_data_type:
+                    group_id = str(getattr(dataset, "group_id", "") or "").strip()
+                    data_group = (
+                        await DataGroupRepository.get_by_id(db, group_id)
+                        if group_id and DataGroupRepository is not None
+                        else None
+                    )
+                    dataset_data_type = getattr(data_group, "data_type", None)
+                dataset_data_type = str(dataset_data_type).strip().lower() or "wsi"
                 slides = await WSIRepository.get_by_dataset(
                     db,
                     dataset_id,
                     user_id=user_id_filter,
-                    data_type="wsi",
+                    data_type=dataset_data_type,
                     elevated_dataset_ids=elevated_dataset_ids,
                     sort_by="original_filename",
                     sort_order="asc",
@@ -3173,7 +3203,7 @@ async def _resolve_pathlab_dataset_mounts(
                 if not slides:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Dataset has no accessible WSI files: {dataset_id}",
+                        detail=f"Dataset has no accessible files: {dataset_id}",
                     )
                 slug = _pathlab_dataset_slug(getattr(dataset, "name", ""), dataset_id)
                 view_dir = _prepare_pathlab_dataset_view(
@@ -3311,8 +3341,12 @@ def _link_existing_pathlab_features_for_view_slide(
 
 def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: Path) -> Path:
     view_dir.mkdir(parents=True, exist_ok=True)
+    is_patch_dataset = _dataset_data_type_value(dataset) == "patch"
     wsi_dir = view_dir / "wsi_files"
     wsi_dir.mkdir(parents=True, exist_ok=True)
+    images_dir = view_dir / "images"
+    if is_patch_dataset:
+        images_dir.mkdir(parents=True, exist_ok=True)
     for dirname in (
         "features",
         "training",
@@ -3332,6 +3366,7 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
     missing_sources: list[str] = []
     linked_feature_count = 0
     linked_feature_extractors: set[str] = set()
+    pathlab_items: list[dict[str, str]] = []
     for slide in slides:
         source_raw = str(getattr(slide, "wsi_path", "") or "").strip()
         if not source_raw:
@@ -3359,6 +3394,14 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         if link_path.is_symlink() or link_path.exists():
             link_path.unlink()
         os.symlink(source, link_path)
+        patch_image_path = link_path
+        if is_patch_dataset:
+            image_label_dir = images_dir / _safe_label_dir(label)
+            image_label_dir.mkdir(parents=True, exist_ok=True)
+            patch_image_path = image_label_dir / f"{slide_id}{ext}"
+            if patch_image_path.is_symlink() or patch_image_path.exists():
+                patch_image_path.unlink()
+            os.symlink(source, patch_image_path)
         linked_features = _link_existing_pathlab_features_for_view_slide(
             view_dir=view_dir,
             slide_id=slide_id,
@@ -3367,11 +3410,23 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         )
         linked_feature_count += len(linked_features)
         linked_feature_extractors.update(linked_features)
+        split = _normalized_split(getattr(slide, "split", ""))
         rows.append({
             "slide_id": slide_id,
             "label": label,
-            "split": _normalized_split(getattr(slide, "split", "")),
+            "split": split,
         })
+        if is_patch_dataset:
+            pathlab_items.append(
+                {
+                    "wsi_id": slide_id,
+                    "wsi_path": str(patch_image_path),
+                    "image_path": str(patch_image_path),
+                    "path": str(patch_image_path),
+                    "label": label,
+                    "split": split or "train",
+                }
+            )
 
     if len(rows) < 3:
         raise HTTPException(
@@ -3380,7 +3435,7 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         )
 
     split_values = [row["split"] for row in rows]
-    use_db_splits = all(split_values) and {"train", "val", "test"}.issubset(set(split_values))
+    use_db_splits = all(split_values)
     labels_path = view_dir / "labels.csv"
     with labels_path.open("w", newline="", encoding="utf-8") as fh:
         fieldnames = ["slide_id", "label"] + (["split"] if use_db_splits else [])
@@ -3408,10 +3463,13 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         "dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
         "dataset_name": str(getattr(dataset, "name", "") or ""),
         "layout": "pathlab_dataset_view",
+        "data_type": "patch" if is_patch_dataset else "wsi",
         "wsi_dir": "wsi_files",
+        "images_dir": "images" if is_patch_dataset else "",
         "labels_file": "labels.csv",
         "splits_file": "splits.json",
         "num_wsi": len(rows),
+        "num_patches": len(rows) if is_patch_dataset else 0,
         "classes": sorted(label_counts),
         "label_counts": label_counts,
         "source_organ": getattr(dataset, "source_organ", None),
@@ -3423,6 +3481,11 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         json.dumps(manifest, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    if is_patch_dataset:
+        (view_dir / "pathlab_training_manifest.json").write_text(
+            json.dumps({"items": pathlab_items}, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
     return view_dir
 
 

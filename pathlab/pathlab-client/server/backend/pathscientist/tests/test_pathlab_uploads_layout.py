@@ -701,6 +701,130 @@ def test_patch_template_loads_pathlab_training_manifest(tmp_path):
     assert splits["test"] == [(third, 1)]
 
 
+def test_patch_template_auto_creates_val_from_train_without_reusing_test(tmp_path):
+    module = _load_template_module("patch_classification_template.py")
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    train_paths = [image_dir / f"train_{idx:02d}.png" for idx in range(10)]
+    test_paths = [image_dir / f"test_{idx:02d}.png" for idx in range(4)]
+    for path in [*train_paths, *test_paths]:
+        path.write_bytes(b"fake")
+    manifest = tmp_path / "pathlab_training_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "wsi_id": path.stem,
+                        "wsi_path": str(path),
+                        "label": "MSIH" if idx % 2 == 0 else "nonMSIH",
+                        "split": "train",
+                    }
+                    for idx, path in enumerate(train_paths)
+                ]
+                + [
+                    {
+                        "wsi_id": path.stem,
+                        "wsi_path": str(path),
+                        "label": "MSIH" if idx % 2 == 0 else "nonMSIH",
+                        "split": "test",
+                    }
+                    for idx, path in enumerate(test_paths)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = module._load_pathlab_training_manifest(manifest)
+
+    assert loaded is not None
+    splits, _classes = loaded
+    splits = module._ensure_validation_split_from_train(splits)
+    assert len(splits["train"]) == 9
+    assert len(splits["val"]) == 1
+    assert len(splits["test"]) == 4
+    assert {path for path, _label in splits["val"]}.issubset(set(train_paths))
+    assert {path for path, _label in splits["val"]}.isdisjoint(set(test_paths))
+
+
+def test_patch_template_keeps_msi_h_as_binary_positive_class(tmp_path, monkeypatch):
+    monkeypatch.delenv("PATHLAB_POSITIVE_CLASS", raising=False)
+    module = _load_template_module("patch_classification_template.py")
+    image_dir = tmp_path / "images"
+    image_dir.mkdir()
+    msih = image_dir / "msih.png"
+    non_msih = image_dir / "non_msih.png"
+    for path in (msih, non_msih):
+        path.write_bytes(b"fake")
+    manifest = tmp_path / "pathlab_training_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"wsi_id": "p1", "wsi_path": str(msih), "label": "MSIH", "split": "train"},
+                    {"wsi_id": "p2", "wsi_path": str(non_msih), "label": "nonMSIH", "split": "test"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = module._load_pathlab_training_manifest(manifest)
+
+    assert loaded is not None
+    splits, classes = loaded
+    assert classes == ["nonMSIH", "MSIH"]
+    assert splits["train"] == [(msih, 1)]
+    assert splits["test"] == [(non_msih, 0)]
+
+
+def test_patch_template_builds_patch_smoke_metrics_payload(tmp_path):
+    module = _load_template_module("patch_classification_template.py")
+    checkpoint = tmp_path / "best_model.pth"
+    train_items = [(tmp_path / "train_msih.png", 1), (tmp_path / "train_non.png", 0)]
+    val_items = [(tmp_path / "val_msih.png", 1)]
+    test_items = [(tmp_path / "test_msih.png", 1), (tmp_path / "test_non.png", 0)]
+
+    payload = module._build_metrics_payload(
+        test_metrics={
+            "auc": 0.75,
+            "accuracy": 0.5,
+            "f1": 0.3333,
+            "confusion_matrix": [[0, 1], [0, 1]],
+        },
+        best_val_metrics={
+            "auc": 0.5,
+            "accuracy": 1.0,
+            "f1": 1.0,
+            "confusion_matrix": [[0, 0], [0, 1]],
+        },
+        feature_dim=1536,
+        classes=["nonMSIH", "MSIH"],
+        train_items=train_items,
+        val_items=val_items,
+        test_items=test_items,
+        classifier_head_name="LinearHead",
+        checkpoint_path=checkpoint,
+        epochs_completed=2,
+        training_duration=4.2,
+        wall_duration=10.8,
+    )
+
+    assert payload["task_level"] == "patch"
+    assert payload["mil_aggregation"] is False
+    assert payload["positive_class"] == "MSIH"
+    assert payload["classifier_head"] == "LinearHead"
+    assert payload["checkpoint_path"] == str(checkpoint)
+    assert payload["split_class_counts"] == {
+        "train": {"nonMSIH": 1, "MSIH": 1},
+        "val": {"nonMSIH": 0, "MSIH": 1},
+        "test": {"nonMSIH": 1, "MSIH": 1},
+    }
+    assert payload["val_metrics"]["confusion_matrix"] == [[0, 0], [0, 1]]
+    assert payload["test_metrics"]["confusion_matrix"] == [[0, 1], [0, 1]]
+
+
 def test_run_experiment_accepts_pathlab_feature_cache_output(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     feature_leaf = uploads / "features" / "virchow2" / "paramsabc"
