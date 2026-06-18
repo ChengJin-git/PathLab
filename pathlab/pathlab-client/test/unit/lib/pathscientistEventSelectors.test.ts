@@ -100,6 +100,55 @@ describe('pathscientist event selectors', () => {
     expect(view.bestMetric).toEqual({ name: 'auc', value: 0.9632, runId: 'run_b' })
   })
 
+  it('treats completed workflow with no committed run and failed review as failed', () => {
+    const events: PathScientistEvent[] = [
+      {
+        kind: 'state',
+        status: 'completed',
+        state: {
+          stage: 'completed',
+          review_decision: 'enter_synthesis',
+          latest_review: {
+            status: 'failed',
+            decision: 'enter_synthesis',
+            summary: 'Run run_bad did not provide a valid positive AUC metric.',
+          },
+          objective: { success_metric: 'auc' },
+          run_history: [
+            {
+              iteration: 0,
+              run_id: 'run_bad',
+              metric_name: 'auc',
+              metric_value: 0,
+              committed: false,
+              exit_code: 1,
+              error_type: 'FileNotFound',
+              metrics: {
+                status: 'failed',
+                error: 'Required FEATURES_DIR does not exist.',
+              },
+            },
+          ],
+        },
+      },
+    ]
+    const session = {
+      session_id: 's-failed-science',
+      title: 'Failed external feature run',
+      question: 'Train then external validate',
+      model: 'gpt-5.5',
+      status: 'completed',
+      stage: 'completed',
+      events,
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, events)
+
+    expect(view.runSummary.status).toBe('failed')
+    expect(view.stages.find((stage) => stage.id === 'completed')?.status).toBe('error')
+    expect(view.bestMetric).toBeNull()
+  })
+
   it('infers task type, foundation model, and MIL method for slide-level sessions', () => {
     const events: PathScientistEvent[] = [
       {
@@ -137,6 +186,58 @@ describe('pathscientist event selectors', () => {
     const view = buildPathScientistExecutionView(session, events)
 
     expect(view.sessionMetadata).toEqual({
+      taskType: 'slide-level classification',
+      foundationModel: 'Virchow2',
+      milMethod: 'ABMIL',
+    })
+  })
+
+  it('uses the explicit grounded MIL selection instead of literature keyword matches', () => {
+    const events: PathScientistEvent[] = [
+      {
+        kind: 'state',
+        status: 'running',
+        state: {
+          stage: 'execution',
+          grounding: {
+            task_profile: { task_type: 'mil_classification', asset_level: 'slide' },
+            selected_extractor: { name: 'virchow2', canonical: 'Virchow2', source: 'user' },
+            selected_mil_model: { name: 'abmil', canonical: 'ABMIL', source: 'user' },
+            model_selection_contract: {
+              mil_model: { name: 'abmil', canonical: 'ABMIL', source: 'user' },
+            },
+            papers: [
+              {
+                paper_id: 'zhang2022dtfd',
+                title: 'DTFD-MIL: Double-Tier Feature Distillation Multiple Instance Learning',
+              },
+              {
+                paper_id: 'shao2021transmil',
+                title: 'TransMIL: Transformer based Correlated Multiple Instance Learning',
+              },
+            ],
+          },
+        },
+      },
+      {
+        kind: 'message',
+        stage: 'execution',
+        text: 'Available methods include DTFD-MIL and TransMIL, but the requested run uses ABMIL.',
+      },
+    ]
+    const session = {
+      session_id: 's-selected-mil',
+      title: 'NSCLC ABMIL Classification with Virchow2',
+      question: '帮我训练一个NSCLC的分类模型 用ABMIL 和virchow2 feature',
+      model: 'gpt-5.5',
+      status: 'running',
+      stage: 'execution',
+      events,
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, events)
+
+    expect(view.sessionMetadata).toMatchObject({
       taskType: 'slide-level classification',
       foundationModel: 'Virchow2',
       milMethod: 'ABMIL',
@@ -711,5 +812,54 @@ describe('pathscientist event selectors', () => {
     expect(review?.summary).toBe('Stopping after 5/5 iterations; best run remains run_a with AUC 0.9638.')
     expect(review?.durationLabel).toBe('<1s')
     expect(synthesis?.durationLabel).toBe('<1s')
+  })
+
+  it('extracts the latest external test result and leaves sessions without external tests empty', () => {
+    const externalRecord = {
+      run_id: 'external_run_001',
+      status: 'completed',
+      committed: true,
+      model_path: '/workspace/outputs/best_model.pt',
+      run_dir: '/workspace/runs/external_run_001',
+      metrics: {
+        auc: 0.91342,
+        accuracy: 0.842,
+        n_external_evaluated: 18,
+      },
+    }
+    const session = {
+      session_id: 's-external',
+      title: 'NSCLC external validation',
+      question: 'Train on TCGA NSCLC and validate on external NSCLC.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'auc' },
+        external_test_history: [
+          { run_id: 'older_external', status: 'failed', metrics: { auc: 0.5 } },
+          externalRecord,
+        ],
+      },
+      events: [],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, [])
+    const noExternalView = buildPathScientistExecutionView({
+      ...session,
+      session_id: 's-no-external',
+      state: { objective: { success_metric: 'auc' } },
+      events: [],
+    }, [])
+
+    expect(view.runSummary.externalTest).toMatchObject({
+      runId: 'external_run_001',
+      status: 'completed',
+      committed: true,
+      modelPath: '/workspace/outputs/best_model.pt',
+      runDir: '/workspace/runs/external_run_001',
+      primaryMetric: { name: 'auc', value: 0.91342 },
+      sampleCount: 18,
+    })
+    expect(noExternalView.runSummary.externalTest).toBeNull()
   })
 })

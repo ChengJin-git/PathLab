@@ -1,5 +1,12 @@
 import { BookOpen, CheckCircle2, ChevronDown, Circle, Clock3, Database, ExternalLink, Loader2, XCircle } from 'lucide-react'
 import { cn } from '../../../lib/utils'
+import { usePathScientistTranslation } from '../../../lib/usePathScientistTranslation'
+import {
+  pathScientistCountLabel,
+  pathScientistStageLabel,
+  pathScientistStageStatusLabel,
+  pathScientistStatusLabel,
+} from '../../../lib/pathscientistI18n'
 import type {
   PathScientistAcquisitionView,
   PathScientistDownloadProgressView,
@@ -25,11 +32,11 @@ function stageDurationText(stage: PathScientistStageView): string | null {
   return stage.durationLabel && stage.durationLabel !== '--' ? stage.durationLabel : null
 }
 
-function taskProfileLabel(grounding: PathScientistGroundingView): string {
+function taskProfileLabel(grounding: PathScientistGroundingView, notDetected: string): string {
   const profile = grounding.taskProfile
   const scope = profile.assetLevel ? `${profile.assetLevel}-level` : ''
   const target = profile.predictionTarget || profile.taskType || ''
-  return [scope, target].filter(Boolean).join(' ') || 'Not detected'
+  return [scope, target].filter(Boolean).join(' ') || notDetected
 }
 
 function paperMeta(source?: string, year?: string): string {
@@ -64,12 +71,13 @@ function formatDuration(seconds: number | null): string {
 }
 
 function DownloadProgressDetails({ progress }: { progress: PathScientistDownloadProgressView }) {
+  const { t } = usePathScientistTranslation()
   const hasTotal = progress.bytesTotal > 0
   const bytesLabel = hasTotal
     ? `${formatBytes(progress.downloadedBytes)} / ${formatBytes(progress.bytesTotal)}`
-    : `${formatBytes(progress.downloadedBytes)} downloaded`
+    : t('pathScientist.download.downloaded', { value: formatBytes(progress.downloadedBytes) })
   const speedLabel = progress.speedBps > 0 ? `${formatBytes(progress.speedBps)}/s` : ''
-  const etaLabel = progress.etaSeconds !== null ? `ETA ${formatDuration(progress.etaSeconds)}` : ''
+  const etaLabel = progress.etaSeconds !== null ? t('pathScientist.download.eta', { duration: formatDuration(progress.etaSeconds) }) : ''
   const percent = progress.percent ?? 0
 
   return (
@@ -79,21 +87,21 @@ function DownloadProgressDetails({ progress }: { progress: PathScientistDownload
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-black uppercase tracking-wider text-emerald-700">Download progress</p>
+          <p className="text-xs font-black uppercase tracking-wider text-emerald-700">{t('pathScientist.download.title')}</p>
           <p className="mt-1 text-sm font-extrabold text-gray-950">
-            {progress.datasetId || progress.provider || 'Dataset download'}
+            {progress.datasetId || progress.provider || t('pathScientist.download.datasetDownload')}
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-100">
           {progress.status === 'downloading' && <Loader2 className="h-3 w-3 animate-spin" />}
-          {progress.status || 'download'}
+          {pathScientistStatusLabel(progress.status || 'download', t)}
         </span>
       </div>
 
       <div className="mt-3">
         <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-extrabold text-gray-700">
           <span>{bytesLabel}</span>
-          <span>{hasTotal ? `${percent}%` : 'Total size unknown'}</span>
+          <span>{hasTotal ? `${percent}%` : t('pathScientist.download.totalSizeUnknown')}</span>
         </div>
         <div className="h-2 overflow-hidden rounded-full bg-emerald-100">
           {hasTotal ? (
@@ -135,13 +143,14 @@ function DownloadProgressDetails({ progress }: { progress: PathScientistDownload
 }
 
 function DownloadProgressMini({ progress }: { progress: PathScientistDownloadProgressView }) {
+  const { t } = usePathScientistTranslation()
   const hasTotal = progress.bytesTotal > 0
   const percent = progress.percent ?? 0
   const speedLabel = progress.speedBps > 0 ? `${formatBytes(progress.speedBps)}/s` : ''
   const primary = hasTotal
     ? `${percent}% · ${formatBytes(progress.downloadedBytes)} / ${formatBytes(progress.bytesTotal)}`
-    : `${formatBytes(progress.downloadedBytes)} downloaded`
-  const secondary = hasTotal ? speedLabel : ['total size unknown', speedLabel].filter(Boolean).join(' · ')
+    : t('pathScientist.download.downloaded', { value: formatBytes(progress.downloadedBytes) })
+  const secondary = hasTotal ? speedLabel : [t('pathScientist.download.totalSizeUnknownLower'), speedLabel].filter(Boolean).join(' · ')
 
   return (
     <div
@@ -167,6 +176,7 @@ function DownloadProgressMini({ progress }: { progress: PathScientistDownloadPro
 }
 
 function GroundingDetails({ grounding }: { grounding: PathScientistGroundingView }) {
+  const { t } = usePathScientistTranslation()
   const paperCount = grounding.literatureCount
   const visiblePapers = grounding.papers.slice(0, 5)
   return (
@@ -180,11 +190,18 @@ function GroundingDetails({ grounding }: { grounding: PathScientistGroundingView
       >
         <div className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-wider text-blue-700">
           <BookOpen className="h-3.5 w-3.5" />
-          <span>Grounding literature</span>
+          <span>{t('pathScientist.grounding.title')}</span>
         </div>
         <span className="inline-flex items-center gap-2">
           <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold text-blue-700 ring-1 ring-blue-100">
-            {paperCount} {paperCount === 1 ? 'paper' : 'papers'} found
+            {pathScientistCountLabel(
+              paperCount,
+              'pathScientist.grounding.paperFound',
+              'pathScientist.grounding.papersFound',
+              t,
+              'paper found',
+              'papers found',
+            )}
           </span>
           <ChevronDown className="h-4 w-4 text-blue-600 transition group-open:rotate-180" />
         </span>
@@ -193,12 +210,12 @@ function GroundingDetails({ grounding }: { grounding: PathScientistGroundingView
       <div className="mt-3 space-y-3">
         <div className="grid gap-2 text-xs sm:grid-cols-2">
           <div className="rounded-xl bg-white/80 p-2 ring-1 ring-blue-100">
-            <p className="font-bold uppercase tracking-wider text-gray-400">Task profile</p>
-            <p className="mt-1 font-extrabold text-gray-900">{taskProfileLabel(grounding)}</p>
+            <p className="font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.grounding.taskProfile')}</p>
+            <p className="mt-1 font-extrabold text-gray-900">{taskProfileLabel(grounding, t('pathScientist.common.notDetected'))}</p>
           </div>
           <div className="rounded-xl bg-white/80 p-2 ring-1 ring-blue-100">
-            <p className="font-bold uppercase tracking-wider text-gray-400">Selected skill</p>
-            <p className="mt-1 font-extrabold text-gray-900">{grounding.selectedSkill || 'Not detected'}</p>
+            <p className="font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.grounding.selectedSkill')}</p>
+            <p className="mt-1 font-extrabold text-gray-900">{grounding.selectedSkill || t('pathScientist.common.notDetected')}</p>
           </div>
         </div>
 
@@ -243,7 +260,7 @@ function GroundingDetails({ grounding }: { grounding: PathScientistGroundingView
           </div>
         ) : (
           <p className="rounded-xl bg-white p-3 text-sm font-semibold text-gray-500 ring-1 ring-blue-100">
-            No paper titles were returned for this grounding run.
+            {t('pathScientist.grounding.noPapers')}
           </p>
         )}
       </div>
@@ -252,6 +269,7 @@ function GroundingDetails({ grounding }: { grounding: PathScientistGroundingView
 }
 
 function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisitionView }) {
+  const { t } = usePathScientistTranslation()
   const datasetMeta = acquisition.selectedDataset
     ? compactMeta(acquisition.selectedDataset.provider, acquisition.selectedDataset.access)
     : ''
@@ -266,11 +284,11 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
       >
         <div className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-wider text-emerald-700">
           <Database className="h-3.5 w-3.5" />
-          <span>Data acquisition</span>
+          <span>{t('pathScientist.acquisition.title')}</span>
         </div>
         <span className="inline-flex items-center gap-2">
           <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-extrabold text-emerald-700 ring-1 ring-emerald-100">
-            {acquisition.readinessStatus || acquisition.status || acquisition.planStatus || 'data status'}
+            {acquisition.readinessStatus || acquisition.status || acquisition.planStatus || t('pathScientist.acquisition.dataStatus')}
           </span>
           <ChevronDown className="h-4 w-4 text-emerald-600 transition group-open:rotate-180" />
         </span>
@@ -283,17 +301,17 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
 
         <div className="grid gap-2 text-xs sm:grid-cols-2">
           <div className="rounded-xl bg-white/80 p-2 ring-1 ring-emerald-100">
-            <p className="font-bold uppercase tracking-wider text-gray-400">Dataset</p>
+            <p className="font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.acquisition.dataset')}</p>
             <p className="mt-1 font-extrabold text-gray-900">
-              {acquisition.selectedDataset?.name || 'Not detected'}
+              {acquisition.selectedDataset?.name || t('pathScientist.common.notDetected')}
             </p>
             {datasetMeta && <p className="mt-1 font-semibold text-gray-500">{datasetMeta}</p>}
           </div>
           <div className="rounded-xl bg-white/80 p-2 ring-1 ring-emerald-100">
-            <p className="font-bold uppercase tracking-wider text-gray-400">Readiness</p>
-            <p className="mt-1 font-extrabold text-gray-900">{acquisition.readinessStatus || 'Not detected'}</p>
+            <p className="font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.acquisition.readiness')}</p>
+            <p className="mt-1 font-extrabold text-gray-900">{acquisition.readinessStatus || t('pathScientist.common.notDetected')}</p>
             {acquisition.datasetCandidateCount > 0 && (
-              <p className="mt-1 font-semibold text-gray-500">{acquisition.datasetCandidateCount} candidates checked</p>
+              <p className="mt-1 font-semibold text-gray-500">{t('pathScientist.acquisition.candidatesChecked', { count: acquisition.datasetCandidateCount })}</p>
             )}
           </div>
         </div>
@@ -302,12 +320,12 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
           <div className="flex flex-wrap gap-2 text-xs font-bold">
             {acquisition.status && (
               <span className="rounded-full bg-white px-2.5 py-1 text-gray-600 ring-1 ring-emerald-100">
-                acquisition: {acquisition.status}
+                {t('pathScientist.acquisition.acquisitionStatus', { status: acquisition.status })}
               </span>
             )}
             {acquisition.planStatus && (
               <span className="rounded-full bg-white px-2.5 py-1 text-gray-600 ring-1 ring-emerald-100">
-                plan: {acquisition.planStatus}
+                {t('pathScientist.acquisition.planStatus', { status: acquisition.planStatus })}
               </span>
             )}
             {acquisition.notes && (
@@ -320,7 +338,7 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
 
         {acquisition.missing.length > 0 && (
           <p className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs font-bold text-amber-800">
-            Missing: {acquisition.missing.join(', ')}
+            {t('pathScientist.acquisition.missing', { items: acquisition.missing.join(', ') })}
           </p>
         )}
 
@@ -337,7 +355,7 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
 
         {acquisition.manifestPath && (
           <div className="rounded-xl bg-white p-3 ring-1 ring-emerald-100">
-            <p className="text-[11px] font-black uppercase tracking-wider text-gray-400">Manifest</p>
+            <p className="text-[11px] font-black uppercase tracking-wider text-gray-400">{t('pathScientist.acquisition.manifest')}</p>
             <p className="mt-1 break-all text-xs font-bold leading-5 text-gray-800">{acquisition.manifestPath}</p>
           </div>
         )}
@@ -349,7 +367,7 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-extrabold leading-5 text-gray-950">{step.title}</p>
                   <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-100">
-                    {step.isCurrent ? 'current' : `step ${index + 1}`}
+                    {step.isCurrent ? t('pathScientist.acquisition.currentStep') : t('pathScientist.acquisition.stepNumber', { step: index + 1 })}
                   </span>
                 </div>
                 {step.skill && <p className="mt-1 text-xs font-semibold text-gray-500">{step.skill}</p>}
@@ -373,6 +391,7 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
 }
 
 export default function StageCard({ stage, grounding, acquisition, className }: StageCardProps) {
+  const { t } = usePathScientistTranslation()
   const showGroundingDetails = stage.id === 'grounding' && grounding !== null && grounding !== undefined
   const showAcquisitionDetails = stage.id === 'acquisition' && acquisition !== null && acquisition !== undefined
   const duration = stageDurationText(stage)
@@ -396,8 +415,8 @@ export default function StageCard({ stage, grounding, acquisition, className }: 
             {iconFor(stage)}
           </span>
           <div className="min-w-0">
-            <p className={cn('text-sm font-extrabold', isPending ? 'text-gray-500' : 'text-gray-950')}>{stage.label}</p>
-            <p className="mt-1 truncate text-xs leading-5 text-gray-500">{stage.summary || `${stage.eventCount} events`}</p>
+            <p className={cn('text-sm font-extrabold', isPending ? 'text-gray-500' : 'text-gray-950')}>{pathScientistStageLabel(stage.id, t)}</p>
+            <p className="mt-1 truncate text-xs leading-5 text-gray-500">{stage.summary || t('pathScientist.count.events', { count: stage.eventCount })}</p>
             {duration && (
               <p
                 className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-gray-500"
@@ -417,7 +436,7 @@ export default function StageCard({ stage, grounding, acquisition, className }: 
           isPending && 'bg-gray-100 text-gray-400 ring-gray-200',
         )}
         >
-          {stage.status}
+          {pathScientistStageStatusLabel(stage.status, t)}
         </span>
       </div>
       {stage.id === 'acquisition' && acquisition?.downloadProgress && (

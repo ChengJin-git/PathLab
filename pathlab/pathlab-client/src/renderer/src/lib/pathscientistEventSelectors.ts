@@ -142,6 +142,16 @@ export interface PathScientistMetricView {
   source?: string
 }
 
+export interface PathScientistExternalTestView {
+  runId: string
+  status: string
+  committed: boolean
+  modelPath: string
+  runDir: string
+  primaryMetric: PathScientistMetricView | null
+  sampleCount: number | null
+}
+
 export type PathScientistTaskTypeView =
   | 'patch-level classification'
   | 'slide-level classification'
@@ -178,6 +188,7 @@ export interface PathScientistRunSummaryView {
   toolCallCount: number
   iterationCount: number
   bestMetric: PathScientistMetricView | null
+  externalTest: PathScientistExternalTestView | null
   sessionMetadata: PathScientistSessionMetadataView
   currentActivityLabel: string
   narrative: PathScientistRunNarrativeView
@@ -446,6 +457,37 @@ function isErrorTerminalStatus(status: string | undefined): boolean {
   return ['failed', 'interrupted'].includes(asString(status))
 }
 
+const FAILED_FINAL_REVIEW_STATUSES = new Set(['failed', 'no_finalized_run', 'error'])
+
+function runFailed(record: Record<string, unknown>): boolean {
+  if (record.committed) return false
+  const exitCode = asNumber(record.exit_code)
+  if (typeof exitCode === 'number' && exitCode !== 0) return true
+  const metrics = asRecord(record.metrics)
+  if (asString(metrics.status).trim().toLowerCase() === 'failed') return true
+  return Boolean(asString(record.error).trim() || asString(record.error_type).trim())
+}
+
+function completedWorkflowFailedScientifically(state: Record<string, unknown>): boolean {
+  const stage = asString(state.stage).trim().toLowerCase()
+  if (!['completed', 'finished', 'synthesis', 'failed'].includes(stage)) return false
+  const history = runHistory(state)
+  if (history.some((record) => Boolean(record.committed))) return false
+  const latestReview = asRecord(state.latest_review)
+  const reviewStatus = asString(latestReview.status).trim().toLowerCase()
+  const reviewDecision = asString(state.review_decision || latestReview.decision).trim().toLowerCase()
+  const allRunsFailed = history.length > 0 && history.every(runFailed)
+  return reviewDecision === 'enter_synthesis' && (FAILED_FINAL_REVIEW_STATUSES.has(reviewStatus) || allRunsFailed)
+}
+
+export function derivePathScientistDisplayStatus(
+  session: PathScientistSessionDetail | null,
+  state: Record<string, unknown>,
+): string {
+  if (completedWorkflowFailedScientifically(state)) return 'failed'
+  return asString(session?.status)
+}
+
 function stageTimingEventTimeMs(event: PathScientistEvent): number | undefined {
   // Persisted legacy sessions synthesize evenly spaced stage_summary
   // breadcrumbs; they are useful labels, but not real timing boundaries.
@@ -588,8 +630,9 @@ function buildStages(
     ? rawStage
     : eventStages.at(-1) || 'intake'
   const currentIndex = Math.max(0, PATHSCIENTIST_STAGE_ORDER.indexOf(currentStage as typeof PATHSCIENTIST_STAGE_ORDER[number]))
-  const successTerminal = isSuccessTerminalStatus(session?.status) || rawStage === 'completed'
-  const failed = isErrorTerminalStatus(session?.status) || rawStage === 'interrupted'
+  const sessionStatus = derivePathScientistDisplayStatus(session, state)
+  const successTerminal = isSuccessTerminalStatus(sessionStatus) || (rawStage === 'completed' && sessionStatus !== 'failed')
+  const failed = isErrorTerminalStatus(sessionStatus) || rawStage === 'interrupted'
   const stageTimings = buildStageTimings(visibleEvents, successTerminal || failed ? '' : currentStage, nowMs)
   const stateStageTimings = buildStateStageTimings(state, successTerminal || failed ? '' : currentStage, nowMs)
   const latestReview = asRecord(state.latest_review)
@@ -721,9 +764,121 @@ function buildTargetMetric(state: Record<string, unknown>): PathScientistMetricV
   }
 }
 
+const EXTERNAL_SAMPLE_COUNT_KEYS = [
+  'n_external_evaluated',
+  'external_evaluated',
+  'n_evaluated',
+  'n_samples',
+  'sample_count',
+  'num_samples',
+  'total_samples',
+]
+
+const EXTERNAL_METRIC_FALLBACK_KEYS = [
+  'auc',
+  'auroc',
+  'accuracy',
+  'acc',
+  'c_index',
+  'cindex',
+  'dice',
+  'f1',
+  'balanced_accuracy',
+]
+
+function externalHistory(state: Record<string, unknown>): Record<string, unknown>[] {
+  const direct = asRecordArray(state.external_test_history)
+  if (direct.length > 0) return direct
+
+  const comparison = asRecord(state.comparison_results)
+  const fromComparison = asRecordArray(comparison.external_test_history)
+  if (fromComparison.length > 0) return fromComparison
+
+  const recovery = asRecord(state.recovery_metadata)
+  return asRecordArray(recovery.external_test_history)
+}
+
+function latestExternalRecord(state: Record<string, unknown>): Record<string, unknown> {
+  const direct = asRecord(state.external_test)
+  if (Object.keys(direct).length > 0) return direct
+
+  const history = externalHistory(state)
+  if (history.length > 0) return history[history.length - 1]
+
+  const recovery = asRecord(state.recovery_metadata)
+  return asRecord(recovery.external_test)
+}
+
+function externalSampleCount(metrics: Record<string, unknown>, record: Record<string, unknown>): number | null {
+  for (const key of EXTERNAL_SAMPLE_COUNT_KEYS) {
+    const value = asNumber(metrics[key] ?? record[key])
+    if (typeof value === 'number' && value >= 0) return value
+  }
+  return null
+}
+
+function externalPrimaryMetric(
+  metrics: Record<string, unknown>,
+  objectiveMetricName: string,
+): PathScientistMetricView | null {
+  const candidates = [
+    objectiveMetricName,
+    ...EXTERNAL_METRIC_FALLBACK_KEYS,
+    ...Object.keys(metrics),
+  ].map((key) => key.trim()).filter(Boolean)
+  const seen = new Set<string>()
+
+  for (const key of candidates) {
+    const normalized = normalizedMetricKey(key)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    const value = metricValueByKey(metrics, key)
+    if (typeof value === 'number') return { name: key, value }
+  }
+
+  return null
+}
+
+function buildExternalTestView(state: Record<string, unknown>): PathScientistExternalTestView | null {
+  const record = latestExternalRecord(state)
+  if (Object.keys(record).length === 0) return null
+
+  const metrics = asRecord(record.metrics)
+  const objective = asRecord(state.objective)
+  const primaryMetric = externalPrimaryMetric(metrics, asString(objective.success_metric))
+  const runId = asString(record.run_id).trim()
+  const status = asString(record.status).trim()
+  const modelPath = asString(record.model_path).trim()
+  const runDir = asString(record.run_dir).trim()
+  const hasDisplayableData = Boolean(
+    runId
+    || status
+    || modelPath
+    || runDir
+    || primaryMetric
+    || Object.keys(metrics).length > 0,
+  )
+  if (!hasDisplayableData) return null
+
+  return {
+    runId,
+    status,
+    committed: Boolean(record.committed),
+    modelPath,
+    runDir,
+    primaryMetric,
+    sampleCount: externalSampleCount(metrics, record),
+  }
+}
+
 function nestedGrounding(state: Record<string, unknown>): Record<string, unknown> {
   const direct = asRecord(state.grounding)
   if (Object.keys(direct).length > 0) return direct
+
+  const agentState = asRecord(state.agent_state)
+  const agentResearchSession = asRecord(agentState.research_session)
+  const agentResearchGrounding = asRecord(agentResearchSession.grounding)
+  if (Object.keys(agentResearchGrounding).length > 0) return agentResearchGrounding
 
   const persistedSummary = asRecord(state.persisted_summary)
   const researchSession = asRecord(persistedSummary.research_session)
@@ -1053,6 +1208,75 @@ const MIL_METHOD_PATTERNS: Array<[RegExp, string]> = [
   [/\battention[-_\s]?mil\b/i, 'AttentionMIL'],
 ]
 
+const FOUNDATION_MODEL_LABELS: Record<string, string> = {
+  virchow2: 'Virchow2',
+  virchow: 'Virchow',
+  uni2: 'UNI2',
+  uni: 'UNI',
+  conch: 'CONCH',
+  phikon2: 'Phikon2',
+  hoptimus1: 'H-Optimus-1',
+  hoptimus0: 'H-Optimus-0',
+  openmidnight: 'OpenMidnight',
+  gpfm: 'GPFM',
+  plip: 'PLIP',
+  dinov2: 'DINOv2',
+}
+
+const MIL_METHOD_LABELS: Record<string, string> = {
+  abmil: 'ABMIL',
+  attentionmil: 'AttentionMIL',
+  clam: 'CLAM',
+  clamsb: 'CLAM',
+  clammb: 'CLAM',
+  dsmil: 'DSMIL',
+  dtfd: 'DTFD-MIL',
+  dtfdmil: 'DTFD-MIL',
+  meanmil: 'MeanMIL',
+  maxmil: 'MaxMIL',
+  transmil: 'TransMIL',
+}
+
+function normalizedModelKey(value: unknown): string {
+  return asString(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
+}
+
+function canonicalModelLabel(value: unknown, labels: Record<string, string>): string {
+  const key = normalizedModelKey(value)
+  return key ? labels[key] || '' : ''
+}
+
+function selectedModelLabel(selection: Record<string, unknown>, labels: Record<string, string>): string {
+  const fromCanonical = canonicalModelLabel(selection.canonical, labels)
+  if (fromCanonical) return fromCanonical
+  const fromName = canonicalModelLabel(selection.name, labels)
+  if (fromName) return fromName
+  return ''
+}
+
+function selectedFoundationModel(state: Record<string, unknown>, corpus: string): string {
+  const grounding = nestedGrounding(state)
+  const selectedExtractor = asRecord(grounding.selected_extractor)
+  const contract = asRecord(grounding.model_selection_contract)
+  const contractExtractor = asRecord(contract.feature_extractor)
+  return selectedModelLabel(selectedExtractor, FOUNDATION_MODEL_LABELS)
+    || selectedModelLabel(contractExtractor, FOUNDATION_MODEL_LABELS)
+    || firstPatternMatch(FOUNDATION_MODEL_PATTERNS, corpus)
+    || 'Not detected'
+}
+
+function selectedMilMethod(state: Record<string, unknown>, corpus: string, isSlideLevel: boolean): string | null {
+  if (!isSlideLevel) return null
+  const grounding = nestedGrounding(state)
+  const selectedMil = asRecord(grounding.selected_mil_model)
+  const contract = asRecord(grounding.model_selection_contract)
+  const contractMil = asRecord(contract.mil_model)
+  return selectedModelLabel(selectedMil, MIL_METHOD_LABELS)
+    || selectedModelLabel(contractMil, MIL_METHOD_LABELS)
+    || firstPatternMatch(MIL_METHOD_PATTERNS, corpus)
+    || 'Not detected'
+}
+
 function buildSessionMetadata(
   session: PathScientistSessionDetail | null,
   state: Record<string, unknown>,
@@ -1063,8 +1287,8 @@ function buildSessionMetadata(
   const isSlideLevel = taskType.startsWith('slide-level')
   return {
     taskType,
-    foundationModel: firstPatternMatch(FOUNDATION_MODEL_PATTERNS, corpus) || 'Not detected',
-    milMethod: isSlideLevel ? firstPatternMatch(MIL_METHOD_PATTERNS, corpus) || 'Not detected' : null,
+    foundationModel: selectedFoundationModel(state, corpus),
+    milMethod: selectedMilMethod(state, corpus, isSlideLevel),
   }
 }
 
@@ -1169,6 +1393,7 @@ function buildRunSummary(
   toolCards: PathScientistToolView[],
   iterations: PathScientistIterationView[],
   bestMetric: PathScientistMetricView | null,
+  externalTest: PathScientistExternalTestView | null,
   sessionMetadata: PathScientistSessionMetadataView,
   currentActivity: PathScientistActivityView | null,
   nowMs?: number,
@@ -1187,7 +1412,7 @@ function buildRunSummary(
 
   return {
     title: session?.title || session?.question || 'PathScientist run',
-    status: session?.status || asString(visibleEvents.at(-1)?.status) || 'unknown',
+    status: derivePathScientistDisplayStatus(session, state) || asString(visibleEvents.at(-1)?.status) || 'unknown',
     stage: asString(state.stage) || session?.stage || visibleEvents.map(eventStage).filter(Boolean).at(-1) || 'intake',
     totalDurationMs,
     totalDurationLabel: formatDuration(totalDurationMs),
@@ -1195,6 +1420,7 @@ function buildRunSummary(
     toolCallCount: toolCards.length,
     iterationCount: iterations.length,
     bestMetric,
+    externalTest,
     sessionMetadata,
     currentActivityLabel: currentActivity?.label || 'Waiting for events',
     narrative: buildRunNarrative(session, state, iterations, bestMetric, sessionMetadata),
@@ -1217,6 +1443,7 @@ export function buildPathScientistExecutionView(
   const stages = buildStages(session, visibleEvents, state, acquisition, nowMs)
   const iterations = buildIterations(state, toolCards, iterationDisplay)
   const bestMetric = buildBestMetric(state)
+  const externalTest = buildExternalTestView(state)
   const sessionMetadata = buildSessionMetadata(session, state, visibleEvents)
   const grounding = buildGroundingView(state)
 
@@ -1239,6 +1466,7 @@ export function buildPathScientistExecutionView(
       toolCards,
       iterations,
       bestMetric,
+      externalTest,
       sessionMetadata,
       currentActivity,
       nowMs,

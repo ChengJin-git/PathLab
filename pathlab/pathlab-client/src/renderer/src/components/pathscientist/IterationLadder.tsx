@@ -1,12 +1,20 @@
 import { Activity, BarChart3, Download, Loader2, Trophy, Wrench } from 'lucide-react'
 import { getPathScientistRunDownloadUrl } from '../../api/pathscientist'
 import { cn } from '../../lib/utils'
+import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
+import {
+  pathScientistIterationLabel,
+  pathScientistIterationStatusLabel,
+  pathScientistRunningIterationLabel,
+} from '../../lib/pathscientistI18n'
+import { trainingProgressEpochLabel, trainingProgressMetricLabels } from '../../lib/pathscientistSessions'
 import type {
   PathScientistIterationView,
   PathScientistMetricView,
   PathScientistSessionMetadataView,
   PathScientistToolView,
 } from '../../lib/pathscientistEventSelectors'
+import type { PathScientistTrainingProgress } from '../../types/pathscientist'
 
 const MAX_VISIBLE_TOOLS = 4
 
@@ -19,6 +27,7 @@ interface IterationLadderProps {
   currentIteration?: number | null
   maxIterations?: number | null
   isRunning?: boolean
+  trainingProgress?: PathScientistTrainingProgress | null
   variant?: 'default' | 'clinical'
   className?: string
 }
@@ -61,12 +70,6 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function runningIterationLabel(currentIteration: number, maxIterations?: number | null) {
-  return maxIterations && maxIterations > 0
-    ? `Iter ${currentIteration}/${maxIterations} running`
-    : `Iter ${currentIteration} running`
-}
-
 export default function IterationLadder({
   iterations,
   bestMetric,
@@ -76,9 +79,11 @@ export default function IterationLadder({
   currentIteration,
   maxIterations,
   isRunning = false,
+  trainingProgress,
   variant = 'default',
   className,
 }: IterationLadderProps) {
+  const { t } = usePathScientistTranslation()
   const isClinical = variant === 'clinical'
   const toolCounts = Object.entries(countTools(toolCards)).sort((a, b) => b[1] - a[1])
   const visibleToolCounts = toolCounts.slice(0, MAX_VISIBLE_TOOLS)
@@ -87,7 +92,10 @@ export default function IterationLadder({
   const showRunning = isRunning && typeof currentIteration === 'number' && currentIteration > 0
   const hasCurrentIteration = showRunning && iterations.some((iteration) => iteration.index === currentIteration)
   const showRunningPlaceholder = showRunning && !hasCurrentIteration
-  const liveLabel = showRunning ? runningIterationLabel(currentIteration, maxIterations) : ''
+  const liveLabel = showRunning ? pathScientistRunningIterationLabel(currentIteration, maxIterations, t) : ''
+  const trainingEpochLabel = trainingProgressEpochLabel(trainingProgress)
+  const trainingMetricLabels = trainingProgressMetricLabels(trainingProgress)
+  const ladderProgressLabel = [trainingEpochLabel, ...trainingMetricLabels].filter(Boolean).join(' · ')
 
   return (
     <aside
@@ -99,21 +107,21 @@ export default function IterationLadder({
     >
       <section className={cn('flex-shrink-0 rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-5 shadow-sm', !isClinical && 'xl:flex-none')}>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Task setup</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-blue-700">{t('pathScientist.iterationLadder.taskSetup')}</p>
           <Activity className="h-4 w-4 text-blue-600" />
         </div>
         <div className="mt-4 space-y-2">
-          <MetadataRow label="Task type" value={sessionMetadata.taskType} />
-          <MetadataRow label="Foundation model" value={sessionMetadata.foundationModel} />
+          <MetadataRow label={t('pathScientist.labels.taskType')} value={sessionMetadata.taskType} />
+          <MetadataRow label={t('pathScientist.labels.foundationModel')} value={sessionMetadata.foundationModel} />
           {showMilMethod && sessionMetadata.milMethod && (
-            <MetadataRow label="MIL method" value={sessionMetadata.milMethod} />
+            <MetadataRow label={t('pathScientist.labels.milMethod')} value={sessionMetadata.milMethod} />
           )}
         </div>
       </section>
 
       <section className={cn('flex-shrink-0 rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm', !isClinical && 'xl:flex-none')}>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Best so far</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">{t('pathScientist.iterationLadder.bestSoFar')}</p>
           <Trophy className="h-4 w-4 text-emerald-600" />
         </div>
         <div className="mt-3 flex items-center justify-between gap-3">
@@ -121,7 +129,7 @@ export default function IterationLadder({
           {sessionId && bestMetric?.runId && (
             <a
               href={getPathScientistRunDownloadUrl(sessionId, bestMetric.runId)}
-              aria-label="Download artifacts for best run"
+              aria-label={t('pathScientist.iterationLadder.downloadBestRun')}
               className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-extrabold text-emerald-700 ring-1 ring-emerald-100 transition hover:bg-emerald-50"
               download
             >
@@ -130,7 +138,7 @@ export default function IterationLadder({
             </a>
           )}
         </div>
-        <p className="mt-1 truncate text-xs font-semibold text-gray-500">{formatMetricName(bestMetric)}{bestMetric?.runId ? ` from ${bestMetric.runId}` : ''}</p>
+        <p className="mt-1 truncate text-xs font-semibold text-gray-500">{formatMetricName(bestMetric)}{bestMetric?.runId ? t('pathScientist.iterationLadder.metricFromRun', { runId: bestMetric.runId }) : ''}</p>
       </section>
 
       <section
@@ -142,8 +150,8 @@ export default function IterationLadder({
       >
         <div className="mb-4 flex flex-shrink-0 items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-extrabold text-gray-950">Iteration ladder</h2>
-            <p className="mt-1 text-xs text-gray-500">Metric progression and ratchet status.</p>
+            <h2 className="text-sm font-extrabold text-gray-950">{t('pathScientist.iterationLadder.title')}</h2>
+            <p className="mt-1 text-xs text-gray-500">{t('pathScientist.iterationLadder.description')}</p>
           </div>
           <BarChart3 className="h-4 w-4 text-gray-400" />
         </div>
@@ -156,6 +164,7 @@ export default function IterationLadder({
             <span className="inline-flex items-center gap-1.5">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {liveLabel}
+              {trainingEpochLabel && <span className="text-blue-500">· {trainingEpochLabel}</span>}
             </span>
             <span className="h-2 w-2 rounded-full bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.15)]" />
           </div>
@@ -168,7 +177,7 @@ export default function IterationLadder({
           data-testid="pathscientist-iteration-ladder-scroll"
         >
         {iterations.length === 0 && !showRunningPlaceholder ? (
-          <p className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">No execution iterations yet.</p>
+          <p className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">{t('pathScientist.iterationLadder.noIterations')}</p>
         ) : (
           <>
             {showRunningPlaceholder && (
@@ -177,56 +186,74 @@ export default function IterationLadder({
                 data-testid="pathscientist-ladder-running-placeholder"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-extrabold">Iter {currentIteration}</span>
+                  <span className="font-extrabold">{pathScientistIterationLabel(currentIteration, t)}</span>
                   <Loader2 className="h-4 w-4 animate-spin" />
                 </div>
-                <p className="mt-1 text-xs font-semibold text-blue-600">Waiting for the first execution event...</p>
+                <p className="mt-1 text-xs font-semibold text-blue-600">
+                  {ladderProgressLabel || t('pathScientist.iterationLadder.waitingFirstEvent')}
+                </p>
               </div>
             )}
-            {iterations.map((iteration) => (
-              <div
-                key={iteration.index}
-                className={cn(
-                  'rounded-2xl border p-3',
-                  showRunning && iteration.index === currentIteration
-                    ? 'border-blue-200 bg-blue-50/70 ring-1 ring-blue-100'
-                    : 'border-gray-100 bg-gray-50/70',
-                )}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-extrabold text-gray-950">Iter {iteration.index}</span>
-                  <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ring-1', iterationTone(iteration.status))}>
-                    {iterationStatusLabel(iteration)}
-                  </span>
-                </div>
-                {showRunning && iteration.index === currentIteration && (
-                  <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-bold text-blue-700">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Running iteration
-                  </p>
-                )}
-                <div className="mt-2 flex items-center justify-between gap-3 text-xs text-gray-500">
-                  <span>{iteration.metricName || bestMetric?.name || 'metric'}</span>
-                  <strong className="font-extrabold text-gray-900">{typeof iteration.metricValue === 'number' ? iteration.metricValue.toFixed(3) : '--'}</strong>
-                </div>
-                {iteration.runId && (
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <p className="truncate text-[11px] font-medium text-gray-400">{iteration.runId}</p>
-                    {sessionId && (
-                      <a
-                        href={getPathScientistRunDownloadUrl(sessionId, iteration.runId)}
-                        aria-label={`Download artifacts for iter ${iteration.index}`}
-                        className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-blue-700 ring-1 ring-blue-100 transition hover:bg-blue-50"
-                        download
-                      >
-                        <Download className="h-3 w-3" />
-                        ZIP
-                      </a>
-                    )}
+            {iterations.map((iteration) => {
+              const isCurrentRunning = showRunning && iteration.index === currentIteration
+              const status = isCurrentRunning ? 'running' : iteration.status
+              const statusLabel = pathScientistIterationStatusLabel(isCurrentRunning ? 'running' : iterationStatusLabel(iteration), t)
+
+              return (
+                <div
+                  key={iteration.index}
+                  className={cn(
+                    'rounded-2xl border p-3',
+                    isCurrentRunning
+                      ? 'border-blue-200 bg-blue-50/70 ring-1 ring-blue-100'
+                      : 'border-gray-100 bg-gray-50/70',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-extrabold text-gray-950">{pathScientistIterationLabel(iteration.index, t)}</span>
+                    <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ring-1', iterationTone(status))}>
+                      {statusLabel}
+                    </span>
                   </div>
-                )}
-              </div>
-            ))}
+                  {isCurrentRunning && (
+                    <div className="mt-1 space-y-1">
+                      <p className="inline-flex items-center gap-1.5 text-[11px] font-bold text-blue-700">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        {t('pathScientist.iteration.runningBadge')}
+                      </p>
+                      {ladderProgressLabel && (
+                        <p
+                          className="w-fit rounded-full bg-white/85 px-2 py-0.5 text-[11px] font-extrabold text-sky-700 ring-1 ring-sky-100"
+                          data-testid="pathscientist-ladder-training-progress"
+                        >
+                          {ladderProgressLabel}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <div className="mt-2 flex items-center justify-between gap-3 text-xs text-gray-500">
+                    <span>{iteration.metricName || bestMetric?.name || 'metric'}</span>
+                    <strong className="font-extrabold text-gray-900">{typeof iteration.metricValue === 'number' ? iteration.metricValue.toFixed(3) : '--'}</strong>
+                  </div>
+                  {iteration.runId && (
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <p className="truncate text-[11px] font-medium text-gray-400">{iteration.runId}</p>
+                      {sessionId && (
+                        <a
+                          href={getPathScientistRunDownloadUrl(sessionId, iteration.runId)}
+                          aria-label={t('pathScientist.iterationLadder.downloadIterationRun', { iteration: iteration.index })}
+                          className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-blue-700 ring-1 ring-blue-100 transition hover:bg-blue-50"
+                          download
+                        >
+                          <Download className="h-3 w-3" />
+                          ZIP
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </>
         )}
         </div>
@@ -240,11 +267,11 @@ export default function IterationLadder({
         data-testid="pathscientist-tools-card"
       >
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-extrabold text-gray-950">Tools used</h2>
+          <h2 className="text-sm font-extrabold text-gray-950">{t('pathScientist.iterationLadder.toolsUsed')}</h2>
           <Wrench className="h-4 w-4 text-gray-400" />
         </div>
         {toolCounts.length === 0 ? (
-          <p className="text-sm text-gray-500">No tool calls yet.</p>
+          <p className="text-sm text-gray-500">{t('pathScientist.iterationLadder.noTools')}</p>
         ) : (
           <div className="space-y-2" data-testid="pathscientist-tools-list">
             {visibleToolCounts.map(([tool, count]) => (
@@ -255,7 +282,7 @@ export default function IterationLadder({
             ))}
             {hiddenToolCount > 0 && (
               <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-center text-xs font-bold text-gray-500">
-                +{hiddenToolCount} more tools
+                {t('pathScientist.iterationLadder.moreTools', { count: hiddenToolCount })}
               </div>
             )}
           </div>

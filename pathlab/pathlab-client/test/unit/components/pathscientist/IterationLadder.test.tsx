@@ -76,4 +76,73 @@ describe('IterationLadder', () => {
     expect(screen.getByTestId('pathscientist-tools-list')).not.toHaveClass('xl:overflow-y-auto')
     expect(screen.getByText('+10 more tools')).toBeInTheDocument()
   })
+
+  it('hides terminal error badges on the currently running iteration until it finishes', () => {
+    const iterations: PathScientistIterationView[] = [
+      { index: 1, status: 'error', metricName: 'auc', tools: [] },
+    ]
+
+    const { rerender } = render(
+      <IterationLadder
+        iterations={iterations}
+        bestMetric={null}
+        sessionMetadata={sessionMetadata}
+        toolCards={[]}
+        currentIteration={1}
+        maxIterations={1}
+        isRunning
+      />,
+    )
+
+    expect(screen.getByTestId('pathscientist-ladder-running-strip')).toHaveTextContent('Iter 1/1 running')
+    expect(screen.getByText('Running iteration')).toBeInTheDocument()
+    expect(screen.queryByText(/^error$/i)).not.toBeInTheDocument()
+
+    rerender(
+      <IterationLadder
+        iterations={iterations}
+        bestMetric={null}
+        sessionMetadata={sessionMetadata}
+        toolCards={[]}
+        currentIteration={1}
+        maxIterations={1}
+        isRunning={false}
+      />,
+    )
+
+    expect(screen.getByText(/^error$/i)).toBeInTheDocument()
+  })
+
+  it('shows live training epoch progress in the running strip and current iteration', () => {
+    const iterations: PathScientistIterationView[] = [
+      { index: 1, status: 'info', metricName: 'auc', metricValue: 0.91, tools: [] },
+    ]
+
+    render(
+      <IterationLadder
+        iterations={iterations}
+        bestMetric={{ name: 'auc', value: 0.9683, runId: 'run_b' }}
+        sessionMetadata={sessionMetadata}
+        toolCards={[]}
+        currentIteration={1}
+        maxIterations={1}
+        isRunning
+        trainingProgress={{
+          current_epoch: 10,
+          total_epochs: 30,
+          current_val_auc: 0.9567,
+          best_val_auc: 0.9683,
+        }}
+      />,
+    )
+
+    const runningStrip = screen.getByTestId('pathscientist-ladder-running-strip')
+    expect(runningStrip).toHaveTextContent('Iter 1/1 running')
+    expect(runningStrip).toHaveTextContent('Epoch 10/30')
+
+    const trainingPill = screen.getByTestId('pathscientist-ladder-training-progress')
+    expect(trainingPill).toHaveTextContent('Epoch 10/30')
+    expect(trainingPill).toHaveTextContent('AUC 0.957')
+    expect(trainingPill).toHaveTextContent('best 0.968')
+  })
 })

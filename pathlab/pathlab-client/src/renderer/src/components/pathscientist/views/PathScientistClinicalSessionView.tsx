@@ -238,7 +238,7 @@ export default function PathScientistClinicalSessionView({
                     disabled={isResuming}
                   >
                     {isResuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                    Resume session
+                    {t('pathScientist.sessionPage.resumeSession')}
                   </Button>
                 )}
                 {canDelete && (

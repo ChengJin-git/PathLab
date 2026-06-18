@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PathScientistExecutionConsole from '@renderer/components/pathscientist/PathScientistExecutionConsole'
+import i18n from '@renderer/i18n'
 import type { PathScientistEvent, PathScientistSessionDetail } from '@renderer/types/pathscientist'
 
 const events: PathScientistEvent[] = [
@@ -50,12 +51,31 @@ const session: PathScientistSessionDetail = {
 }
 
 describe('PathScientistExecutionConsole', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en-US')
     vi.spyOn(Date, 'now').mockReturnValue(1060_000)
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks()
+    await i18n.changeLanguage('en-US')
+  })
+
+  it('renders execution chrome from zh-CN translations', async () => {
+    await i18n.changeLanguage('zh-CN')
+
+    render(<PathScientistExecutionConsole session={session} events={events} streamStatus="open" />)
+
+    expect(screen.getByText('阶段时间线')).toBeInTheDocument()
+    expect(screen.getByText('执行控制台')).toBeInTheDocument()
+    expect(screen.getByText('运行摘要')).toBeInTheDocument()
+    expect(screen.getByText('任务设置')).toBeInTheDocument()
+    expect(screen.getByText('当前最佳')).toBeInTheDocument()
+    expect(screen.getByText('迭代进度')).toBeInTheDocument()
+    expect(screen.getByText('已用工具')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /显示原始事件/ })).toBeInTheDocument()
+    expect(screen.queryByText('Execution console')).not.toBeInTheDocument()
+    expect(screen.queryByText('Run summary')).not.toBeInTheDocument()
   })
 
   it('renders the execution plan as structured PathLab-style cards instead of raw JSON', () => {
@@ -108,6 +128,49 @@ describe('PathScientistExecutionConsole', () => {
     expect(screen.getAllByText('Grounding').length).toBeGreaterThan(0)
     expect(screen.getByTestId('pathscientist-stage-duration-grounding')).toHaveTextContent('20s')
     expect(screen.getAllByText('40s').length).toBeGreaterThan(0)
+  })
+
+  it('renders an external validation summary only when external results exist', () => {
+    const externalSession: PathScientistSessionDetail = {
+      ...session,
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        ...session.state,
+        objective: { success_metric: 'auc' },
+        external_test_history: [
+          {
+            run_id: 'external_run_001',
+            status: 'completed',
+            committed: true,
+            model_path: '/workspace/outputs/best_model.pt',
+            run_dir: '/workspace/runs/external_run_001',
+            metrics: {
+              auc: 0.91342,
+              accuracy: 0.842,
+              n_external_evaluated: 18,
+            },
+          },
+        ],
+      },
+    }
+
+    render(<PathScientistExecutionConsole session={externalSession} events={events} streamStatus="closed" />)
+
+    const externalCard = screen.getByTestId('pathscientist-external-summary')
+    expect(externalCard).toHaveTextContent('External validation')
+    expect(externalCard).toHaveTextContent('AUC 0.913')
+    expect(externalCard).toHaveTextContent('18 samples')
+    expect(externalCard).toHaveTextContent('completed')
+    expect(externalCard).toHaveTextContent('external_run_001')
+    expect(externalCard).toHaveTextContent('/workspace/outputs/best_model.pt')
+  })
+
+  it('does not render an empty external validation card for sessions without external results', () => {
+    render(<PathScientistExecutionConsole session={session} events={events} streamStatus="open" />)
+
+    expect(screen.queryByTestId('pathscientist-external-summary')).not.toBeInTheDocument()
+    expect(screen.queryByText('External validation')).not.toBeInTheDocument()
   })
 
   it('does not duplicate terminal completed badges in the run summary header', () => {
@@ -342,6 +405,26 @@ describe('PathScientistExecutionConsole', () => {
     expect(screen.getByTestId('pathscientist-execution-running-badge')).toHaveTextContent('Iter 2/3 running')
     expect(screen.getByTestId('pathscientist-ladder-running-strip')).toHaveTextContent('Iter 2/3 running')
     expect(screen.getByTestId('pathscientist-iteration-2')).toHaveTextContent('Running iteration')
+  })
+
+  it('shows live epoch training progress from the session summary', () => {
+    const trainingSession: PathScientistSessionDetail = {
+      ...session,
+      training_progress: {
+        run_id: 'run_b',
+        current_epoch: 7,
+        total_epochs: 30,
+        current_val_auc: 0.9636,
+        best_val_auc: 0.9683,
+      },
+    }
+
+    render(<PathScientistExecutionConsole session={trainingSession} events={events} streamStatus="open" />)
+
+    const progress = screen.getByTestId('pathscientist-training-progress-badge')
+    expect(progress).toHaveTextContent('Epoch 7/30')
+    expect(progress).toHaveTextContent('val AUC 0.964')
+    expect(progress).toHaveTextContent('best 0.968')
   })
 
   it('maps zero-based live iteration state to the displayed running iteration', () => {

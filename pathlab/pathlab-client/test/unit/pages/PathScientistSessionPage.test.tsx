@@ -1,10 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PathScientistSessionPage from '@renderer/pages/PathScientistSessionPage'
 import { deletePathScientistSession, getPathScientistEventsUrl, getPathScientistSession, resumePathScientistSession, stopPathScientistSession } from '@renderer/api/pathscientist'
 import type { PathScientistEvent, PathScientistSessionDetail } from '@renderer/types/pathscientist'
 import { useAuth } from '@renderer/contexts/AuthContext'
+import i18n from '@renderer/i18n'
 
 vi.mock('@renderer/contexts/AuthContext', () => ({
   useAuth: vi.fn(),
@@ -74,10 +75,13 @@ function mockAuth(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
   } as any)
 }
 
-function renderPage(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
+function renderPage(
+  role: 'admin' | 'pathologist' | 'guest' = 'admin',
+  initialPath = '/pathscientist/sessions/s1',
+) {
   mockAuth(role)
   return render(
-    <MemoryRouter initialEntries={["/pathscientist/sessions/s1"]}>
+    <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
         <Route path="/pathscientist/sessions/:id" element={<PathScientistSessionPage />} />
         <Route path="/pathscientist/new" element={<div>new session</div>} />
@@ -87,9 +91,13 @@ function renderPage(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
 }
 
 describe('PathScientistSessionPage', () => {
-  afterEach(() => cleanup())
+  afterEach(async () => {
+    cleanup()
+    await i18n.changeLanguage('en-US')
+  })
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en-US')
     MockEventSource.instances = []
     vi.stubGlobal('EventSource', MockEventSource)
     vi.mocked(getPathScientistSession).mockResolvedValue({
@@ -133,6 +141,23 @@ describe('PathScientistSessionPage', () => {
     expect(screen.queryByText('Event stream')).not.toBeInTheDocument()
     expect(screen.queryByText('Raw state')).not.toBeInTheDocument()
     expect(screen.queryByText(/"kind"/)).not.toBeInTheDocument()
+  })
+
+  it('renders the developer session detail page from zh-CN translations', async () => {
+    await i18n.changeLanguage('zh-CN')
+
+    renderPage()
+
+    expect(await screen.findByText('执行控制台')).toBeInTheDocument()
+    expect(screen.getByText('阶段时间线')).toBeInTheDocument()
+    expect(screen.getByText('会话详情')).toBeInTheDocument()
+    expect(screen.getByText('研究问题')).toBeInTheDocument()
+    expect(screen.getAllByText('阶段').length).toBeGreaterThan(0)
+    expect(screen.getByText('模型')).toBeInTheDocument()
+    expect(screen.getAllByText('事件').length).toBeGreaterThan(0)
+    expect(screen.getByText('工作区')).toBeInTheDocument()
+    expect(screen.queryByText('Execution console')).not.toBeInTheDocument()
+    expect(screen.queryByText('Session detail')).not.toBeInTheDocument()
   })
 
   it('does not open the live event stream for completed replay sessions', async () => {
@@ -203,6 +228,66 @@ describe('PathScientistSessionPage', () => {
     expect(screen.getByTestId('pathscientist-session-status-pill')).toHaveTextContent(/running.*3m/)
   })
 
+  it('refreshes training epoch progress while a session is running', async () => {
+    const intervals: Array<{ handler: TimerHandler; timeout?: number }> = []
+    vi.spyOn(window, 'setInterval').mockImplementation((handler: TimerHandler, timeout?: number) => {
+      intervals.push({ handler, timeout })
+      return intervals.length as unknown as ReturnType<typeof window.setInterval>
+    })
+    const getSession = vi.mocked(getPathScientistSession)
+    getSession.mockReset()
+    getSession
+      .mockResolvedValueOnce({
+        ...session,
+        status: 'running',
+        stage: 'execution',
+        training_progress: {
+          current_epoch: 7,
+          total_epochs: 30,
+          current_val_auc: 0.9636,
+          best_val_auc: 0.9683,
+        },
+      })
+      .mockResolvedValueOnce({
+        ...session,
+        status: 'running',
+        stage: 'execution',
+        training_progress: {
+          current_epoch: 8,
+          total_epochs: 30,
+          current_val_auc: 0.9712,
+          best_val_auc: 0.9712,
+        },
+      })
+      .mockResolvedValue({
+        ...session,
+        status: 'running',
+        stage: 'execution',
+        training_progress: {
+          current_epoch: 8,
+          total_epochs: 30,
+          current_val_auc: 0.9712,
+          best_val_auc: 0.9712,
+        },
+      })
+
+    renderPage()
+
+    expect(await screen.findByTestId('pathscientist-training-progress-badge')).toHaveTextContent('Epoch 7/30')
+    await waitFor(() => expect(intervals.map((interval) => interval.timeout)).toContain(5000))
+    const poll = intervals.filter((interval) => interval.timeout === 5000).at(-1)
+
+    await act(async () => {
+      if (typeof poll?.handler === 'function') {
+        poll.handler()
+      }
+    })
+
+    await waitFor(() => expect(getSession.mock.calls.length).toBeGreaterThanOrEqual(2))
+    await waitFor(() => expect(screen.getByTestId('pathscientist-training-progress-badge')).toHaveTextContent('Epoch 8/30'))
+    expect(screen.getByTestId('pathscientist-training-progress-badge')).toHaveTextContent('val AUC 0.971')
+  })
+
   it('deletes a completed session from the detail page and returns to the list', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(getPathScientistSession).mockResolvedValue({
@@ -243,7 +328,7 @@ describe('PathScientistSessionPage', () => {
     expect(await screen.findByTestId('pathscientist-clinical-session')).toBeInTheDocument()
     expect(screen.getByTestId('pathscientist-clinical-overview')).toBeInTheDocument()
     expect(screen.getByTestId('pathscientist-clinical-progress')).toBeInTheDocument()
-    expect(screen.getByText('pathScientist.clinical.technicalDetails')).toBeInTheDocument()
+    expect(screen.getByText('Technical details')).toBeInTheDocument()
     expect(screen.queryByText('Execution console')).not.toBeInTheDocument()
     expect(screen.queryByText('Workspace')).not.toBeInTheDocument()
   })
@@ -265,5 +350,62 @@ describe('PathScientistSessionPage', () => {
     expect(screen.getAllByText('completed').length).toBeGreaterThan(0)
     expect(screen.queryByText('running')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /stop run/i })).not.toBeInTheDocument()
+  })
+
+  it('clears stale session content immediately when the route changes to a different session id', async () => {
+    let resolveSecondSession: (detail: PathScientistSessionDetail) => void = () => {}
+    vi.mocked(getPathScientistSession).mockImplementation((sessionId: string) => {
+      if (sessionId === 's1') {
+        return Promise.resolve({
+          ...session,
+          session_id: 's1',
+          title: 'First session',
+          question: 'First session question',
+          status: 'completed',
+          stage: 'completed',
+          events: [],
+        })
+      }
+      return new Promise<PathScientistSessionDetail>((resolve) => {
+        resolveSecondSession = resolve
+      })
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/pathscientist/sessions/s1']}>
+        <Routes>
+          <Route
+            path="/pathscientist/sessions/:id"
+            element={(
+              <>
+                <Link to="/pathscientist/sessions/s2">switch to second</Link>
+                <PathScientistSessionPage />
+              </>
+            )}
+          />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('First session question')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('link', { name: 'switch to second' }))
+
+    expect(screen.getByText('Loading session...')).toBeInTheDocument()
+    expect(screen.queryByText('First session question')).not.toBeInTheDocument()
+    expect(screen.getByText('s2')).toBeInTheDocument()
+
+    resolveSecondSession({
+      ...session,
+      session_id: 's2',
+      title: 'Second session',
+      question: 'Second session question',
+      status: 'completed',
+      stage: 'completed',
+      events: [],
+    })
+
+    expect(await screen.findByText('Second session question')).toBeInTheDocument()
+    expect(screen.queryByText('First session question')).not.toBeInTheDocument()
   })
 })

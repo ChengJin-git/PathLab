@@ -22,6 +22,22 @@ export interface StartPathScientistSessionRequest {
 
 export type PathScientistSessionStatus = 'queued' | 'running' | 'completed' | 'failed' | 'interrupted'
 
+export interface PathScientistTrainingProgress {
+  run_id?: string
+  quick_check?: boolean | null
+  run_kind?: string | null
+  current_epoch?: number | null
+  total_epochs?: number | null
+  current_val_auc?: number | null
+  current_val_acc?: number | null
+  current_val_loss?: number | null
+  best_val_auc?: number | null
+  best_epoch?: number | null
+  current_metrics?: Record<string, number>
+  log_path?: string
+  updated_at?: number
+}
+
 export interface PathScientistSessionSummary {
   session_id: string
   conversation_id?: string
@@ -38,6 +54,9 @@ export interface PathScientistSessionSummary {
   persistence_dir?: string
   resume_available?: boolean
   event_source_version?: string
+  current_iteration?: number | null
+  max_iterations?: number | null
+  training_progress?: PathScientistTrainingProgress
   error?: string
 }
 

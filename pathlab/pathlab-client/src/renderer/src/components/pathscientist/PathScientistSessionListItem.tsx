@@ -13,6 +13,7 @@ import {
   displaySessionStatus,
   isLiveSessionStatus,
   sessionStatusClass,
+  sessionTrainingProgressLabel,
 } from '../../lib/pathscientistSessions'
 import { useToast } from '../../contexts/ToastContext'
 
@@ -54,6 +55,7 @@ export default function PathScientistSessionListItem({
   const status = displaySessionStatus(session.status)
   const isActive = location.pathname === `/pathscientist/sessions/${session.session_id}`
   const canDelete = !isLiveSessionStatus(session.status)
+  const trainingProgressLabel = sessionTrainingProgressLabel(session)
 
   const handleShare = async (event: MouseEvent) => {
     event.preventDefault()
@@ -137,6 +139,11 @@ export default function PathScientistSessionListItem({
                 </span>
                 {isLiveSessionStatus(session.status) && (
                   <span className="text-[10px] font-medium text-blue-600">{t('pathScientist.live')}</span>
+                )}
+                {trainingProgressLabel && (
+                  <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
+                    {trainingProgressLabel}
+                  </span>
                 )}
               </div>
             </div>

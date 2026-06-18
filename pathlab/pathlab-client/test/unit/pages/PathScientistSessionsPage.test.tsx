@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PathScientistSessionsPage from '@renderer/pages/PathScientistSessionsPage'
 import { deletePathScientistSession, listPathScientistSessions, stopPathScientistSession } from '@renderer/api/pathscientist'
+import i18n from '@renderer/i18n'
 
 vi.mock('@renderer/api/pathscientist', () => ({
   deletePathScientistSession: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock('@renderer/api/pathscientist', () => ({
 
 describe('PathScientistSessionsPage', () => {
   beforeEach(() => {
+    void i18n.changeLanguage('en-US')
     vi.mocked(listPathScientistSessions).mockResolvedValue({
       items: [
         {
@@ -36,6 +38,7 @@ describe('PathScientistSessionsPage', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+    void i18n.changeLanguage('en-US')
   })
 
   it('shows legacy finished sessions as completed on the main page', async () => {
@@ -138,6 +141,99 @@ describe('PathScientistSessionsPage', () => {
 
     expect(await screen.findByText('Running timer')).toBeInTheDocument()
     expect(screen.getByTestId('pathscientist-session-badges-running-timer')).toHaveTextContent(/running.*2m/)
+  })
+
+  it('shows epoch progress on running session cards', async () => {
+    vi.mocked(listPathScientistSessions).mockResolvedValue({
+      items: [
+        {
+          session_id: 'running-epoch',
+          conversation_id: 'conv-running-epoch',
+          title: 'Running epoch',
+          question: 'Train a model',
+          model: 'gpt-5.5',
+          status: 'running',
+          stage: 'execution',
+          created_at: 1779030000,
+          updated_at: 1779030100,
+          error: '',
+          current_iteration: 0,
+          max_iterations: 1,
+          training_progress: {
+            run_id: 'run_b',
+            current_epoch: 7,
+            total_epochs: 30,
+            current_val_auc: 0.9636,
+            best_val_auc: 0.9683,
+          },
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Running epoch')).toBeInTheDocument()
+    const badges = screen.getByTestId('pathscientist-session-badges-running-epoch')
+    expect(badges).toHaveTextContent('Iter 1/1')
+    expect(badges).toHaveTextContent('Epoch 7/30')
+    expect(badges).toHaveTextContent('AUC 0.964')
+  })
+
+  it('renders page chrome, empty state, and session actions from zh-CN translations', async () => {
+    await i18n.changeLanguage('zh-CN')
+    vi.mocked(listPathScientistSessions).mockResolvedValueOnce({ items: [] })
+
+    const { unmount } = render(
+      <MemoryRouter>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('研究会话')).toBeInTheDocument()
+    expect(screen.getByText('刷新')).toBeInTheDocument()
+    expect(screen.getByText('新建会话')).toBeInTheDocument()
+    expect(screen.getByText('暂无 PathScientist 会话')).toBeInTheDocument()
+    expect(screen.getByText('创建一个短会话，用于验证后端桥接和事件流。')).toBeInTheDocument()
+    expect(screen.getByText('开始一个')).toBeInTheDocument()
+    expect(screen.queryByText('Research sessions')).not.toBeInTheDocument()
+    expect(screen.queryByText('No PathScientist sessions yet')).not.toBeInTheDocument()
+
+    unmount()
+    vi.mocked(listPathScientistSessions).mockResolvedValueOnce({
+      items: [
+        {
+          session_id: 'i18n-running',
+          conversation_id: 'conv-i18n',
+          title: '',
+          title_pending: true,
+          question: 'Train a model',
+          model: 'gpt-5.5',
+          status: 'running',
+          stage: 'execution',
+          created_at: 1779030000,
+          updated_at: 1779030100,
+          workspace_size_bytes: 2048,
+          error: '',
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('正在生成标题...')).toBeInTheDocument()
+    expect(screen.getByText('工作区')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /停止运行/ })).toBeInTheDocument()
+    expect(screen.queryByText('Generating title...')).not.toBeInTheDocument()
+    expect(screen.queryByText('Workspace')).not.toBeInTheDocument()
+    expect(screen.queryByText('Stop run')).not.toBeInTheDocument()
   })
 
   it('deduplicates backend rows for the same workspace and keeps the live gateway session', async () => {

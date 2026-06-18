@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import PathScientistClinicalSessionView from '../components/pathscientist/views/PathScientistClinicalSessionView'
@@ -8,6 +9,9 @@ import { deletePathScientistSession, getPathScientistSession, resumePathScientis
 import type { PathScientistEvent, PathScientistSessionDetail, PathScientistSessionSummary } from '../types/pathscientist'
 import { formatPathScientistElapsed } from '../lib/pathscientistTime'
 import { isLiveClinicalStatus } from '../lib/pathscientistClinicalSteps'
+import { derivePathScientistDisplayStatus } from '../lib/pathscientistEventSelectors'
+
+const LIVE_SESSION_DETAIL_REFRESH_MS = 5000
 
 function eventKey(event: PathScientistEvent) {
   if (typeof event.seq === 'number') return `seq:${event.seq}`
@@ -49,11 +53,20 @@ function terminalDisplayStatus(status?: string) {
   return ['completed', 'failed', 'interrupted'].includes(normalized) ? normalized : ''
 }
 
+function latestMergedState(session: PathScientistSessionDetail | null, events: PathScientistEvent[]) {
+  const stateEvent = [...events].reverse().find((event) => event.state)
+  return {
+    ...(session?.state && typeof session.state === 'object' ? session.state : {}),
+    ...(stateEvent?.state && typeof stateEvent.state === 'object' ? stateEvent.state : {}),
+  }
+}
+
 function titleEventValue(event: PathScientistEvent | undefined): string {
   return typeof event?.title === 'string' ? event.title : ''
 }
 
 export default function PathScientistSessionPage() {
+  const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { isAdmin, isPathologist } = useAuth()
@@ -68,12 +81,23 @@ export default function PathScientistSessionPage() {
 
   useEffect(() => {
     if (!id) return
+    let cancelled = false
     setIsLoading(true)
     setError('')
+    setSession(null)
     getPathScientistSession(id)
-      .then((detail) => setSession(detail))
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load session'))
-      .finally(() => setIsLoading(false))
+      .then((detail) => {
+        if (!cancelled) setSession(detail)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : t('pathScientist.sessionPage.loadFailed'))
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [id])
 
   const events = useMemo(() => mergeEvents(session?.events || [], stream.events), [session?.events, stream.events])
@@ -88,6 +112,11 @@ export default function PathScientistSessionPage() {
   }, [events, session, stream.latestState])
 
   const latestStatus = useMemo(() => {
+    const derivedStatus = terminalDisplayStatus(
+      derivePathScientistDisplayStatus(session, latestMergedState(session, events)),
+    )
+    if (derivedStatus) return derivedStatus
+
     const sessionTerminalStatus = terminalDisplayStatus(session?.status)
     if (sessionTerminalStatus) return sessionTerminalStatus
 
@@ -107,12 +136,41 @@ export default function PathScientistSessionPage() {
   const latestTitleEvent = useMemo(() => [...events].reverse().find((event) => event.kind === 'session_title'), [events])
   const latestTitle = titleEventValue(latestTitleEvent) || session?.title || ''
   const titlePending = Boolean((latestTitleEvent ? latestTitleEvent.title_pending : session?.title_pending) && !latestTitle)
-  const displayTitle = latestTitle || (titlePending ? 'Generating title...' : 'Untitled PathScientist session')
+  const displayTitle = latestTitle || (titlePending ? t('pathScientist.generatingTitle') : t('pathScientist.sessionsPage.untitledSession'))
   const canStop = Boolean(id && isLiveClinicalStatus(latestStatus))
   const canResume = Boolean(id && session?.resume_available && !isLiveClinicalStatus(latestStatus))
   const canDelete = Boolean(id && session && !isLiveClinicalStatus(latestStatus))
   const nowMs = useRunningClock(isLiveClinicalStatus(latestStatus))
   const runningElapsed = isLiveClinicalStatus(latestStatus) ? formatPathScientistElapsed(session?.created_at, nowMs) : ''
+
+  useEffect(() => {
+    if (!id || !isLiveClinicalStatus(latestStatus)) return undefined
+    let cancelled = false
+    const refreshSession = async () => {
+      try {
+        const detail = await getPathScientistSession(id)
+        if (cancelled) return
+        setSession((current) => {
+          if (!current || current.session_id !== detail.session_id) return detail
+          return {
+            ...current,
+            ...detail,
+            events: mergeEvents(detail.events || [], stream.events),
+          }
+        })
+      } catch {
+        // Keep the live stream UI stable; the primary loader/error path handles
+        // the initial detail request and SSE handles transient runtime updates.
+      }
+    }
+    const timer = window.setInterval(() => {
+      void refreshSession()
+    }, LIVE_SESSION_DETAIL_REFRESH_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [id, latestStatus, stream.events])
 
   const handleStop = async () => {
     if (!id || isStopping) return
@@ -131,7 +189,7 @@ export default function PathScientistSessionPage() {
         ? { ...current, ...stopped, events: [...(current.events || []), stopEvent] }
         : { ...stopped, events: [stopEvent] })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to stop session')
+      setError(err instanceof Error ? err.message : t('pathScientist.sessionPage.stopFailed'))
     } finally {
       setIsStopping(false)
     }
@@ -139,7 +197,7 @@ export default function PathScientistSessionPage() {
 
   const handleDelete = async () => {
     if (!id || isDeleting) return
-    const confirmed = window.confirm('Delete this PathScientist session and its backend workspace? Generated code, logs, models, and run results for this session will be removed. Shared datasets are not deleted.')
+    const confirmed = window.confirm(t('pathScientist.sessionsPage.deleteConfirm'))
     if (!confirmed) return
     setIsDeleting(true)
     setError('')
@@ -147,7 +205,7 @@ export default function PathScientistSessionPage() {
       await deletePathScientistSession(id)
       navigate('/pathscientist/new')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete session')
+      setError(err instanceof Error ? err.message : t('pathScientist.sessionPage.deleteFailed'))
     } finally {
       setIsDeleting(false)
     }
@@ -169,14 +227,14 @@ export default function PathScientistSessionPage() {
         ? { ...current, ...resumed, events: [...(current.events || []), resumeEvent] }
         : { ...resumed, events: [resumeEvent] })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resume session')
+      setError(err instanceof Error ? err.message : t('pathScientist.sessionPage.resumeFailed'))
     } finally {
       setIsResuming(false)
     }
   }
 
   if (!id) {
-    return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">Missing session id.</div>
+    return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">{t('pathScientist.sessionPage.missingSessionId')}</div>
   }
 
   const sharedProps = {

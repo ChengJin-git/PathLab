@@ -1,4 +1,5 @@
 import type { PathScientistSessionSummary } from '../types/pathscientist'
+import type { PathScientistTrainingProgress } from '../types/pathscientist'
 
 export function displaySessionStatus(status?: string) {
   if (status === 'finished') return 'completed'
@@ -7,6 +8,63 @@ export function displaySessionStatus(status?: string) {
 
 export function isLiveSessionStatus(status?: string) {
   return status === 'queued' || status === 'running'
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function trainingProgressRunLabel(progress?: PathScientistTrainingProgress | null) {
+  const runKind = typeof progress?.run_kind === 'string' ? progress.run_kind.toLowerCase() : ''
+  if (progress?.quick_check || ['quick_check', 'quick-check', 'quick_start', 'quick-start'].includes(runKind)) {
+    return 'Quick start'
+  }
+  return 'Training'
+}
+
+export function trainingProgressEpochLabel(progress?: PathScientistTrainingProgress | null) {
+  const currentEpoch = finiteNumber(progress?.current_epoch)
+  if (currentEpoch === null) return ''
+  const totalEpochs = finiteNumber(progress?.total_epochs)
+  const epoch = totalEpochs && totalEpochs > 0 ? `Epoch ${currentEpoch}/${totalEpochs}` : `Epoch ${currentEpoch}`
+  return `${trainingProgressRunLabel(progress)} · ${epoch}`
+}
+
+export function trainingProgressMetricLabels(progress?: PathScientistTrainingProgress | null) {
+  const labels: string[] = []
+  const currentAuc = finiteNumber(progress?.current_val_auc)
+  if (currentAuc !== null) labels.push(`AUC ${currentAuc.toFixed(3)}`)
+  const bestAuc = finiteNumber(progress?.best_val_auc)
+  if (bestAuc !== null) labels.push(`best ${bestAuc.toFixed(3)}`)
+  return labels
+}
+
+export function trainingProgressConsoleLabel(progress?: PathScientistTrainingProgress | null) {
+  const epoch = trainingProgressEpochLabel(progress)
+  if (!epoch) return ''
+  const labels = [epoch]
+  const currentAuc = finiteNumber(progress?.current_val_auc)
+  if (currentAuc !== null) labels.push(`val AUC ${currentAuc.toFixed(3)}`)
+  const bestAuc = finiteNumber(progress?.best_val_auc)
+  if (bestAuc !== null) labels.push(`best ${bestAuc.toFixed(3)}`)
+  return labels.join(' · ')
+}
+
+export function sessionIterationLabel(session?: PathScientistSessionSummary | null) {
+  const rawCurrent = finiteNumber(session?.current_iteration)
+  if (rawCurrent === null) return ''
+  const currentIteration = rawCurrent <= 0 ? 1 : rawCurrent
+  const maxIterations = finiteNumber(session?.max_iterations)
+  return maxIterations && maxIterations > 0
+    ? `Iter ${currentIteration}/${maxIterations}`
+    : `Iter ${currentIteration}`
+}
+
+export function sessionTrainingProgressLabel(session?: PathScientistSessionSummary | null) {
+  const epoch = trainingProgressEpochLabel(session?.training_progress)
+  if (!epoch) return ''
+  const labels = [sessionIterationLabel(session), epoch, ...trainingProgressMetricLabels(session?.training_progress)]
+  return labels.filter(Boolean).join(' · ')
 }
 
 function sessionDedupeKey(session: PathScientistSessionSummary) {

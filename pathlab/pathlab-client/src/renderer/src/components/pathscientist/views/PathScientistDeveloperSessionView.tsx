@@ -1,6 +1,8 @@
 import { Beaker, Circle, FileJson, HardDrive, Layers, Loader2, Play, Radio, Square, Trash2 } from 'lucide-react'
 import { Button } from '../../ui/button'
 import PathScientistExecutionConsole from '../PathScientistExecutionConsole'
+import { usePathScientistTranslation } from '../../../lib/usePathScientistTranslation'
+import { pathScientistStageLabel, pathScientistStatusLabel } from '../../../lib/pathscientistI18n'
 import type { PathScientistEvent, PathScientistSessionDetail } from '../../../types/pathscientist'
 import type { SessionStreamStatus } from '../useSessionStream'
 import { formatFileSize } from '../../../lib/utils/utils'
@@ -71,6 +73,7 @@ export default function PathScientistDeveloperSessionView({
   onResume,
   onDelete,
 }: PathScientistDeveloperSessionViewProps) {
+  const { t } = usePathScientistTranslation()
   const consoleSession = session ? { ...session, status: latestStatus, stage: latestStage } : null
 
   return (
@@ -87,7 +90,7 @@ export default function PathScientistDeveloperSessionView({
               disabled={isDeleting}
             >
               {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-              Delete session
+              {t('pathScientist.sessionPage.deleteSession')}
             </Button>
           )}
           {canResume && (
@@ -100,7 +103,7 @@ export default function PathScientistDeveloperSessionView({
               disabled={isResuming}
             >
               {isResuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-              Resume session
+              {t('pathScientist.sessionPage.resumeSession')}
             </Button>
           )}
           {canStop && (
@@ -113,7 +116,7 @@ export default function PathScientistDeveloperSessionView({
               disabled={isStopping}
             >
               {isStopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-              Stop run
+              {t('pathScientist.sessionPage.stopRun')}
             </Button>
           )}
           <div
@@ -122,7 +125,7 @@ export default function PathScientistDeveloperSessionView({
           >
             <Circle className="h-2 w-2 fill-current" />
             <span>
-              {latestStatus}
+              {pathScientistStatusLabel(latestStatus, t)}
               {runningElapsed && <span className="ml-1 font-semibold opacity-80">· {runningElapsed}</span>}
             </span>
           </div>
@@ -136,16 +139,16 @@ export default function PathScientistDeveloperSessionView({
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-700 ring-1 ring-blue-100">
-              <Beaker className="h-3.5 w-3.5" /> Session detail
+              <Beaker className="h-3.5 w-3.5" /> {t('pathScientist.sessionPage.sessionDetail')}
             </div>
             <h1 className="flex min-w-0 flex-wrap items-center gap-2 break-words text-2xl font-extrabold tracking-tight text-gray-950 sm:text-3xl">
               {titlePending && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
               <span>{displayTitle}</span>
             </h1>
-            <p className="mt-2 text-sm text-gray-500">Structured PathScientist execution console for this run.</p>
+            <p className="mt-2 text-sm text-gray-500">{t('pathScientist.sessionPage.description')}</p>
             {session?.question && (
               <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-4">
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Research question</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.sessionPage.researchQuestion')}</p>
                 <p className="mt-2 text-sm leading-6 text-gray-700">{session.question}</p>
               </div>
             )}
@@ -154,19 +157,19 @@ export default function PathScientistDeveloperSessionView({
 
         <div className="relative mt-6 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5">
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><Layers className="h-3.5 w-3.5" /> Stage</span>
-            <strong className="mt-2 block truncate text-gray-950">{latestStage}</strong>
+            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><Layers className="h-3.5 w-3.5" /> {t('pathScientist.labels.stage')}</span>
+            <strong className="mt-2 block truncate text-gray-950">{pathScientistStageLabel(latestStage, t)}</strong>
           </div>
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><Beaker className="h-3.5 w-3.5" /> Model</span>
+            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><Beaker className="h-3.5 w-3.5" /> {t('pathScientist.labels.model')}</span>
             <strong className="mt-2 block text-gray-950">{session?.model || 'gpt-5.5'}</strong>
           </div>
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
-            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><Radio className="h-3.5 w-3.5" /> Events</span>
+            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><Radio className="h-3.5 w-3.5" /> {t('pathScientist.labels.events')}</span>
             <strong className="mt-2 block text-gray-950">{events.length}</strong>
           </div>
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4" title={session?.workspace_path || undefined}>
-            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><HardDrive className="h-3.5 w-3.5" /> Workspace</span>
+            <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400"><HardDrive className="h-3.5 w-3.5" /> {t('pathScientist.labels.workspace')}</span>
             <strong className="mt-2 block text-gray-950">{formatWorkspaceSize(session?.workspace_size_bytes)}</strong>
           </div>
           <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
@@ -177,7 +180,7 @@ export default function PathScientistDeveloperSessionView({
       </section>
 
       {isLoading ? (
-        <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">Loading session...</div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm">{t('pathScientist.sessionPage.loading')}</div>
       ) : (
         <PathScientistExecutionConsole
           session={consoleSession}

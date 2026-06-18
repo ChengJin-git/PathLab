@@ -1,4 +1,10 @@
 import { Check, Circle, Clock3, Loader2, XCircle } from 'lucide-react'
+import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
+import {
+  pathScientistIterationLabel,
+  pathScientistStageLabel,
+  pathScientistStageStatusLabel,
+} from '../../lib/pathscientistI18n'
 import { cn } from '../../lib/utils'
 import type { PathScientistStageStatus, PathScientistStageView } from '../../lib/pathscientistEventSelectors'
 
@@ -15,13 +21,6 @@ function statusIcon(status: PathScientistStageStatus) {
   if (status === 'error') return <XCircle className="h-3.5 w-3.5" />
   if (status === 'current') return <Loader2 className="h-3.5 w-3.5 animate-spin" />
   return <Circle className="h-3.5 w-3.5" />
-}
-
-function statusLabel(status: PathScientistStageStatus) {
-  if (status === 'complete') return 'done'
-  if (status === 'error') return 'needs attention'
-  if (status === 'current') return 'running'
-  return 'pending'
 }
 
 function statusClasses(status: PathScientistStageStatus) {
@@ -44,11 +43,12 @@ export default function StageTimeline({
   className,
   embedded = false,
 }: StageTimelineProps) {
+  const { t } = usePathScientistTranslation()
   const showIteration = typeof currentIteration === 'number' && currentIteration > 0
   const iterLabel = showIteration
     ? maxIterations && maxIterations > 0
-      ? `iter ${currentIteration}/${maxIterations}`
-      : `iter ${currentIteration}`
+      ? t('pathScientist.iteration.shortWithMax', { current: currentIteration, max: maxIterations })
+      : pathScientistIterationLabel(currentIteration, t)
     : ''
 
   const timeline = (
@@ -65,9 +65,9 @@ export default function StageTimeline({
                 </span>
                 <span className="text-[10px] font-black uppercase tracking-wider opacity-70">{String(index + 1).padStart(2, '0')}</span>
               </div>
-              <p className="mt-3 truncate text-sm font-extrabold text-gray-950">{stage.label}</p>
+              <p className="mt-3 truncate text-sm font-extrabold text-gray-950">{pathScientistStageLabel(stage.id, t)}</p>
               <div className="mt-2 flex items-center justify-between gap-2 text-[11px] font-semibold">
-                <span className="truncate">{statusLabel(stage.status)}</span>
+                <span className="truncate">{pathScientistStageStatusLabel(stage.status, t)}</span>
                 {stage.eventCount > 0 && <span className="rounded-full bg-white/75 px-2 py-0.5 text-gray-500 ring-1 ring-black/5">{stage.eventCount}</span>}
               </div>
               <div className="mt-2 flex items-center gap-1.5 text-[11px] font-bold text-gray-500">
@@ -82,7 +82,7 @@ export default function StageTimeline({
 
   if (embedded) {
     return (
-      <div aria-label="Stage timeline" className={cn('border-b border-gray-100 pb-4', className)} data-testid="pathscientist-stage-timeline-embedded">
+      <div aria-label={t('pathScientist.stageTimeline.title')} className={cn('border-b border-gray-100 pb-4', className)} data-testid="pathscientist-stage-timeline-embedded">
         {iterLabel && (
           <div className="mb-3 flex justify-end">
             <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white shadow-sm">{iterLabel}</span>
@@ -94,11 +94,11 @@ export default function StageTimeline({
   }
 
   return (
-    <section aria-label="Stage timeline" className={cn('rounded-3xl border border-gray-200 bg-white p-4 shadow-sm', className)}>
+    <section aria-label={t('pathScientist.stageTimeline.title')} className={cn('rounded-3xl border border-gray-200 bg-white p-4 shadow-sm', className)}>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Stage timeline</p>
-          <p className="mt-1 text-sm text-gray-500">Compressed view of the PathScientist research pipeline.</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.stageTimeline.title')}</p>
+          <p className="mt-1 text-sm text-gray-500">{t('pathScientist.stageTimeline.description')}</p>
         </div>
         {iterLabel && <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-bold text-white shadow-sm">{iterLabel}</span>}
       </div>

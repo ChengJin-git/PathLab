@@ -1,5 +1,11 @@
 import { AlertCircle, CheckCircle2, ChevronDown, Clock3, Info, Wrench } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
+import {
+  pathScientistIterationLabel,
+  pathScientistStageLabel,
+  pathScientistToolStatusLabel,
+} from '../../lib/pathscientistI18n'
 import type { PathScientistToolStatus, PathScientistToolView } from '../../lib/pathscientistEventSelectors'
 
 interface ToolCardProps {
@@ -28,14 +34,8 @@ function statusClasses(status: PathScientistToolStatus) {
   }
 }
 
-function statusText(status: PathScientistToolStatus) {
-  if (status === 'success') return 'passed'
-  if (status === 'error') return 'failed'
-  if (status === 'running') return 'running'
-  return 'logged'
-}
-
 export default function ToolCard({ tool, defaultOpen, className }: ToolCardProps) {
+  const { t } = usePathScientistTranslation()
   const open = defaultOpen ?? tool.status !== 'success'
   const detailEvents = tool.events.filter((event) => typeof event.summary === 'string' && event.summary.trim())
 
@@ -53,7 +53,7 @@ export default function ToolCard({ tool, defaultOpen, className }: ToolCardProps
         </span>
         <span className="flex flex-shrink-0 items-center gap-2">
           <span className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-gray-600 ring-1 ring-black/5">
-            {statusText(tool.status)}
+            {pathScientistToolStatusLabel(tool.status, t)}
           </span>
           <ChevronDown className="h-4 w-4 text-gray-400 transition group-open:rotate-180" />
         </span>
@@ -62,15 +62,15 @@ export default function ToolCard({ tool, defaultOpen, className }: ToolCardProps
       <div className="border-t border-black/5 px-4 py-3">
         <div className="grid gap-2 text-xs text-gray-600 sm:grid-cols-3">
           <div className="rounded-xl bg-white/75 p-3 ring-1 ring-black/5">
-            <p className="font-bold uppercase tracking-wider text-gray-400">Stage</p>
-            <p className="mt-1 font-semibold text-gray-800">{tool.stage || 'unknown'}</p>
+            <p className="font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.labels.stage')}</p>
+            <p className="mt-1 font-semibold text-gray-800">{pathScientistStageLabel(tool.stage, t)}</p>
           </div>
           <div className="rounded-xl bg-white/75 p-3 ring-1 ring-black/5">
-            <p className="font-bold uppercase tracking-wider text-gray-400">Iteration</p>
-            <p className="mt-1 font-semibold text-gray-800">{tool.iteration === null ? 'pre-run' : `Iter ${tool.iteration}`}</p>
+            <p className="font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.labels.iteration')}</p>
+            <p className="mt-1 font-semibold text-gray-800">{tool.iteration === null ? t('pathScientist.iteration.preRun') : pathScientistIterationLabel(tool.iteration, t)}</p>
           </div>
           <div className="rounded-xl bg-white/75 p-3 ring-1 ring-black/5">
-            <p className="font-bold uppercase tracking-wider text-gray-400">Events</p>
+            <p className="font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.labels.events')}</p>
             <p className="mt-1 font-semibold text-gray-800">{tool.events.length}</p>
           </div>
         </div>

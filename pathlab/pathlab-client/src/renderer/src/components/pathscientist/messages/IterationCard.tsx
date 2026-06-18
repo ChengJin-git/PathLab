@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { BarChart3, ChevronDown, Loader2 } from 'lucide-react'
 import { cn } from '../../../lib/utils'
+import { usePathScientistTranslation } from '../../../lib/usePathScientistTranslation'
+import {
+  pathScientistIterationLabel,
+  pathScientistIterationStatusLabel,
+} from '../../../lib/pathscientistI18n'
 import type {
   PathScientistIterationView,
   PathScientistSessionMetadataView,
@@ -37,6 +42,7 @@ function MetadataBadge({ label, value }: { label: string; value: string }) {
 }
 
 export default function IterationCard({ iteration, sessionMetadata, isCurrentRunning = false, className }: IterationCardProps) {
+  const { t } = usePathScientistTranslation()
   const showRunning = isCurrentRunning || iteration.status === 'running'
   const [open, setOpen] = useState(false)
   const showMilMethod = sessionMetadata.taskType.startsWith('slide-level') && Boolean(sessionMetadata.milMethod)
@@ -57,24 +63,26 @@ export default function IterationCard({ iteration, sessionMetadata, isCurrentRun
         data-testid={`pathscientist-iteration-summary-${iteration.index}`}
       >
         <div>
-          <h3 className="text-base font-extrabold text-gray-950">Iter {iteration.index}</h3>
+          <h3 className="text-base font-extrabold text-gray-950">{pathScientistIterationLabel(iteration.index, t)}</h3>
           <p className="mt-1 text-xs text-gray-500">
-            {showRunning ? `Running iteration - ${iteration.tools.length} tool calls captured so far.` : `${iteration.tools.length} tool calls in this execution pass.`}
+            {showRunning
+              ? t('pathScientist.iteration.runningToolCalls', { count: iteration.tools.length })
+              : t('pathScientist.iteration.toolCalls', { count: iteration.tools.length })}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <MetadataBadge label="Foundation model" value={sessionMetadata.foundationModel} />
+          <MetadataBadge label={t('pathScientist.labels.foundationModel')} value={sessionMetadata.foundationModel} />
           {showMilMethod && sessionMetadata.milMethod && (
-            <MetadataBadge label="MIL method" value={sessionMetadata.milMethod} />
+            <MetadataBadge label={t('pathScientist.labels.milMethod')} value={sessionMetadata.milMethod} />
           )}
           {showRunning && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-blue-700 ring-1 ring-blue-100">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Running
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t('pathScientist.iteration.runningStatus')}
             </span>
           )}
           {!showRunning && (
             <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ring-1', statusTone(iteration.status))}>
-              {statusLabel(iteration)}
+              {pathScientistIterationStatusLabel(statusLabel(iteration), t)}
             </span>
           )}
           <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-2.5 py-1 text-[11px] font-bold text-gray-600 ring-1 ring-gray-100">
@@ -90,7 +98,9 @@ export default function IterationCard({ iteration, sessionMetadata, isCurrentRun
             'rounded-2xl border border-dashed p-4 text-sm',
             showRunning ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-gray-200 bg-gray-50 text-gray-500',
           )}>
-            {showRunning ? 'Running iteration. Waiting for the next tool event...' : 'No tool calls captured for this iteration.'}
+            {showRunning
+              ? t('pathScientist.iteration.waitingNextTool')
+              : t('pathScientist.iteration.noToolCalls')}
           </p>
         ) : (
           <div className="space-y-2">

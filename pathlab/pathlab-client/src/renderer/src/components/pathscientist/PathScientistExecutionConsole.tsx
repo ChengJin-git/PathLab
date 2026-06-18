@@ -1,8 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bug, ChevronDown, Loader2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
+import {
+  pathScientistRunningIterationLabel,
+  pathScientistVisibleEventsLabel,
+} from '../../lib/pathscientistI18n'
 import { Button } from '../ui/button'
 import { buildPathScientistExecutionView } from '../../lib/pathscientistEventSelectors'
+import { trainingProgressConsoleLabel } from '../../lib/pathscientistSessions'
 import type { PathScientistEvent, PathScientistSessionDetail } from '../../types/pathscientist'
 import type { SessionStreamStatus } from './useSessionStream'
 import StageTimeline from './StageTimeline'
@@ -73,13 +79,8 @@ function displayIteration(index: number | null, state: Record<string, unknown>, 
   return display
 }
 
-function runningIterationLabel(currentIteration: number, maxIterations: number | null) {
-  return maxIterations && maxIterations > 0
-    ? `Iter ${currentIteration}/${maxIterations} running`
-    : `Iter ${currentIteration} running`
-}
-
 function RunningIterationPlaceholder({ iteration, maxIterations }: { iteration: number; maxIterations: number | null }) {
+  const { t } = usePathScientistTranslation()
   return (
     <article
       className="rounded-3xl border border-dashed border-blue-200 bg-blue-50/80 p-4 text-blue-800 ring-1 ring-blue-100"
@@ -87,18 +88,18 @@ function RunningIterationPlaceholder({ iteration, maxIterations }: { iteration: 
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-base font-extrabold">Iter {iteration}</h3>
+          <h3 className="text-base font-extrabold">{t('pathScientist.iteration.label', { iteration })}</h3>
           <p className="mt-1 text-xs font-semibold text-blue-600">
-            {runningIterationLabel(iteration, maxIterations)}
+            {pathScientistRunningIterationLabel(iteration, maxIterations, t)}
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded-full bg-white/80 px-3 py-1 text-xs font-extrabold text-blue-700 ring-1 ring-blue-100">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Running iteration
+          {t('pathScientist.iteration.runningBadge')}
         </span>
       </div>
       <p className="mt-3 rounded-2xl bg-white/70 p-3 text-sm font-medium text-blue-700">
-        Waiting for the next tool event from the backend stream...
+        {t('pathScientist.executionConsole.waitingNextTool')}
       </p>
     </article>
   )
@@ -111,6 +112,7 @@ export default function PathScientistExecutionConsole({
   streamError,
   variant = 'default',
 }: PathScientistExecutionConsoleProps) {
+  const { t } = usePathScientistTranslation()
   const isClinical = variant === 'clinical'
   const [debugOpen, setDebugOpen] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -129,7 +131,8 @@ export default function PathScientistExecutionConsole({
   const maxIterations = asNumber(state.max_iterations)
   const currentStage = asString(state.stage) || asString(session?.stage) || view.stages.find((stage) => stage.status === 'current')?.id || ''
   const isExecutionRunning = isLive && currentStage === 'execution'
-  const runningLabel = displayCurrentIteration ? runningIterationLabel(displayCurrentIteration, maxIterations) : ''
+  const runningLabel = displayCurrentIteration ? pathScientistRunningIterationLabel(displayCurrentIteration, maxIterations, t) : ''
+  const trainingProgressLabel = trainingProgressConsoleLabel(session?.training_progress)
   const hasCurrentIterationCard = displayCurrentIteration
     ? view.iterations.some((iteration) => iteration.index === displayCurrentIteration)
     : false
@@ -173,11 +176,11 @@ export default function PathScientistExecutionConsole({
           >
             <div className="mb-4 flex flex-shrink-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Execution console</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-gray-400">{t('pathScientist.executionConsole.title')}</p>
                 {!isClinical && (
                   <>
-                    <h2 className="mt-1 text-lg font-extrabold text-gray-950">Compressed transcript</h2>
-                    <p className="mt-1 text-sm text-gray-500">One readable card per stage or iteration; raw gateway events stay in debug.</p>
+                    <h2 className="mt-1 text-lg font-extrabold text-gray-950">{t('pathScientist.executionConsole.transcriptTitle')}</h2>
+                    <p className="mt-1 text-sm text-gray-500">{t('pathScientist.executionConsole.transcriptDescription')}</p>
                   </>
                 )}
               </div>
@@ -191,8 +194,17 @@ export default function PathScientistExecutionConsole({
                     {runningLabel}
                   </span>
                 )}
+                {trainingProgressLabel && (
+                  <span
+                    className="inline-flex w-fit items-center gap-1.5 rounded-full bg-sky-50 px-3 py-1 text-xs font-extrabold text-sky-700 ring-1 ring-sky-100"
+                    data-testid="pathscientist-training-progress-badge"
+                  >
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {trainingProgressLabel}
+                  </span>
+                )}
                 <span className="w-fit rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-500 ring-1 ring-gray-200">
-                  {view.visibleEvents.length} visible events
+                  {pathScientistVisibleEventsLabel(view.visibleEvents.length, t)}
                 </span>
               </div>
             </div>
@@ -228,8 +240,8 @@ export default function PathScientistExecutionConsole({
 
               {view.visibleEvents.length === 0 && (
                 <div className="rounded-3xl border border-dashed border-gray-200 bg-gray-50 p-8 text-center">
-                  <p className="text-base font-extrabold text-gray-950">Waiting for execution events</p>
-                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">New web-created sessions will populate this console as the gateway persists SSE events.</p>
+                  <p className="text-base font-extrabold text-gray-950">{t('pathScientist.executionConsole.waitingEventsTitle')}</p>
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500">{t('pathScientist.executionConsole.waitingEventsDescription')}</p>
                 </div>
               )}
             </div>
@@ -242,7 +254,7 @@ export default function PathScientistExecutionConsole({
                 className="gap-2 border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
                 onClick={() => setDebugOpen((value) => !value)}
               >
-                <Bug className="h-3.5 w-3.5" /> {debugOpen ? 'Hide raw events' : 'Show raw events'}
+                <Bug className="h-3.5 w-3.5" /> {debugOpen ? t('pathScientist.executionConsole.hideRawEvents') : t('pathScientist.executionConsole.showRawEvents')}
                 <ChevronDown className={`h-3.5 w-3.5 transition ${debugOpen ? 'rotate-180' : ''}`} />
               </Button>
 
@@ -265,6 +277,7 @@ export default function PathScientistExecutionConsole({
           currentIteration={displayCurrentIteration}
           maxIterations={maxIterations}
           isRunning={isExecutionRunning}
+          trainingProgress={session?.training_progress}
         />
       </div>
     </div>
