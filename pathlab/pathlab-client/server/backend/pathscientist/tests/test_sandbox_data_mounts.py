@@ -24,6 +24,22 @@ from pathscientist.orchestrator.types import (
 from pathscientist.runtime.sandbox import ApptainerSandbox
 
 
+def test_sandbox_resolves_apptainer_from_path_when_env_unset(tmp_path, monkeypatch):
+    """jhcpu5 installs apptainer under /usr/bin, not the cluster module path."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    apptainer = bin_dir / "apptainer"
+    apptainer.write_text("#!/bin/sh\necho apptainer version test\n")
+    apptainer.chmod(0o755)
+
+    monkeypatch.delenv("APPTAINER_BIN", raising=False)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    assert sandbox_module._resolve_apptainer_bin() == str(apptainer)
+
+
 def _build_sandbox_for_test(monkeypatch) -> ApptainerSandbox:
     """ApptainerSandbox checks apptainer existence in __init__-ish helpers;
     instantiate without that gate."""
@@ -35,6 +51,22 @@ def _build_sandbox_for_test(monkeypatch) -> ApptainerSandbox:
     s.cpus = "4"
     s._cgroups_available = False
     return s
+
+
+def test_default_image_prefers_pathscientist_local_sandbox(tmp_path, monkeypatch):
+    """Default runtime images should live under PathScientist-owned local state."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    monkeypatch.delenv("PATHSCIENTIST_SANDBOX_IMAGE", raising=False)
+    monkeypatch.delenv("PATHLAB_SANDBOX_IMAGE", raising=False)
+
+    backend_dir = tmp_path / "pathlab-client" / "server" / "backend"
+    image_dir = backend_dir.parent.parent / ".local" / "pathscientist" / "sandbox"
+    image_dir.mkdir(parents=True)
+    image = image_dir / "pathlab-sandbox.sif"
+    image.write_text("fake image")
+
+    assert sandbox_module._resolve_default_image(backend_dir) == str(image)
 
 
 # ---- Sandbox cmd construction ----
@@ -56,6 +88,22 @@ def test_sandbox_binds_data_mounts(tmp_path, monkeypatch):
     )
     cmd_str = " ".join(cmd)
     assert f"{prepared}:/data:rw" in cmd_str
+
+
+def test_sandbox_can_disable_cgroup_limits(tmp_path, monkeypatch):
+    """Some user.slice cgroups reject Apptainer --memory/--cpus at runtime."""
+    monkeypatch.setenv("PATHSCIENTIST_SANDBOX_CGROUPS", "0")
+    s = ApptainerSandbox()
+    workspace = tmp_path / "ws"
+    output = tmp_path / "ws" / "output"
+    workspace.mkdir(parents=True)
+    output.mkdir(parents=True)
+
+    cmd = s._build_exec_cmd(workspace, output)
+
+    assert "--memory" not in cmd
+    assert "--cpus" not in cmd
+    assert f"{workspace}:{workspace}:rw" in " ".join(cmd)
 
 
 def test_sandbox_skips_data_mount_when_host_path_missing(tmp_path):
@@ -130,7 +178,7 @@ def test_workspace_run_script_passes_data_mounts_to_sandbox(tmp_path):
 
     class _StubSandbox:
         def run_script(self, *, script_path, workspace_dir, output_dir,
-                        env_vars=None, timeout=600.0, data_mounts=None):
+                        env_vars=None, timeout=600.0, data_mounts=None, **_kwargs):
             captured["data_mounts"] = data_mounts
             from openhands.sdk.workspace.models import CommandResult
             from pathscientist.runtime.sandbox import SandboxResult
@@ -141,6 +189,18 @@ def test_workspace_run_script_passes_data_mounts_to_sandbox(tmp_path):
     ws.write_file("train.py", "print('hi')\n")
     ws.run_script("train.py", data_mounts={str(tmp_path / "x"): "/data"})
     assert captured["data_mounts"] == {str(tmp_path / "x"): "/data"}
+
+
+def test_sandbox_forwards_huggingface_token_env(monkeypatch):
+    """HF credentials inherited by PathScientist must reach Apptainer."""
+    s = _build_sandbox_for_test(monkeypatch)
+    monkeypatch.setenv("HF_TOKEN", "pathlab-hf-token")
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "pathlab-hf-token")
+
+    env = s._build_env()
+
+    assert env["APPTAINERENV_HF_TOKEN"] == "pathlab-hf-token"
+    assert env["APPTAINERENV_HUGGING_FACE_HUB_TOKEN"] == "pathlab-hf-token"
 
 
 # ---- Brief rendering ----

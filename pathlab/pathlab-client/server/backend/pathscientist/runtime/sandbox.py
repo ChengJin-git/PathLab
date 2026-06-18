@@ -12,6 +12,7 @@ import os
 import queue
 import re
 import signal
+import shutil
 import subprocess
 import threading
 import time
@@ -26,12 +27,20 @@ from .kaggle_auth import (
 logger = logging.getLogger(__name__)
 
 # Apptainer binary — resolved once at import time.
-_APPTAINER_BIN = os.getenv(
-    "APPTAINER_BIN",
-    "/cm/local/apps/apptainer/current/bin/apptainer",
-)
+def _resolve_apptainer_bin() -> str:
+    """Resolve apptainer from env, PATH, then the legacy cluster module path."""
+    env_bin = os.getenv("APPTAINER_BIN", "").strip()
+    if env_bin:
+        return env_bin
+    path_bin = shutil.which("apptainer")
+    if path_bin:
+        return path_bin
+    return "/cm/local/apps/apptainer/current/bin/apptainer"
 
-# Default .sif image — co-located with auto_research_old.
+
+_APPTAINER_BIN = _resolve_apptainer_bin()
+
+# Default .sif image: PathScientist-owned local state, with legacy fallback.
 def _resolve_default_image(backend_dir: Path | None = None) -> str:
     """Resolve the default Apptainer image used when no image is passed."""
     env_image = os.getenv("PATHSCIENTIST_SANDBOX_IMAGE") or os.getenv("PATHLAB_SANDBOX_IMAGE")
@@ -39,11 +48,19 @@ def _resolve_default_image(backend_dir: Path | None = None) -> str:
         return env_image
 
     backend = backend_dir or Path(__file__).resolve().parents[2]
-    image_dir = backend / "auto_research_old"
-    transformers_image = image_dir / "pathlab-sandbox-transformers.sif"
-    if transformers_image.exists():
-        return str(transformers_image)
-    return str(image_dir / "pathlab-sandbox.sif")
+    client_root = backend.parents[1]
+    pathscientist_image_dir = client_root / ".local" / "pathscientist" / "sandbox"
+    legacy_image_dir = backend / "auto_research_old"
+
+    for image_dir in (pathscientist_image_dir, legacy_image_dir):
+        transformers_image = image_dir / "pathlab-sandbox-transformers.sif"
+        if transformers_image.exists():
+            return str(transformers_image)
+        image = image_dir / "pathlab-sandbox.sif"
+        if image.exists():
+            return str(image)
+
+    return str(pathscientist_image_dir / "pathlab-sandbox.sif")
 
 
 _DEFAULT_IMAGE = _resolve_default_image()
@@ -106,7 +123,11 @@ class ApptainerSandbox:
         self.memory_limit = memory_limit
         self.cpus = cpus
         self.apptainer = _APPTAINER_BIN
-        self._cgroups_available = Path("/sys/fs/cgroup/cgroup.controllers").exists()
+        cgroups_setting = os.getenv("PATHSCIENTIST_SANDBOX_CGROUPS", "auto").strip().lower()
+        self._cgroups_available = (
+            cgroups_setting not in {"0", "false", "no", "off", "disabled"}
+            and Path("/sys/fs/cgroup/cgroup.controllers").exists()
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -294,6 +315,10 @@ class ApptainerSandbox:
             env["APPTAINERENV_HUGGINGFACE_HUB_CACHE"] = os.getenv(
                 "HUGGINGFACE_HUB_CACHE", f"{hf_home}/hub"
             )
+        for key in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "PATHSCIENTIST_HUGGINGFACE_TOKEN"):
+            value = os.getenv(key, "")
+            if value:
+                env[f"APPTAINERENV_{key}"] = value
 
         # Kaggle credential forwarding for dataset acquisition inside the
         # sandbox. Do not log these values; only pass them through when set.

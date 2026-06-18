@@ -29,8 +29,13 @@ pathlab/pathlab-client/out/
 pathlab/pathlab-client/src/renderer/dev-dist/
 pathlab/pathlab-client/server/backend/pathscientist/output/
 pathlab/pathlab-client/server/backend/pathscientist/sota_cache.json
+pathlab/pathlab-client/server/gateway/knowledge/chat/training_rag/
+*.orig
+# PathScientist sandbox build outputs; keep portable recipes tracked.
 pathlab/pathlab-client/server/backend/auto_research_old/
 pathlab/pathlab-client/.local/pathscientist/
+!pathlab/pathlab-client/server/backend/pathscientist/runtime/containers/
+!pathlab/pathlab-client/server/backend/pathscientist/runtime/containers/*.def
 
 # Local env and credentials
 .env
