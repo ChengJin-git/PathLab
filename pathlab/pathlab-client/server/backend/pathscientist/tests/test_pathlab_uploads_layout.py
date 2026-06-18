@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 os.environ["OPENHANDS_SUPPRESS_BANNER"] = "1"
 
 import yaml
+import numpy as np
+import torch
+from PIL import Image
 
 from pathscientist.dataset.readiness import DataReadinessResult, assess_data_readiness
 from pathscientist.dataset.types import TaskProfile
@@ -290,6 +293,49 @@ def test_raw_wsi_plan_uses_pathlab_generated_features_dir(tmp_path):
     assert train.inputs["features_dir"] == "/data/pathlab/features/virchow2"
 
 
+def test_raw_wsi_external_plan_extracts_internal_then_external_before_training(tmp_path):
+    uploads = tmp_path / "uploads"
+    paths = _write_pathlab_uploads(uploads)
+    for pt_file in paths["features"].glob("*.pt"):
+        pt_file.unlink()
+    for pt_file in paths["task_features"].glob("*.pt"):
+        pt_file.unlink()
+    (uploads / "labels.csv").write_text(
+        "slide_id,label\nslide_001,0\nslide_002,1\nslide_003,0\n",
+        encoding="utf-8",
+    )
+    readiness = assess_data_readiness(
+        _mil_profile(),
+        data_mounts={str(uploads): "/data/pathlab"},
+    )
+
+    plan = build_execution_plan(
+        profile=_mil_profile(),
+        selected_skill="mil_classification",
+        readiness=readiness,
+        data_output_dir="/data/internal",
+        generated_features_dir="/data/internal/features/virchow2/paramsabc",
+        extractor_name="virchow2",
+        external_test_enabled=True,
+        external_test_contract={
+            "external_pathlab_uploads_dir": "/data/external",
+            "external_wsi_dir": "/data/external/wsi_files",
+            "external_features_dir": "/data/external/features/virchow2/paramsabc",
+            "external_splits_file": "/data/external/splits.json",
+            "external_features_ready": False,
+        },
+    )
+
+    assert [step.id for step in plan.steps] == [
+        "extract_features",
+        "extract_external_features",
+        "train_downstream",
+        "external_test",
+    ]
+    assert plan.steps[2].depends_on == ["extract_features", "extract_external_features"]
+    assert plan.steps[3].depends_on == ["train_downstream"]
+
+
 def test_external_plan_extracts_features_when_contract_feature_path_is_missing(tmp_path):
     uploads = tmp_path / "uploads"
     _write_pathlab_uploads(uploads)
@@ -320,11 +366,12 @@ def test_external_plan_extracts_features_when_contract_feature_path_is_missing(t
     )
 
     steps = {step.id: step for step in plan.steps}
-    assert list(steps) == ["train_downstream", "extract_external_features", "external_test"]
+    assert list(steps) == ["extract_external_features", "train_downstream", "external_test"]
     assert steps["extract_external_features"].inputs["data_role"] == "external"
     assert steps["extract_external_features"].inputs["wsi_dir"] == "/data/external/wsi_files"
     assert steps["extract_external_features"].outputs["features_dir"] == "/data/external/features/virchow2"
-    assert steps["external_test"].depends_on == ["extract_external_features"]
+    assert steps["train_downstream"].depends_on == ["extract_external_features"]
+    assert steps["external_test"].depends_on == ["train_downstream"]
     assert steps["external_test"].inputs["external_features_dir"] == "/data/external/features/virchow2"
     assert steps["train_downstream"].inputs["features_dir"] == "/data/internal/features/virchow2/paramsabc"
 
@@ -353,7 +400,33 @@ def test_external_plan_uses_existing_features_when_contract_marks_ready():
     )
 
     assert [step.id for step in plan.steps] == ["train_downstream", "external_test"]
+    assert plan.steps[-1].depends_on == ["train_downstream"]
     assert plan.steps[-1].inputs["external_features_dir"] == "/data/external/features/virchow2/paramsabc"
+
+
+def test_external_plan_blocks_before_training_when_external_files_are_missing():
+    readiness = DataReadinessResult(
+        status="features_ready",
+        features_dir="/data/internal/features/virchow2/paramsabc",
+        splits_file="/data/internal/splits.json",
+    )
+
+    plan = build_execution_plan(
+        profile=_mil_profile(),
+        selected_skill="mil_classification",
+        readiness=readiness,
+        data_output_dir="/data/internal",
+        generated_features_dir="/data/internal/features/virchow2/paramsabc",
+        extractor_name="virchow2",
+        external_test_enabled=True,
+        external_test_contract={
+            "external_splits_file": "/data/external/splits.json",
+        },
+    )
+
+    assert plan.status == "blocked"
+    assert plan.steps == []
+    assert "external_wsi_dir_or_external_features_dir" in plan.missing
 
 
 def test_feature_extraction_worker_uses_pathlab_uploads_layout(tmp_path, monkeypatch):
@@ -443,11 +516,96 @@ def test_feature_extraction_worker_creates_pathlab_task_feature_links(tmp_path, 
     assert meta["task_features_dir"].endswith("training/task_abc/features")
 
 
+def test_feature_extraction_quick_check_limits_patches(monkeypatch, tmp_path):
+    template = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_worker.py"
+    spec = importlib.util.spec_from_file_location("feature_extraction_worker_quick", template)
+    worker = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(worker)
+
+    class _FakeCoords:
+        attrs = {"read_size": 4}
+
+        def __getitem__(self, _key):
+            return self
+
+        def __array__(self):
+            return np.asarray([[i, i] for i in range(10)])
+
+    class _FakeH5:
+        def __enter__(self):
+            return {"coords": _FakeCoords()}
+
+        def __exit__(self, *_args):
+            return False
+
+    class _FakeH5Py:
+        @staticmethod
+        def File(_path, _mode):
+            return _FakeH5()
+
+    class _FakeSlide:
+        def __init__(self):
+            self.read_count = 0
+
+        def read_region(self, *_args):
+            self.read_count += 1
+            return Image.new("RGB", (4, 4))
+
+        def close(self):
+            pass
+
+    fake_slide = _FakeSlide()
+
+    class _FakeOpenSlide:
+        @staticmethod
+        def OpenSlide(_path):
+            return fake_slide
+
+    monkeypatch.setitem(sys.modules, "h5py", _FakeH5Py)
+    monkeypatch.setitem(sys.modules, "openslide", _FakeOpenSlide)
+    monkeypatch.setenv("PATHLAB_QUICK_CHECK", "1")
+    monkeypatch.setenv("PATHSCIENTIST_QUICK_CHECK_MAX_PATCHES", "3")
+
+    batches = list(
+        worker._manual_patch_loader(
+            tmp_path / "slide.svs",
+            tmp_path / "coords.h5",
+            lambda _img: torch.zeros(1),
+            batch_size=2,
+        )
+    )
+
+    assert fake_slide.read_count == 3
+    assert [len(batch) for batch in batches] == [2, 1]
+
+
 def test_feature_extraction_launcher_falls_back_to_data_wsi_files():
     launcher = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_launcher.sh"
     script = launcher.read_text(encoding="utf-8")
 
     assert "/data/wsi_files" in script
+
+
+def test_feature_extraction_launcher_uses_configurable_python_bin():
+    launcher = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_launcher.sh"
+    script = launcher.read_text(encoding="utf-8")
+
+    assert 'PYTHON_BIN:=python3' in script
+    assert '"$PYTHON_BIN" feature_extraction_worker.py' in script
+    assert '"$PYTHON_BIN" feature_extraction_aggregate.py' in script
+    assert "python feature_extraction_worker.py" not in script
+    assert "python feature_extraction_aggregate.py" not in script
+
+
+def test_feature_extraction_launcher_exposes_common_extractors_package():
+    launcher = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_launcher.sh"
+    script = launcher.read_text(encoding="utf-8")
+
+    assert "TEMPLATE_COMMON_PARENT" in script
+    assert "domain/templates" in script
+    assert "PYTHONPATH" in script
+    assert "common" in script
 
 
 def test_training_skills_explain_pathlab_uploads_layout():

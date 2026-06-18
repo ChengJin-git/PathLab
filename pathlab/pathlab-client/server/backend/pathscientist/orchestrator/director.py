@@ -165,19 +165,27 @@ class ResearchDirector:
                 getattr(state, "review_decision", "")
                 or (getattr(state, "latest_review", {}) or {}).get("decision", "")
             )
-            if review_decision == "enter_synthesis":
+            pending_external_workflow = _has_pending_external_workflow_step(state)
+            user_stop = state.stop_reason in {"user_cancelled", "approval_rejected"}
+            if user_stop:
+                state.advance(STAGE_SYNTHESIS)
+                logger.info("Director: review -> synthesis (%s)", state.stop_reason)
+                return state
+            if review_decision == "enter_synthesis" and (
+                not pending_external_workflow or state.stop_reason == "stall_limit"
+            ):
                 state.advance(STAGE_SYNTHESIS)
                 logger.info("Director: review -> synthesis (review decision)")
                 return state
-            if review_decision == "continue_execution":
+            if review_decision == "continue_execution" or (
+                review_decision == "enter_synthesis" and pending_external_workflow
+            ):
                 state.advance(STAGE_EXECUTION)
                 logger.info("Director: review -> execution (review decision)")
                 return state
 
-            pending_external_test = _current_execution_skill(state) == "external_test"
-            user_stop = state.stop_reason in {"user_cancelled", "approval_rejected"}
             should_stop_before_execution = user_stop or (
-                not pending_external_test
+                not pending_external_workflow
                 and (
                     bool(state.stop_reason)
                     or state.iteration_index >= state.max_iterations
@@ -208,12 +216,26 @@ class ResearchDirector:
         return state
 
 
+def _has_pending_external_workflow_step(state: ResearchSessionState) -> bool:
+    step = _current_execution_step(state)
+    skill = str(step.get("skill") or "") if isinstance(step, dict) else ""
+    step_id = str(step.get("id") or "") if isinstance(step, dict) else ""
+    return skill == "external_test" or (
+        skill == "feature_extraction" and step_id == "extract_external_features"
+    )
+
+
 def _current_execution_skill(state: ResearchSessionState) -> str:
+    step = _current_execution_step(state)
+    return str(step.get("skill") or "") if isinstance(step, dict) else ""
+
+
+def _current_execution_step(state: ResearchSessionState) -> dict:
     plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
     steps = plan.get("steps") or []
     current = int(plan.get("current_step", 0) or 0)
     if 0 <= current < len(steps):
         step = steps[current]
         if isinstance(step, dict):
-            return str(step.get("skill") or "")
-    return ""
+            return step
+    return {}

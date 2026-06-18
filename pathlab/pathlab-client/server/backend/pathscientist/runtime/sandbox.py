@@ -12,6 +12,7 @@ import os
 import queue
 import re
 import signal
+import shlex
 import shutil
 import subprocess
 import threading
@@ -44,7 +45,7 @@ _APPTAINER_BIN = _resolve_apptainer_bin()
 def _resolve_default_image(backend_dir: Path | None = None) -> str:
     """Resolve the default Apptainer image used when no image is passed."""
     env_image = os.getenv("PATHSCIENTIST_SANDBOX_IMAGE") or os.getenv("PATHLAB_SANDBOX_IMAGE")
-    if env_image:
+    if env_image and Path(env_image).expanduser().exists():
         return env_image
 
     backend = backend_dir or Path(__file__).resolve().parents[2]
@@ -83,9 +84,85 @@ _EARLY_FAIL_REGEX = re.compile("|".join(re.escape(p) for p in _EARLY_FAIL_PATTER
 _EARLY_FAIL_WINDOW = 30  # seconds
 
 
+def _validate_workspace_relative_script_path(script_path: str) -> str:
+    raw = str(script_path or "").strip()
+    path = Path(raw)
+    if not raw or path.is_absolute() or ".." in path.parts:
+        raise ValueError("script_path must be workspace-relative")
+    return raw
+
+
 def _resolve_kaggle_config_dir() -> Path | None:
     """Return the host Kaggle config dir to expose to the sandbox, if any."""
     return resolve_kaggle_config_dir()
+
+
+def _symlink_chain_mounts(link_path: Path, *, max_depth: int = 32) -> list[Path]:
+    """Return read-only bind roots needed by an absolute symlink chain."""
+    mounts: list[Path] = []
+    seen_targets: set[str] = set()
+    current = link_path
+
+    for _ in range(max_depth):
+        try:
+            if not current.is_symlink():
+                break
+            raw_target = current.readlink()
+        except OSError:
+            break
+
+        target = raw_target if raw_target.is_absolute() else current.parent / raw_target
+        target_key = str(target)
+        if target_key in seen_targets:
+            break
+        seen_targets.add(target_key)
+
+        if raw_target.is_absolute():
+            try:
+                mount_path = (
+                    target
+                    if target.exists() and target.is_dir() and not target.is_symlink()
+                    else target.parent
+                )
+            except OSError:
+                mount_path = target.parent
+            if mount_path.exists():
+                mounts.append(mount_path)
+
+        current = target
+
+    return mounts
+
+
+def _symlink_target_mounts(root: Path, *, max_symlinks: int = 10000) -> list[Path]:
+    """Find extra binds needed to keep absolute symlinks valid in sandbox."""
+    if not root.exists():
+        return []
+
+    mounts: list[Path] = []
+    seen_mounts: set[str] = set()
+    scanned = 0
+
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        for name in [*dirnames, *filenames]:
+            link_path = Path(dirpath) / name
+            if not link_path.is_symlink():
+                continue
+            scanned += 1
+            if scanned > max_symlinks:
+                logger.warning(
+                    "Stopped scanning symlink targets under %s after %s symlinks",
+                    root,
+                    max_symlinks,
+                )
+                return mounts
+            for mount_path in _symlink_chain_mounts(link_path):
+                mount_str = str(mount_path)
+                if mount_str not in seen_mounts:
+                    seen_mounts.add(mount_str)
+                    mounts.append(mount_path)
+
+    return mounts
 
 
 @dataclass
@@ -118,6 +195,14 @@ class ApptainerSandbox:
         memory_limit: str = "64G",
         cpus: str = "16",
     ):
+        image = str(image or "").strip()
+        if image and not Path(image).expanduser().exists():
+            logger.warning(
+                "Ignoring missing Apptainer sandbox image %s; falling back to %s",
+                image,
+                _DEFAULT_IMAGE,
+            )
+            image = ""
         self.image = image or _DEFAULT_IMAGE
         self.gpu_ids = gpu_ids or ["0"]
         self.memory_limit = memory_limit
@@ -160,8 +245,23 @@ class ApptainerSandbox:
                 locations (e.g. ``prepared_root -> /data``).
         """
         runner = "bash" if script_type == "bash" else "python"
+        try:
+            safe_script_path = _validate_workspace_relative_script_path(script_path)
+        except ValueError as exc:
+            return SandboxResult(
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration=0.0,
+                timed_out=False,
+                early_failed=True,
+            )
         cmd = self._build_exec_cmd(workspace_dir, output_dir, data_mounts=data_mounts)
-        cmd.extend([self.image, "bash", "-lc", f"cd {workspace_dir} && {runner} {script_path}"])
+        shell_command = (
+            f"cd {shlex.quote(str(workspace_dir))} && "
+            f"{shlex.quote(runner)} {shlex.quote(safe_script_path)}"
+        )
+        cmd.extend([self.image, "bash", "-lc", shell_command])
         env = self._build_env(env_vars)
 
         logger.info(
@@ -289,6 +389,12 @@ class ApptainerSandbox:
                 continue
             cmd.extend(["--bind", f"{host_str}:{container_path}:rw"])
             bound_hosts.add(host_str)
+            for target_mount in _symlink_target_mounts(Path(host_str)):
+                target_str = str(target_mount)
+                if target_str in bound_hosts:
+                    continue
+                cmd.extend(["--bind", f"{target_str}:{target_str}:ro"])
+                bound_hosts.add(target_str)
 
         return cmd
 

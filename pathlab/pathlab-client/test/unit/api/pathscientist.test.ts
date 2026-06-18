@@ -67,12 +67,25 @@ describe('pathscientist api', () => {
     expect(new Headers(detailOpts?.headers).get('Authorization')).toBe('Bearer session-token')
   })
 
-  it('builds an EventSource URL', () => {
+  it('builds an EventSource URL with a scoped access token', async () => {
     setAuthToken('stream-token')
+    mockFetch.mockResolvedValueOnce(ok({
+      token: 'scoped-stream-token',
+      token_type: 'pathscientist_access',
+      purpose: 'events',
+      session_id: 'abc',
+      run_id: '',
+      expires_in: 300,
+    }))
 
-    expect(getPathScientistEventsUrl('abc')).toBe(
-      'http://localhost:6100/pathscientist/sessions/abc/events?token=stream-token',
+    await expect(getPathScientistEventsUrl('abc')).resolves.toBe(
+      'http://localhost:6100/pathscientist/sessions/abc/events?token=scoped-stream-token',
     )
+    expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:6100/pathscientist/sessions/abc/access-token')
+    expect(JSON.parse(mockFetch.mock.calls[0][1]?.body as string)).toEqual({
+      purpose: 'events',
+      run_id: '',
+    })
   })
 
   it('stops a running session', async () => {
@@ -99,11 +112,19 @@ describe('pathscientist api', () => {
     expect(new Headers(opts?.headers).get('Authorization')).toBe('Bearer session-token')
   })
 
-  it('builds session download and share URLs', () => {
+  it('builds session download URL with a scoped access token and share URL', async () => {
     setAuthToken('download-token')
+    mockFetch.mockResolvedValueOnce(ok({
+      token: 'scoped-download-token',
+      token_type: 'pathscientist_access',
+      purpose: 'session_download',
+      session_id: 'abc',
+      run_id: '',
+      expires_in: 300,
+    }))
 
-    expect(getPathScientistSessionDownloadUrl('abc')).toBe(
-      'http://localhost:6100/pathscientist/sessions/abc/download?token=download-token',
+    await expect(getPathScientistSessionDownloadUrl('abc')).resolves.toBe(
+      'http://localhost:6100/pathscientist/sessions/abc/download?token=scoped-download-token',
     )
     expect(getPathScientistSessionShareUrl('abc')).toContain('/pathscientist/sessions/abc')
   })

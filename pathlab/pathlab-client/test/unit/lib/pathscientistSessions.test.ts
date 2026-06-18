@@ -30,6 +30,24 @@ describe('pathscientist training progress labels', () => {
     })).toBe('Iter 1/2 · Quick start · Epoch 1/2 · AUC 0.912 · best 0.946')
   })
 
+  it('omits session training progress labels after the session ends', () => {
+    expect(sessionTrainingProgressLabel({
+      session_id: 's-completed',
+      question: 'completed run',
+      status: 'completed',
+      stage: 'completed',
+      current_iteration: 1,
+      max_iterations: 1,
+      training_progress: {
+        run_kind: 'training',
+        current_epoch: 4,
+        total_epochs: 5,
+        current_val_auc: 1,
+        best_val_auc: 1,
+      },
+    })).toBe('')
+  })
+
   it('marks non-quick epoch progress as training', () => {
     expect(trainingProgressEpochLabel({
       quick_check: false,

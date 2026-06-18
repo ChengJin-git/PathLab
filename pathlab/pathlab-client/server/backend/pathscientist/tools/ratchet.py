@@ -190,12 +190,21 @@ def _finalize_iteration(
 
         if external_test_run:
             exp = deps.last_experiment or {}
+            metrics_for_external = dict(resolved_metrics or {})
+            failed_external = (
+                not bool(committed)
+                or bool(metrics_for_external.get("error"))
+                or bool(metrics_for_external.get("quick_check_failed"))
+                or int(exp.get("exit_code", 0) or 0) != 0
+                or bool(exp.get("is_error"))
+            )
             deps.external_test_history.append({
                 "run_id": run_id,
-                "metrics": dict(resolved_metrics or {}),
+                "metrics": metrics_for_external,
                 "committed": bool(committed),
                 "model_path": str(exp.get("model_path") or ""),
                 "run_dir": str(exp.get("run_dir") or ""),
+                "status": "failed" if failed_external else "completed",
             })
 
         # Update tracker only for metric-bearing scientific iterations.

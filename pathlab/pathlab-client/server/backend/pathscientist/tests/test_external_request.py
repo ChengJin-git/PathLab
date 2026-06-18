@@ -61,6 +61,97 @@ def test_runner_does_not_cache_transient_parse_error():
     assert config.external_test_contract == {}
 
 
+def test_runner_keeps_ready_external_contract_when_later_inference_is_missing():
+    from pathscientist.orchestrator.external_request import ExternalRequestInference
+    import pathscientist.orchestrator.runner as runner
+
+    state = ResearchSessionState.create(
+        session_id="sess_external_ready",
+        conversation_id=uuid4(),
+        objective=ResearchObjective(
+            question="Train on local - tcga-nsclc-subset4 then validate on nsclc_external_test.",
+        ),
+    )
+    existing = {
+        "source": "llm",
+        "requested": True,
+        "enabled": True,
+        "status": "enabled",
+        "contract": {
+            "model_source": "best_run",
+            "external_task_type": "mil_classification",
+            "external_features_dir": "/data/nsclc_external_test/features/virchow2/paramsabc",
+            "external_splits_file": "/data/nsclc_external_test/splits.json",
+            "datasets": [
+                {
+                    "role": "internal",
+                    "dataset_name": "local - tcga-nsclc-subset4",
+                    "paths": ["/data/TCGA-NSCLC-subset4"],
+                },
+                {
+                    "role": "external",
+                    "dataset_name": "nsclc_external_test",
+                    "paths": ["/data/nsclc_external_test"],
+                },
+            ],
+        },
+        "missing": [],
+    }
+    state.grounding = {"external_test_request": dict(existing)}
+    config = PathScientistConfig()
+
+    def worse_inference(**_kwargs):
+        return ExternalRequestInference(
+            requested=True,
+            enabled=False,
+            confidence="high",
+            status="missing_external_data",
+            reason="later inference lost the mounted external dataset",
+            contract={
+                "model_source": "best_run",
+                "external_task_type": "mil_classification",
+                "datasets": [
+                    {
+                        "role": "internal",
+                        "dataset_name": "local - tcga-nsclc-subset4",
+                        "paths": ["/data", "/data/raw"],
+                    },
+                    {"role": "external", "dataset_name": "nsclc_external_test"},
+                ],
+            },
+            missing=["external_data_path"],
+            training_data={"paths": ["/data", "/data/raw"]},
+            external_data={"paths": []},
+            raw={},
+            source="llm",
+        )
+
+    original = runner.infer_external_request
+    runner.infer_external_request = worse_inference
+    try:
+        result = _apply_external_request_inference(
+            state,
+            config,
+            selected_skill="mil_classification",
+        )
+    finally:
+        runner.infer_external_request = original
+
+    assert result is None
+    request = state.grounding["external_test_request"]
+    assert request["enabled"] is True
+    assert request["missing"] == []
+    assert request["contract"]["external_features_dir"] == (
+        "/data/nsclc_external_test/features/virchow2/paramsabc"
+    )
+    assert request["contract"]["datasets"][0]["paths"] == ["/data/TCGA-NSCLC-subset4"]
+    assert request["contract"]["datasets"][1]["paths"] == ["/data/nsclc_external_test"]
+    assert config.external_test_enabled is True
+    assert config.external_test_contract["external_features_dir"] == (
+        "/data/nsclc_external_test/features/virchow2/paramsabc"
+    )
+
+
 def test_unknown_external_task_type_requires_explicit_task_type(tmp_path):
     external_root = tmp_path / "external segmentation cohort"
     (external_root / "masks").mkdir(parents=True)

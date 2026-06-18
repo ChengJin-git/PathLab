@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+from backend.common.net_guard import guarded_requests_get
 from ..types import DatasetRecord
 from .base import DownloadResult
 from .direct_http import DirectHTTPProvider
@@ -76,7 +77,7 @@ class ZenodoProvider:
             import requests
             sess = requests
         url = f"https://zenodo.org/api/records/{record_id}"
-        with sess.get(url, timeout=self._timeout) as r:
+        with guarded_requests_get(sess, url, timeout=self._timeout) as r:
             r.raise_for_status()
             payload = r.json() if hasattr(r, "json") else {}
         files = payload.get("files") or []
@@ -108,7 +109,12 @@ class ZenodoProvider:
         written: list[Path] = []
         for name, url in files:
             dest = target_dir / name
-            with sess.get(url, stream=True, timeout=self._timeout) as r:
+            with guarded_requests_get(
+                sess,
+                url,
+                stream=True,
+                timeout=self._timeout,
+            ) as r:
                 r.raise_for_status()
                 with dest.open("wb") as fh:
                     for chunk in r.iter_content(chunk_size=1 << 16):

@@ -1,5 +1,3 @@
-import os
-
 from .checkpoint_resolver import (
     ModelDirSpec,
     ModelFileSpec,
@@ -8,16 +6,7 @@ from .checkpoint_resolver import (
     resolve_model_file,
 )
 
-# Checkpoint directory: use env var if set, otherwise default to local 'checkpoints' subdir
-FEATURE_EXTRACTOR_CKPT_SAVE_DIR = str(
-    checkpoint_root()
-) if os.environ.get("PATHLAB_CKPT_DIR") else os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "checkpoints"
-)
-FEATURE_EXTRACTOR_CKPT_SAVE_DIR = os.environ.get(
-    "PATHLAB_CKPT_DIR",
-    FEATURE_EXTRACTOR_CKPT_SAVE_DIR,
-)
+FEATURE_EXTRACTOR_CKPT_SAVE_DIR = str(checkpoint_root())
 
 
 __all__ = ["get_ckpt_path"]

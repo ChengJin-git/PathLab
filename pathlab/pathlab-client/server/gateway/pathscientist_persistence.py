@@ -7,7 +7,6 @@ import os
 import re
 import logging
 import math
-import threading
 import concurrent.futures
 from datetime import datetime
 from pathlib import Path
@@ -24,15 +23,33 @@ logger = logging.getLogger(__name__)
 
 MAX_TEXT_LENGTH = 20000
 MAX_JSON_TEXT_LENGTH = 12000
+MAX_RESEARCH_QUESTION_LENGTH = 4000
+MAX_JSON_SAFE_DEPTH = 20
+MAX_JSON_SAFE_BYTES = 200_000
+PERSISTENCE_QUEUE_MAXSIZE = max(
+    1,
+    int(os.getenv("PATHSCIENTIST_PERSISTENCE_QUEUE_MAXSIZE", "1024")),
+)
+PERSISTENCE_ENQUEUE_TIMEOUT_SECONDS = max(
+    0.01,
+    float(os.getenv("PATHSCIENTIST_PERSISTENCE_ENQUEUE_TIMEOUT_SECONDS", "0.25")),
+)
 
-_persist_lock = threading.Lock()
 _gateway_loop: asyncio.AbstractEventLoop | None = None
+_persist_queues: dict[int, asyncio.Queue[tuple[Any, str]]] = {}
+_persist_workers: dict[int, asyncio.Task[None]] = {}
 
 
 def configure_loop(loop: asyncio.AbstractEventLoop | None = None) -> None:
     """Register the Gateway event loop used by SQLAlchemy's async engine."""
     global _gateway_loop
     _gateway_loop = loop or asyncio.get_running_loop()
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if running_loop is _gateway_loop and not _gateway_loop.is_closed():
+        _ensure_persistence_worker(_gateway_loop)
 
 
 def persist_session_created(
@@ -378,7 +395,10 @@ def _session_payload(
     return {
         "session_id": session_id,
         "user_id": user_id,
-        "research_question": question or _objective_question(state),
+        "research_question": _truncate_text(
+            question or _objective_question(state),
+            MAX_RESEARCH_QUESTION_LENGTH,
+        ),
         "phase": (stage or str(state.get("stage") or status or "running"))[:50],
         "status": (status or "running")[:20],
         "thread_id": session_id,
@@ -1321,25 +1341,65 @@ def _final_report(state: dict[str, Any]) -> str:
     return ""
 
 
-def _json_safe(value: Any) -> Any:
-    if value is None or isinstance(value, (str, bool, int)):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {
-            str(key): _json_safe(item)
-            for key, item in value.items()
-            if item is not None
-        }
-    if isinstance(value, (list, tuple, set)):
-        return [_json_safe(item) for item in value]
-    text = str(value)
-    return _truncate_text(text, MAX_JSON_TEXT_LENGTH)
+def _json_safe(
+    value: Any,
+    *,
+    max_depth: int = MAX_JSON_SAFE_DEPTH,
+    byte_budget: int = MAX_JSON_SAFE_BYTES,
+) -> Any:
+    remaining = [max(0, int(byte_budget))]
+
+    def _consume(text: str) -> str:
+        if remaining[0] <= 0:
+            return "[truncated:json_budget]"
+        encoded_len = len(text.encode("utf-8", errors="ignore"))
+        if encoded_len <= remaining[0]:
+            remaining[0] -= encoded_len
+            return text
+        allowed = max(0, remaining[0])
+        remaining[0] = 0
+        return _truncate_text(text, allowed)
+
+    def _walk(item: Any, depth: int) -> Any:
+        if depth < 0:
+            return "[truncated:max_depth]"
+        if item is None or isinstance(item, bool):
+            return item
+        if isinstance(item, int):
+            return item
+        if isinstance(item, float):
+            return item if math.isfinite(item) else None
+        if isinstance(item, str):
+            return _consume(item)
+        if isinstance(item, Path):
+            return _consume(str(item))
+        if isinstance(item, datetime):
+            return _consume(item.isoformat())
+        if isinstance(item, dict):
+            out: dict[str, Any] = {}
+            for key, child in item.items():
+                if child is None:
+                    continue
+                safe_key = _consume(str(key))
+                if safe_key == "[truncated:json_budget]":
+                    out[safe_key] = safe_key
+                    break
+                out[safe_key] = _walk(child, depth - 1)
+                if remaining[0] <= 0:
+                    out["[truncated]"] = "[truncated:json_budget]"
+                    break
+            return out
+        if isinstance(item, (list, tuple, set)):
+            out_list = []
+            for child in item:
+                out_list.append(_walk(child, depth - 1))
+                if remaining[0] <= 0:
+                    out_list.append("[truncated:json_budget]")
+                    break
+            return out_list
+        return _consume(_truncate_text(str(item), MAX_JSON_TEXT_LENGTH))
+
+    return _walk(value, max_depth)
 
 
 def _truncate_text(value: Any, limit: int = MAX_TEXT_LENGTH) -> str:
@@ -1386,6 +1446,66 @@ def _nested_get(entry: dict[str, Any], key: str) -> Any:
     return None
 
 
+def _loop_key(loop: asyncio.AbstractEventLoop) -> int:
+    return id(loop)
+
+
+def _ensure_persistence_worker(
+    loop: asyncio.AbstractEventLoop,
+) -> asyncio.Queue[tuple[Any, str]]:
+    key = _loop_key(loop)
+    queue = _persist_queues.get(key)
+    if queue is None:
+        queue = asyncio.Queue(maxsize=PERSISTENCE_QUEUE_MAXSIZE)
+        _persist_queues[key] = queue
+
+    worker = _persist_workers.get(key)
+    if worker is None or worker.done():
+        _persist_workers[key] = loop.create_task(
+            _persistence_worker(queue),
+            name="pathscientist-persistence-worker",
+        )
+    return queue
+
+
+async def _persistence_worker(queue: asyncio.Queue[tuple[Any, str]]) -> None:
+    while True:
+        coro, action = await queue.get()
+        try:
+            await coro
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Failed to %s: %s", action, exc)
+        finally:
+            queue.task_done()
+
+
+def _enqueue_best_effort(coro: Any, action: str) -> None:
+    assert _gateway_loop is not None
+    queue = _ensure_persistence_worker(_gateway_loop)
+    try:
+        queue.put_nowait((coro, action))
+    except asyncio.QueueFull:
+        with contextlib.suppress(Exception):
+            coro.close()
+        logger.warning(
+            "Skipped %s because PathScientist persistence queue is full",
+            action,
+        )
+
+
+async def drain_persistence_queue(timeout: float | None = None) -> None:
+    loop = asyncio.get_running_loop()
+    queue = _persist_queues.get(_loop_key(loop))
+    if queue is None:
+        return
+    if timeout is None:
+        await queue.join()
+        return
+    await asyncio.wait_for(queue.join(), timeout=timeout)
+
+
 def _run_best_effort(coro: Any, action: str) -> None:
     try:
         loop = _gateway_loop
@@ -1404,26 +1524,29 @@ def _run_best_effort(coro: Any, action: str) -> None:
             pass
 
         if current_loop is loop:
-            task = loop.create_task(coro)
-
-            def _log_failure(done: asyncio.Task[Any]) -> None:
-                try:
-                    done.result()
-                except Exception as exc:
-                    logger.warning("Failed to %s: %s", action, exc)
-
-            task.add_done_callback(_log_failure)
+            _enqueue_best_effort(coro, action)
             return
 
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        future = asyncio.run_coroutine_threadsafe(
+            _enqueue_best_effort_from_loop(coro, action),
+            loop,
+        )
         try:
-            with _persist_lock:
-                future.result(timeout=5)
+            future.result(timeout=PERSISTENCE_ENQUEUE_TIMEOUT_SECONDS)
         except concurrent.futures.TimeoutError:
+            future.cancel()
+            with contextlib.suppress(Exception):
+                coro.close()
             logger.warning("Timed out while trying to %s", action)
         except Exception as exc:
+            with contextlib.suppress(Exception):
+                coro.close()
             logger.warning("Failed to %s: %s", action, exc)
     except Exception as exc:
         with contextlib.suppress(Exception):
             coro.close()
         logger.warning("Failed to %s: %s", action, exc)
+
+
+async def _enqueue_best_effort_from_loop(coro: Any, action: str) -> None:
+    _enqueue_best_effort(coro, action)

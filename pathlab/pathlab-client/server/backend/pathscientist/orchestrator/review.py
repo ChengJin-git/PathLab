@@ -51,27 +51,49 @@ def _round_delta(value: float | None) -> float | None:
 
 
 def _decision(state: ResearchSessionState) -> str:
-    if _current_execution_skill(state) == "external_test" and not state.stop_reason:
+    if _is_user_stop(state):
+        return "enter_synthesis"
+    if state.stop_reason == "stall_limit":
+        return "enter_synthesis"
+    if _has_pending_external_workflow_step(state):
         return "continue_execution"
     return "enter_synthesis" if state.stop_reason or state.iteration_index >= state.max_iterations else "continue_execution"
 
 
 def _ensure_budget_stop_reason(state: ResearchSessionState) -> None:
-    if _current_execution_skill(state) == "external_test" and not state.stop_reason:
+    if not _is_user_stop(state) and _has_pending_external_workflow_step(state):
         return
     if state.iteration_index >= state.max_iterations and not state.stop_reason:
         state.stop_reason = "budget_exhausted"
 
 
+def _is_user_stop(state: ResearchSessionState) -> bool:
+    return state.stop_reason in {"user_cancelled", "approval_rejected"}
+
+
+def _has_pending_external_workflow_step(state: ResearchSessionState) -> bool:
+    step = _current_execution_step(state)
+    skill = str(step.get("skill") or "") if isinstance(step, dict) else ""
+    step_id = str(step.get("id") or "") if isinstance(step, dict) else ""
+    return skill == "external_test" or (
+        skill == "feature_extraction" and step_id == "extract_external_features"
+    )
+
+
 def _current_execution_skill(state: ResearchSessionState) -> str:
+    step = _current_execution_step(state)
+    return str(step.get("skill") or "") if isinstance(step, dict) else ""
+
+
+def _current_execution_step(state: ResearchSessionState) -> dict:
     plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
     steps = plan.get("steps") or []
     current = int(plan.get("current_step", 0) or 0)
     if 0 <= current < len(steps):
         step = steps[current]
         if isinstance(step, dict):
-            return str(step.get("skill") or "")
-    return ""
+            return step
+    return {}
 
 
 def _new_latest_run(state: ResearchSessionState, previous_run_count: int) -> RunRecord | None:

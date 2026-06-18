@@ -369,6 +369,32 @@ def test_over_budget_skips_next_execution(tmp_path, monkeypatch):
     assert final_state.stage != STAGE_EXECUTION
 
 
+
+
+def test_stall_limit_enters_synthesis_even_with_pending_external_test():
+    """stall_limit means the agent is stuck; do not loop external forever."""
+    from pathscientist.orchestrator.review import run_review_stage
+
+    director = ResearchDirector(auto_approve=True)
+    state = _make_review_state()
+    state.stop_reason = "stall_limit"
+    state.execution_plan = {
+        "current_step": 0,
+        "steps": [{"id": "external", "skill": "external_test"}],
+    }
+
+    review = run_review_stage(
+        state,
+        previous_best_value=0.0,
+        previous_run_count=len(state.run_history),
+        action_events=0,
+    )
+    updated = director.advance(state)
+
+    assert review.decision == "enter_synthesis"
+    assert updated.stage == STAGE_SYNTHESIS
+    assert updated.stop_reason == "stall_limit"
+
 def test_budget_stop_does_not_skip_pending_external_test():
     """A queued external_test must still run after training exhausts budget."""
     director = ResearchDirector(auto_approve=True)
@@ -399,6 +425,185 @@ def test_stall_stop_does_not_skip_pending_external_test():
 
     assert updated.stage == STAGE_EXECUTION
     assert updated.stop_reason == "stall_limit"
+
+
+def test_budget_stop_does_not_skip_pending_external_feature_extraction():
+    """External feature extraction is part of the requested external workflow."""
+    director = ResearchDirector(auto_approve=True)
+    state = _make_review_state()
+    state.stop_reason = "budget_exhausted"
+    state.review_decision = "enter_synthesis"
+    state.latest_review = {"decision": "enter_synthesis"}
+    state.execution_plan = {
+        "current_step": 1,
+        "steps": [
+            {"id": "train_downstream", "skill": "mil_classification"},
+            {"id": "extract_external_features", "skill": "feature_extraction"},
+            {"id": "external_test", "skill": "external_test"},
+        ],
+    }
+
+    updated = director.advance(state)
+
+    assert updated.stage == STAGE_EXECUTION
+    assert updated.stop_reason == "budget_exhausted"
+
+
+def test_review_does_not_budget_stop_pending_external_feature_extraction():
+    """The training iteration budget must not terminate external setup/test."""
+    from pathscientist.orchestrator.review import run_review_stage
+    from pathscientist.orchestrator.types import RunRecord
+
+    state = _make_review_state()
+    state.stop_reason = ""
+    state.execution_plan = {
+        "current_step": 1,
+        "steps": [
+            {"id": "train_downstream", "skill": "mil_classification"},
+            {"id": "extract_external_features", "skill": "feature_extraction"},
+            {"id": "external_test", "skill": "external_test"},
+        ],
+    }
+    state.run_history.append(
+        RunRecord(
+            run_id="run_train",
+            iteration=0,
+            metric_name="auc",
+            metric_value=0.8,
+            committed=True,
+        )
+    )
+
+    review = run_review_stage(
+        state,
+        previous_best_value=0.0,
+        previous_run_count=0,
+    )
+
+    assert review.decision == "continue_execution"
+    assert state.stop_reason == ""
+
+
+def test_external_feature_extraction_updates_external_test_not_training_step(tmp_path):
+    from pathscientist.orchestrator.runner import _advance_execution_plan_after_iteration
+    from pathscientist.orchestrator.types import ResearchObjective, ResearchSessionState
+
+    features_dir = tmp_path / "external_features"
+    features_dir.mkdir()
+    (features_dir / "slide_001.pt").write_bytes(b"pt")
+    state = ResearchSessionState.create(
+        session_id="sess_external_features_first",
+        conversation_id=uuid4(),
+        objective=ResearchObjective(question="external"),
+    )
+    state.grounding["external_test_request"] = {
+        "contract": {"external_features_dir": "/stale/features"},
+        "missing": ["external_features_dir"],
+    }
+    state.execution_plan = {
+        "current_step": 0,
+        "steps": [
+            {
+                "id": "extract_external_features",
+                "skill": "feature_extraction",
+                "outputs": {"features_dir": str(features_dir)},
+            },
+            {
+                "id": "train_downstream",
+                "skill": "mil_classification",
+                "inputs": {"features_dir": "/data/internal/features"},
+            },
+            {
+                "id": "external_test",
+                "skill": "external_test",
+                "inputs": {"external_features_dir": "/stale/features"},
+            },
+        ],
+    }
+
+    advanced = _advance_execution_plan_after_iteration(state, workspace_root=tmp_path)
+
+    assert advanced is True
+    assert state.execution_plan["current_step"] == 1
+    train_inputs = state.execution_plan["steps"][1]["inputs"]
+    external_inputs = state.execution_plan["steps"][2]["inputs"]
+    assert train_inputs == {"features_dir": "/data/internal/features"}
+    assert external_inputs["external_features_dir"] == str(features_dir)
+    assert (
+        state.grounding["external_test_request"]["contract"]["external_features_dir"]
+        == str(features_dir)
+    )
+    assert state.grounding["external_test_request"]["missing"] == []
+
+
+def test_failed_external_test_records_failed_status():
+    from pathscientist.orchestrator.runner import _advance_execution_plan_after_metric_step
+    from pathscientist.orchestrator.types import ResearchObjective, ResearchSessionState
+    from uuid import uuid4
+
+    state = ResearchSessionState.create(
+        session_id="sess_failed_external",
+        conversation_id=uuid4(),
+        objective=ResearchObjective(question="external"),
+    )
+    state.execution_plan = {
+        "current_step": 0,
+        "steps": [{"id": "external_test", "skill": "external_test"}],
+    }
+    _advance_execution_plan_after_metric_step(
+        state,
+        last_experiment={
+            "run_id": "run_failed",
+            "committed": False,
+            "metrics": {"error": "missing external data", "quick_check_failed": True},
+            "run_dir": "output/runs/run_failed",
+        },
+    )
+
+    assert state.external_test["status"] == "failed"
+    assert state.external_test_history[-1]["status"] == "failed"
+    assert state.stop_reason == "external_test_failed"
+
+
+def test_non_improving_successful_external_test_records_completed_status():
+    from pathscientist.orchestrator.runner import _advance_execution_plan_after_metric_step
+    from pathscientist.orchestrator.types import ResearchObjective, ResearchSessionState
+    from uuid import uuid4
+
+    state = ResearchSessionState.create(
+        session_id="sess_non_improving_external",
+        conversation_id=uuid4(),
+        objective=ResearchObjective(question="external"),
+    )
+    state.execution_plan = {
+        "current_step": 0,
+        "steps": [{"id": "external_test", "skill": "external_test"}],
+    }
+
+    _advance_execution_plan_after_metric_step(
+        state,
+        last_experiment={
+            "run_id": "run_external",
+            "committed": False,
+            "exit_code": 0,
+            "metrics": {
+                "auc": 0.4444,
+                "external_auc": 0.4444,
+                "coverage": {
+                    "n_external_total": 6,
+                    "n_external_evaluated": 6,
+                    "missing_features": 0,
+                },
+            },
+            "run_dir": "output/runs/run_external",
+            "run_kind": "external_test",
+        },
+    )
+
+    assert state.external_test["status"] == "completed"
+    assert state.external_test["ratchet_status"] == "reverted_non_improving"
+    assert state.external_test_history[-1]["status"] == "completed"
+    assert state.stop_reason == "external_test_completed"
 
 
 def test_user_stop_still_skips_pending_external_test():

@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.database import init_db, close_db, get_db, async_session
 from backend.auth.models import User
 from backend.ai.schemas.base import TaskStatus
+from backend.common.log_redaction import install_query_token_log_redaction
 from gateway.chat.context_cache import (
     set_cached_context_kwargs,
     set_cached_context_kwargs_admin,
@@ -334,6 +335,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app with lifespan
 app = FastAPI(title="PathLab Gateway", lifespan=lifespan)
+install_query_token_log_redaction()
 
 # Enable CORS for dev and on-prem SPA
 app.add_middleware(

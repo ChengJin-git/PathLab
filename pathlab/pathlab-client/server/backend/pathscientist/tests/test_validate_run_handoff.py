@@ -91,12 +91,20 @@ class _StubWorkspace:
         # Stable exit code used by the stub; tests may override in-place.
         self.exit_code = 0
 
-    def run_script(self, script_path, env_vars=None, timeout=600.0, data_mounts=None):
+    def run_script(
+        self,
+        script_path,
+        env_vars=None,
+        timeout=600.0,
+        data_mounts=None,
+        **kwargs,
+    ):
         self.calls.append(
             {
                 "script_path": script_path,
                 "env_vars": dict(env_vars or {}),
                 "timeout": timeout,
+                "kwargs": dict(kwargs or {}),
             }
         )
         from openhands.sdk.workspace.models import CommandResult
@@ -161,12 +169,21 @@ def _validate(session_id: str, *, script_content: str | None = None,
 
 
 def _run(session_id: str, *, workspace, config,
-         quick_check: bool = False):
+         quick_check: bool = False,
+         script_path: str = "train.py",
+         script_type: str = "auto",
+         run_kind: str = "auto",
+         script_inputs: list[str] | None = None):
     executor = RunExperimentExecutor(
         workspace=workspace, config=config, session_id=session_id,
     )
     return executor(RunExperimentAction(
-        script_path="train.py", quick_check=quick_check, timeout=60,
+        script_path=script_path,
+        script_type=script_type,
+        run_kind=run_kind,
+        script_inputs=script_inputs or [],
+        quick_check=quick_check,
+        timeout=60,
     ))
 
 
@@ -359,6 +376,54 @@ def test_refusal_message_is_actionable_when_never_validated(tmp_path):
         assert "run_train.py" not in text.lower(), (
             f"refusal must not suggest wrapper scripts; got: {text!r}"
         )
+    finally:
+        cleanup()
+
+
+def test_feature_extraction_run_ignores_training_iteration_budget(tmp_path):
+    """External feature extraction is setup for external validation, not a
+    ratcheted training iteration, so it must still execute after the training
+    iteration budget has been consumed.
+    """
+    script = '''\
+#!/usr/bin/env bash
+mkdir -p "$DATA_OUTPUT_DIR/features/virchow2/debug"
+printf fake > "$DATA_OUTPUT_DIR/features/virchow2/debug/example.pt"
+printf '{"patches_extracted": 1}' > "$OUTPUT_DIR/metrics.json"
+'''
+    session_id, deps, stub, cleanup = _register_handoff_session(
+        tmp_path,
+        initial_script=script,
+    )
+    try:
+        script_path = stub.root / "feature_extraction_launcher.sh"
+        script_path.write_text(script)
+        deps.iteration_state.remaining_budget = 0
+        deps.iteration_state.iteration_index = deps.iteration_state.max_iterations
+        deps.config.planned_data_output_dir = str(tmp_path / "feature_output")
+        deps.config.planned_feature_extractor = "virchow2"
+        expected_feature = tmp_path / "feature_output" / "features" / "virchow2" / "debug" / "example.pt"
+        expected_feature.parent.mkdir(parents=True)
+        expected_feature.write_bytes(b"pt")
+
+        vobs = _validate(session_id, script_path="feature_extraction_launcher.sh")
+        assert vobs.valid, f"prereq: feature extraction launcher must validate; {vobs.errors!r}"
+
+        robs = _run(
+            session_id,
+            workspace=stub,
+            config=deps.config,
+            quick_check=True,
+            script_path="feature_extraction_launcher.sh",
+            script_type="bash",
+            run_kind="feature_extraction",
+        )
+
+        assert robs.exit_code == 0, (
+            "feature_extraction run_experiment should not be blocked by "
+            f"training iteration budget; got content={robs.content!r}"
+        )
+        assert stub.calls, "policy should allow the feature extraction script to execute"
     finally:
         cleanup()
 

@@ -7,6 +7,19 @@ set -euo pipefail
 : "${PATHSCIENTIST_FEATURE_EXTRACTOR:=uni2}"
 : "${PATHSCIENTIST_FEATURE_BATCH_SIZE:=64}"
 : "${PATHSCIENTIST_FEATURE_MIN_FREE_MB:=0}"
+: "${PYTHON_BIN:=python3}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATE_COMMON_PARENT=""
+for candidate in "$SCRIPT_DIR" "/home/yihui/PathLab/pathlab/pathlab-client/server/backend/pathscientist/domain/templates"; do
+  if [ -d "$candidate/common" ]; then
+    TEMPLATE_COMMON_PARENT="$candidate"
+    break
+  fi
+done
+if [ -n "$TEMPLATE_COMMON_PARENT" ]; then
+  export PYTHONPATH="$TEMPLATE_COMMON_PARENT:${PYTHONPATH:-}"
+fi
 
 if [ ! -d "$WSI_DIR" ] && [ "$WSI_DIR" = "/data/raw/WSIs" ] && [ -d /data/WSIs ]; then
   WSI_DIR=/data/WSIs
@@ -92,7 +105,7 @@ for rank in "${!select_gpus[@]}"; do
     export PATHSCIENTIST_WORLD_SIZE="$WORLD_SIZE"
     export PATHSCIENTIST_FEATURE_EXTRACTOR
     export PATHSCIENTIST_FEATURE_BATCH_SIZE
-    python feature_extraction_worker.py \
+    "$PYTHON_BIN" feature_extraction_worker.py \
       --rank "$rank" \
       --world-size "$WORLD_SIZE" \
       --wsi-dir "$WSI_DIR" \
@@ -113,7 +126,7 @@ for pid in "${pids[@]}"; do
 done
 
 trap - EXIT INT TERM
-python feature_extraction_aggregate.py \
+"$PYTHON_BIN" feature_extraction_aggregate.py \
   --output-dir "$OUTPUT_DIR" \
   --data-output-dir "$DATA_OUTPUT_DIR" \
   --extractor "$PATHSCIENTIST_FEATURE_EXTRACTOR" \

@@ -1460,6 +1460,7 @@
       "title": "Execution console",
       "transcriptTitle": "Compressed transcript",
       "transcriptDescription": "One readable card per stage or iteration; raw gateway events stay in debug.",
+      "failureDetails": "Failure details",
       "visibleEvents": "{{count}} visible events",
       "waitingEventsTitle": "Waiting for execution events",
       "waitingEventsDescription": "New web-created sessions will populate this console as the gateway persists SSE events.",
@@ -1473,7 +1474,10 @@
       "userRequest": "User request",
       "agentWork": "Agent work",
       "result": "Result",
-      "externalValidation": "External validation"
+      "internalTest": "Internal test",
+      "externalValidation": "External validation",
+      "coverageValue": "coverage {{value}}%",
+      "missingFeatures": "missing features {{count}}"
     },
     "iterationLadder": {
       "taskSetup": "Task setup",

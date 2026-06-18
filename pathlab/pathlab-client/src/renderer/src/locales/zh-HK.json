@@ -1460,6 +1460,7 @@
       "title": "執行控制台",
       "transcriptTitle": "壓縮記錄",
       "transcriptDescription": "每個階段或迭代顯示為可讀卡片；原始閘道事件保留在除錯視圖。",
+      "failureDetails": "失敗詳情",
       "visibleEvents": "{{count}} 個可見事件",
       "waitingEventsTitle": "等待執行事件",
       "waitingEventsDescription": "透過網頁建立的新會話會在閘道持久化 SSE 事件後填充此控制台。",
@@ -1473,7 +1474,10 @@
       "userRequest": "使用者請求",
       "agentWork": "Agent 工作",
       "result": "結果",
-      "externalValidation": "外部驗證"
+      "internalTest": "內部測試",
+      "externalValidation": "外部驗證",
+      "coverageValue": "覆蓋率 {{value}}%",
+      "missingFeatures": "缺失 feature {{count}}"
     },
     "iterationLadder": {
       "taskSetup": "任務設定",

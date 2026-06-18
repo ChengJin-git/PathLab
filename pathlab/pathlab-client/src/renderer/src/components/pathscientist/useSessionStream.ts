@@ -93,10 +93,21 @@ export function useSessionStream(sessionId: string | undefined, enabled = true):
     let source: EventSource | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-    const connect = () => {
+    const connect = async () => {
       if (cancelled) return
       setStatus(reconnectAttemptsRef.current === 0 ? 'open' : 'reconnecting')
-      source = new EventSource(getPathScientistEventsUrl(sessionId))
+      let streamUrl: string
+      try {
+        streamUrl = await getPathScientistEventsUrl(sessionId)
+      } catch (err) {
+        if (!cancelled) {
+          setStatus('error')
+          setErrorMessage(err instanceof Error ? err.message : 'Unable to open stream')
+        }
+        return
+      }
+      if (cancelled) return
+      source = new EventSource(streamUrl)
 
       const onMessage = (raw: MessageEvent) => {
         try {
@@ -144,10 +155,12 @@ export function useSessionStream(sessionId: string | undefined, enabled = true):
       const delay = Math.min(RECONNECT_BASE_MS * 2 ** (attempt - 1), RECONNECT_MAX_MS)
       setStatus('reconnecting')
       setErrorMessage(`Stream interrupted; retrying in ${Math.round(delay / 1000)}s (attempt ${attempt})`)
-      reconnectTimer = setTimeout(connect, delay)
+      reconnectTimer = setTimeout(() => {
+        void connect()
+      }, delay)
     }
 
-    connect()
+    void connect()
 
     return () => {
       cancelled = true

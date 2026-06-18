@@ -14,14 +14,27 @@ interface RunSummaryCardProps {
 function formatMetric(summary: PathScientistRunSummaryView) {
   const metric = summary.bestMetric
   if (!metric) return '--'
-  const value = metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3)
+  const value = typeof metric.value === 'number'
+    ? (metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3))
+    : '--'
   return `${metric.name.toUpperCase()} ${value}`
 }
 
 function formatExternalMetric(summary: PathScientistRunSummaryView) {
   const metric = summary.externalTest?.primaryMetric
   if (!metric) return '--'
-  const value = metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3)
+  const value = typeof metric.value === 'number'
+    ? (metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3))
+    : '--'
+  return `${metric.name.toUpperCase()} ${value}`
+}
+
+function formatInternalMetric(summary: PathScientistRunSummaryView) {
+  const metric = summary.internalTest?.primaryMetric
+  if (!metric) return '--'
+  const value = typeof metric.value === 'number'
+    ? (metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3))
+    : '--'
   return `${metric.name.toUpperCase()} ${value}`
 }
 
@@ -95,8 +108,15 @@ export default function RunSummaryCard({ summary, compactHeader = false, classNa
         <NarrativeBlock label={t('pathScientist.runSummary.result')} value={summary.narrative.result} />
       </div>
 
-      {summary.externalTest && (
-        <ExternalValidationSummary summary={summary} />
+      {(summary.internalTest || summary.externalTest) && (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {summary.internalTest && (
+            <InternalTestSummary summary={summary} />
+          )}
+          {summary.externalTest && (
+            <ExternalValidationSummary summary={summary} />
+          )}
+        </div>
       )}
 
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -115,6 +135,38 @@ export default function RunSummaryCard({ summary, compactHeader = false, classNa
   )
 }
 
+function InternalTestSummary({ summary }: { summary: PathScientistRunSummaryView }) {
+  const { t } = usePathScientistTranslation()
+  const internal = summary.internalTest
+  if (!internal) return null
+  const status = internal.status || (internal.committed ? 'completed' : 'recorded')
+  const samples = internal.sampleCount === null ? '--' : t('pathScientist.count.samples', { count: internal.sampleCount })
+
+  return (
+    <div
+      className="rounded-2xl border border-sky-200 bg-sky-50/70 p-3 ring-1 ring-sky-100"
+      data-testid="pathscientist-internal-summary"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-sky-700">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {t('pathScientist.runSummary.internalTest')}
+          </p>
+          <p className="mt-1 text-lg font-black text-slate-950">{formatInternalMetric(summary)}</p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[11px] font-bold">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/85 px-2.5 py-1 text-sky-700 ring-1 ring-sky-200">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {pathScientistStatusLabel(status, t)}
+          </span>
+          <span className="rounded-full bg-white/85 px-2.5 py-1 text-slate-600 ring-1 ring-sky-100">{samples}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ExternalValidationSummary({ summary }: { summary: PathScientistRunSummaryView }) {
   const { t } = usePathScientistTranslation()
   const external = summary.externalTest
@@ -124,7 +176,7 @@ function ExternalValidationSummary({ summary }: { summary: PathScientistRunSumma
 
   return (
     <div
-      className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 ring-1 ring-emerald-100"
+      className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 ring-1 ring-emerald-100"
       data-testid="pathscientist-external-summary"
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -141,30 +193,8 @@ function ExternalValidationSummary({ summary }: { summary: PathScientistRunSumma
             {pathScientistStatusLabel(status, t)}
           </span>
           <span className="rounded-full bg-white/85 px-2.5 py-1 text-slate-600 ring-1 ring-emerald-100">{samples}</span>
-          {external.runId && (
-            <span className="rounded-full bg-white/85 px-2.5 py-1 text-slate-600 ring-1 ring-emerald-100">{external.runId}</span>
-          )}
         </div>
       </div>
-      {(external.modelPath || external.runDir) && (
-        <div className="mt-3 grid gap-2 text-xs text-slate-600 lg:grid-cols-2">
-          {external.modelPath && (
-            <ExternalPath label={t('pathScientist.labels.model')} value={external.modelPath} />
-          )}
-          {external.runDir && (
-            <ExternalPath label={t('pathScientist.labels.runDir')} value={external.runDir} />
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ExternalPath({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded-xl bg-white/80 px-3 py-2 ring-1 ring-emerald-100">
-      <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700">{label}</p>
-      <p className="mt-1 truncate font-semibold text-slate-700" title={value}>{value}</p>
     </div>
   )
 }

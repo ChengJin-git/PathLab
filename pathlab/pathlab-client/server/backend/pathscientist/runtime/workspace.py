@@ -12,6 +12,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -76,6 +77,17 @@ _DIFF_PATTERN = re.compile(
     r"<<<SEARCH\n(.*?)\n===\n(.*?)\n>>>REPLACE",
     re.DOTALL,
 )
+_CHECKPOINT_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_SHELL_CONTROL_CHARS_RE = re.compile(r"[;&|`$<>]")
+
+
+def _validate_checkpoint_name(name: str) -> str:
+    normalized = str(name or "").strip()
+    if not _CHECKPOINT_NAME_RE.fullmatch(normalized):
+        raise ValueError(
+            "Invalid checkpoint name. Use 1-64 characters: letters, numbers, '.', '_' or '-'."
+        )
+    return normalized
 
 
 @dataclass
@@ -113,11 +125,36 @@ class _SubprocessWorkspace:
         self.working_dir = Path(working_dir)
 
     def execute_command(self, command: str, timeout: float = 60.0) -> CommandResult:
+        if _SHELL_CONTROL_CHARS_RE.search(str(command or "")):
+            return CommandResult(
+                command=command,
+                exit_code=2,
+                stdout="",
+                stderr="Shell metacharacters are not supported by the subprocess workspace fallback",
+                timeout_occurred=False,
+            )
+        try:
+            argv = shlex.split(str(command or ""))
+        except ValueError as exc:
+            return CommandResult(
+                command=command,
+                exit_code=2,
+                stdout="",
+                stderr=str(exc),
+                timeout_occurred=False,
+            )
+        if not argv:
+            return CommandResult(
+                command=command,
+                exit_code=0,
+                stdout="",
+                stderr="",
+                timeout_occurred=False,
+            )
         try:
             completed = subprocess.run(
-                command,
+                argv,
                 cwd=self.working_dir,
-                shell=True,
                 text=True,
                 capture_output=True,
                 timeout=timeout,
@@ -240,7 +277,7 @@ class Workspace:
                 timeout_occurred=result.timed_out,
             )
 
-        runner = "bash" if script_type == "bash" else "python"
+        runner = "bash" if script_type == "bash" else sys.executable
         cmd = [runner, str(script_path)]
         env = os.environ.copy()
         if env_vars:
@@ -455,6 +492,9 @@ class Workspace:
 
     _CHECKPOINT_PREFIX = "checkpoint/"
 
+    def _checkpoint_tag(self, name: str) -> str:
+        return f"{self._CHECKPOINT_PREFIX}{_validate_checkpoint_name(name)}"
+
     def create_checkpoint(self, name: str) -> str:
         """Create a named checkpoint at current HEAD.
 
@@ -462,14 +502,15 @@ class Workspace:
         Returns the commit hash.
         """
         # Auto-commit if there are uncommitted changes
+        tag = self._checkpoint_tag(name)
         status = self._git("status --porcelain")
         if status.stdout.strip():
             self.commit(f"checkpoint: {name}")
 
-        tag = f"{self._CHECKPOINT_PREFIX}{name}"
+        quoted_tag = shlex.quote(tag)
         # Delete existing tag with same name if exists
-        self._git(f"tag -d {tag}")
-        self._git(f"tag {tag}")
+        self._git(f"tag -d {quoted_tag}")
+        self._git(f"tag {quoted_tag}")
         commit_hash = self.get_current_commit()
         logger.info(f"[workspace] Checkpoint '{name}' at {commit_hash[:8]}")
         return commit_hash
@@ -480,14 +521,15 @@ class Workspace:
         Discards all uncommitted changes and resets to the checkpoint.
         Returns the commit hash restored to.
         """
-        tag = f"{self._CHECKPOINT_PREFIX}{name}"
+        tag = self._checkpoint_tag(name)
+        quoted_tag = shlex.quote(tag)
         # Check tag exists
-        result = self._git(f"rev-parse {tag}")
+        result = self._git(f"rev-parse {quoted_tag}")
         if result.exit_code != 0:
             raise ValueError(f"Checkpoint '{name}' not found")
 
         commit_hash = result.stdout.strip()
-        self._git(f"checkout {tag} -- .")
+        self._git(f"checkout {quoted_tag} -- .")
         self._git("clean -fd")
         logger.info(f"[workspace] Restored checkpoint '{name}' ({commit_hash[:8]})")
         return commit_hash
@@ -507,15 +549,15 @@ class Workspace:
             if not tag:
                 continue
             name = tag.removeprefix(self._CHECKPOINT_PREFIX)
-            hash_result = self._git(f"rev-parse {tag}")
+            hash_result = self._git(f"rev-parse {shlex.quote(tag)}")
             commit_hash = hash_result.stdout.strip() if hash_result.exit_code == 0 else ""
             checkpoints.append({"name": name, "hash": commit_hash[:8]})
         return checkpoints
 
     def delete_checkpoint(self, name: str) -> bool:
         """Delete a named checkpoint. Returns True if deleted."""
-        tag = f"{self._CHECKPOINT_PREFIX}{name}"
-        result = self._git(f"tag -d {tag}")
+        tag = self._checkpoint_tag(name)
+        result = self._git(f"tag -d {shlex.quote(tag)}")
         return result.exit_code == 0
 
     # --- Diff parsing and application (static methods) ---

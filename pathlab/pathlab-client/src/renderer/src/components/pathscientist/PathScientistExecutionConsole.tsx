@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bug, ChevronDown, Loader2 } from 'lucide-react'
+import { AlertTriangle, Bug, ChevronDown, Loader2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
 import {
@@ -46,6 +46,18 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value)
 }
 
+function cleanFailureText(value: unknown): string {
+  return asString(value).replace(/\s+/g, ' ').trim()
+}
+
+function firstFailureText(...values: unknown[]): string {
+  for (const value of values) {
+    const text = cleanFailureText(value)
+    if (text) return text
+  }
+  return ''
+}
+
 function latestState(session: PathScientistSessionDetail | null, events: PathScientistEvent[]) {
   const stateEvent = [...events].reverse().find((event) => event.state)
   return { ...asRecord(session?.state), ...asRecord(stateEvent?.state) }
@@ -53,6 +65,66 @@ function latestState(session: PathScientistSessionDetail | null, events: PathSci
 
 function isLiveStatus(status?: string) {
   return status === 'queued' || status === 'running'
+}
+
+function isTerminalStatus(value: unknown) {
+  const status = asString(value).toLowerCase()
+  return ['completed', 'finished', 'failed', 'interrupted'].includes(status)
+}
+
+function isFailureStatus(value: unknown) {
+  const status = asString(value).toLowerCase()
+  return status === 'failed' || status === 'interrupted'
+}
+
+function latestFailureEvent(events: PathScientistEvent[]): PathScientistEvent | undefined {
+  return [...events].reverse().find((event) => (
+    event.kind === 'error'
+    || event.kind === 'emit_error'
+    || event.severity === 'error'
+    || isFailureStatus(event.status)
+    || isFailureStatus(event.stage)
+  ))
+}
+
+function latestFailedRun(state: Record<string, unknown>): Record<string, unknown> {
+  const history = Array.isArray(state.run_history) ? state.run_history.map(asRecord) : []
+  return [...history].reverse().find((entry) => {
+    const metrics = asRecord(entry.metrics)
+    return Boolean(
+      cleanFailureText(entry.error)
+      || cleanFailureText(entry.error_type)
+      || cleanFailureText(metrics.error)
+      || cleanFailureText(metrics.status).toLowerCase() === 'failed'
+    )
+  }) || {}
+}
+
+function failureReason(
+  session: PathScientistSessionDetail | null,
+  state: Record<string, unknown>,
+  events: PathScientistEvent[],
+): string {
+  const event = latestFailureEvent(events)
+  const eventState = asRecord(event?.state)
+  const failedRun = latestFailedRun(state)
+  const failedRunMetrics = asRecord(failedRun.metrics)
+  const latestReview = asRecord(state.latest_review)
+
+  return firstFailureText(
+    session?.error,
+    state.error,
+    state.interrupted_reason,
+    eventState.error,
+    eventState.interrupted_reason,
+    event?.message,
+    event?.summary,
+    failedRun.error,
+    failedRunMetrics.error,
+    failedRun.error_type,
+    latestReview.summary,
+    latestReview.reason,
+  )
 }
 
 function rawIterationValues(state: Record<string, unknown>, events: PathScientistEvent[]): number[] {
@@ -132,7 +204,18 @@ export default function PathScientistExecutionConsole({
   const currentStage = asString(state.stage) || asString(session?.stage) || view.stages.find((stage) => stage.status === 'current')?.id || ''
   const isExecutionRunning = isLive && currentStage === 'execution'
   const runningLabel = displayCurrentIteration ? pathScientistRunningIterationLabel(displayCurrentIteration, maxIterations, t) : ''
-  const trainingProgressLabel = trainingProgressConsoleLabel(session?.training_progress)
+  const isSessionEnded =
+    isTerminalStatus(session?.status) ||
+    isTerminalStatus(session?.stage) ||
+    isTerminalStatus(state.status) ||
+    isTerminalStatus(state.stage)
+  const trainingProgressLabel = isSessionEnded ? '' : trainingProgressConsoleLabel(session?.training_progress)
+  const isSessionFailed =
+    isFailureStatus(session?.status) ||
+    isFailureStatus(session?.stage) ||
+    isFailureStatus(state.status) ||
+    isFailureStatus(state.stage)
+  const failureMessage = isSessionFailed ? failureReason(session, state, view.visibleEvents) : ''
   const hasCurrentIterationCard = displayCurrentIteration
     ? view.iterations.some((iteration) => iteration.index === displayCurrentIteration)
     : false
@@ -145,6 +228,28 @@ export default function PathScientistExecutionConsole({
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
           {streamError}
         </div>
+      )}
+
+      {failureMessage && (
+        <section
+          className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800 shadow-sm"
+          data-testid="pathscientist-failure-details"
+          role="alert"
+        >
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-white text-red-600 ring-1 ring-red-100">
+              <AlertTriangle className="h-4 w-4" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-wider text-red-700">
+                {t('pathScientist.executionConsole.failureDetails')}
+              </p>
+              <p className="mt-1 break-words text-sm font-semibold leading-6 text-red-900">
+                {failureMessage}
+              </p>
+            </div>
+          </div>
+        </section>
       )}
 
       {!isClinical && (

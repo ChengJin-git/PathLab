@@ -69,6 +69,39 @@ def test_default_image_prefers_pathscientist_local_sandbox(tmp_path, monkeypatch
     assert sandbox_module._resolve_default_image(backend_dir) == str(image)
 
 
+def test_default_image_ignores_stale_env_image_when_local_sandbox_exists(tmp_path, monkeypatch):
+    """A stale image path from an old worktree must not silently disable sandbox."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    stale_image = tmp_path / "old-worktree" / "pathlab-sandbox.sif"
+    monkeypatch.setenv("PATHSCIENTIST_SANDBOX_IMAGE", str(stale_image))
+    monkeypatch.delenv("PATHLAB_SANDBOX_IMAGE", raising=False)
+
+    backend_dir = tmp_path / "pathlab-client" / "server" / "backend"
+    image_dir = backend_dir.parent.parent / ".local" / "pathscientist" / "sandbox"
+    image_dir.mkdir(parents=True)
+    image = image_dir / "pathlab-sandbox.sif"
+    image.write_text("fake image")
+
+    assert sandbox_module._resolve_default_image(backend_dir) == str(image)
+
+
+def test_sandbox_constructor_ignores_missing_image_when_default_exists(tmp_path, monkeypatch):
+    """Agent-created sandboxes must not execute a stale non-existent image path."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    fallback_image = tmp_path / "current" / "pathlab-sandbox.sif"
+    fallback_image.parent.mkdir(parents=True)
+    fallback_image.write_text("fake image")
+    missing_image = tmp_path / "old" / "pathlab-sandbox.sif"
+
+    monkeypatch.setattr(sandbox_module, "_DEFAULT_IMAGE", str(fallback_image))
+
+    sandbox = sandbox_module.ApptainerSandbox(image=str(missing_image))
+
+    assert sandbox.image == str(fallback_image)
+
+
 # ---- Sandbox cmd construction ----
 
 def test_sandbox_binds_data_mounts(tmp_path, monkeypatch):
@@ -88,6 +121,48 @@ def test_sandbox_binds_data_mounts(tmp_path, monkeypatch):
     )
     cmd_str = " ".join(cmd)
     assert f"{prepared}:/data:rw" in cmd_str
+
+
+
+
+def test_sandbox_binds_symlink_target_chain_for_data_mounts(tmp_path, monkeypatch):
+    """Absolute symlinks inside mounted datasets must remain readable in --no-home sandboxes."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    original_exists = sandbox_module.Path.exists
+
+    def fake_exists(self):
+        if str(self) == "/tmp":
+            return False
+        return original_exists(self)
+
+    monkeypatch.setattr(sandbox_module.Path, "exists", fake_exists)
+
+    s = _build_sandbox_for_test(monkeypatch)
+    workspace = tmp_path / "ws"
+    output = tmp_path / "ws" / "output"
+    dataset = tmp_path / "dataset"
+    middle = tmp_path / "middle_features"
+    final = tmp_path / "final_features"
+    (dataset / "features").mkdir(parents=True)
+    middle.mkdir()
+    final.mkdir()
+    workspace.mkdir(parents=True)
+    output.mkdir(parents=True)
+    (final / "slide.pt").write_text("feature")
+    (middle / "slide.pt").symlink_to(final / "slide.pt")
+    (dataset / "features" / "slide.pt").symlink_to(middle / "slide.pt")
+
+    cmd = s._build_exec_cmd(
+        workspace,
+        output,
+        data_mounts={str(dataset): "/data"},
+    )
+    cmd_str = " ".join(cmd)
+
+    assert f"{dataset}:/data:rw" in cmd_str
+    assert f"{middle}:{middle}:ro" in cmd_str
+    assert f"{final}:{final}:ro" in cmd_str
 
 
 def test_sandbox_can_disable_cgroup_limits(tmp_path, monkeypatch):
@@ -168,6 +243,49 @@ def test_sandbox_data_mounts_default_none_keeps_existing_binds(tmp_path):
     assert cmd_no_mounts == cmd_empty_mounts
 
 
+def test_sandbox_run_script_quotes_workspace_and_script_path(tmp_path, monkeypatch):
+    s = _build_sandbox_for_test(monkeypatch)
+    workspace = tmp_path / "ws with spaces"
+    output = workspace / "output"
+    workspace.mkdir(parents=True)
+    captured = {}
+
+    def fake_run(cmd, env, timeout, start, **kwargs):
+        captured["cmd"] = cmd
+        return 0, "ok", False
+
+    monkeypatch.setattr(s, "_run_with_early_detection", fake_run)
+
+    result = s.run_script(
+        "safe script.py",
+        workspace_dir=workspace,
+        output_dir=output,
+        script_type="python",
+    )
+
+    assert result.exit_code == 0
+    shell_fragment = captured["cmd"][-1]
+    assert f"cd '{workspace}'" in shell_fragment
+    assert "python 'safe script.py'" in shell_fragment
+
+
+def test_sandbox_run_script_rejects_non_relative_script_path(tmp_path, monkeypatch):
+    s = _build_sandbox_for_test(monkeypatch)
+    workspace = tmp_path / "ws"
+    output = workspace / "output"
+    workspace.mkdir(parents=True)
+
+    result = s.run_script(
+        "../outside.py",
+        workspace_dir=workspace,
+        output_dir=output,
+        script_type="python",
+    )
+
+    assert result.exit_code == -1
+    assert "workspace-relative" in result.stderr
+
+
 # ---- Workspace passthrough ----
 
 def test_workspace_run_script_passes_data_mounts_to_sandbox(tmp_path):
@@ -180,7 +298,6 @@ def test_workspace_run_script_passes_data_mounts_to_sandbox(tmp_path):
         def run_script(self, *, script_path, workspace_dir, output_dir,
                         env_vars=None, timeout=600.0, data_mounts=None, **_kwargs):
             captured["data_mounts"] = data_mounts
-            from openhands.sdk.workspace.models import CommandResult
             from pathscientist.runtime.sandbox import SandboxResult
             return SandboxResult(exit_code=0, stdout="", stderr="", duration=0.1, timed_out=False, early_failed=False)
 

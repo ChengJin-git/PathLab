@@ -1460,6 +1460,7 @@
       "title": "执行控制台",
       "transcriptTitle": "压缩记录",
       "transcriptDescription": "每个阶段或迭代显示为可读卡片；原始网关事件保留在调试视图。",
+      "failureDetails": "失败详情",
       "visibleEvents": "{{count}} 个可见事件",
       "waitingEventsTitle": "等待执行事件",
       "waitingEventsDescription": "通过网页创建的新会话会在网关持久化 SSE 事件后填充此控制台。",
@@ -1473,7 +1474,10 @@
       "userRequest": "用户请求",
       "agentWork": "Agent 工作",
       "result": "结果",
-      "externalValidation": "外部验证"
+      "internalTest": "内部测试",
+      "externalValidation": "外部验证",
+      "coverageValue": "覆盖率 {{value}}%",
+      "missingFeatures": "缺失 feature {{count}}"
     },
     "iterationLadder": {
       "taskSetup": "任务设置",

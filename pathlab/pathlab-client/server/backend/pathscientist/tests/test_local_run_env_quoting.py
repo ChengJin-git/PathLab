@@ -56,6 +56,33 @@ def test_workspace_sdk_fallback_requires_explicit_test_flag(monkeypatch, tmp_pat
         sys.modules.pop(allowed_name, None)
 
 
+def test_subprocess_workspace_fallback_does_not_execute_shell_metacharacters(monkeypatch, tmp_path):
+    source_path = Path(__file__).parents[1] / "runtime" / "workspace.py"
+    real_import = builtins.__import__
+
+    def import_without_openhands_workspace(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith("openhands.sdk.workspace"):
+            raise ModuleNotFoundError(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_openhands_workspace)
+    monkeypatch.setenv("PATHSCIENTIST_ALLOW_SUBPROCESS_WORKSPACE_FALLBACK", "1")
+    module_name = "_pathscientist_workspace_fallback_shell_test"
+    spec = importlib.util.spec_from_file_location(module_name, source_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        workspace = module.Workspace(tmp_path / "workspace")
+        marker = workspace.root / "pwned"
+        result = workspace.execute_command(f"printf ok ; touch {marker.name}")
+        assert result.exit_code != 0
+        assert not marker.exists()
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_run_script_preserves_external_dataset_json_env_value(tmp_path):
     workspace = Workspace(tmp_path / "workspace")
     expected = json.dumps(
@@ -100,3 +127,20 @@ def test_run_script_passes_env_without_shell_reparsing(tmp_path):
 
     assert result.exit_code == 0, result.stderr
     assert (workspace.root / "actual.txt").read_text(encoding="utf-8") == value
+
+
+def test_run_script_uses_current_python_when_python_is_not_on_path(monkeypatch, tmp_path):
+    workspace = Workspace(tmp_path / "workspace")
+    workspace.write_file(
+        "hello.py",
+        "import sys\nprint(\"ok:\" + str(bool(sys.executable)))\n",
+    )
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+
+    result = workspace.run_script(
+        "hello.py",
+        script_type="python",
+        timeout=10,
+    )

@@ -174,6 +174,7 @@ async def register_manifest_with_pathlab(
     manifest: DatasetManifest,
     session_id: str,
     user_id: str | None = None,
+    make_public: bool = False,
 ) -> dict[str, Any]:
     """Create/reuse PathLab dataset rows for a prepared manifest.
 
@@ -182,6 +183,9 @@ async def register_manifest_with_pathlab(
     """
     if manifest.status != "prepared":
         return {"status": "skipped", "reason": f"manifest_status:{manifest.status}"}
+    owner_id = str(user_id or "").strip()
+    if not owner_id:
+        return {"status": "skipped", "reason": "no_owner"}
 
     wsi_files = _iter_wsi_files(manifest)
     if not wsi_files:
@@ -196,15 +200,15 @@ async def register_manifest_with_pathlab(
         name=f"WSI File-level {task_type.capitalize()}",
     )
     name = _dataset_name(manifest)
-    dataset = await DatasetRepository.get_by_name(db, name, user_id=user_id)
+    dataset = await DatasetRepository.get_by_name(db, name, user_id=owner_id)
     if dataset is None:
         dataset = await DatasetRepository.get_or_create(
             db,
             name=name,
             group_id=data_group.group_id,
-            user_id=user_id,
+            user_id=owner_id,
             source_organ="",
-            is_public=user_id is None,
+            is_public=bool(make_public),
             reuse_existing=True,
         )
 
@@ -233,7 +237,7 @@ async def register_manifest_with_pathlab(
             case_id=slide_id,
             label=labels.get(slide_id),
             wsi_path=str(path),
-            user_id=user_id,
+            user_id=owner_id,
             source="",
             split=splits.get(slide_id),
             file_size=file_size,

@@ -316,10 +316,12 @@ def _external_feature_extraction_step(
     """Build a role-tagged feature_extraction step for external raw WSIs."""
     inputs_contract = normalize_external_test_contract(contract or {})
     features_ready = _truthy_flag(inputs_contract.get("external_features_ready"))
-    if inputs_contract.get("external_features_dir") and features_ready:
+    has_features = bool(str(inputs_contract.get("external_features_dir") or "").strip())
+    has_wsi = bool(str(inputs_contract.get("external_wsi_dir") or "").strip())
+    if has_features and features_ready:
         return None, inputs_contract, []
-    if not inputs_contract.get("external_wsi_dir"):
-        return None, inputs_contract, []
+    if not has_wsi:
+        return None, inputs_contract, ["external_wsi_dir_or_external_features_dir"]
 
     extractor_name = normalize_feature_extractor_name(
         str(inputs_contract.get("external_extractor_name") or extractor_name)
@@ -459,20 +461,65 @@ def build_execution_plan(
             return plan
         if any(step.skill == "external_test" for step in plan.steps):
             return plan
-        depends_on = [plan.steps[-1].id] if plan.steps else []
         external_contract = normalize_external_test_contract(external_test_contract or {})
         external_extract_step, external_contract, external_missing = _external_feature_extraction_step(
             contract=external_contract,
-            depends_on=depends_on,
+            depends_on=[],
             data_output_dir=data_output_dir,
             extractor_name=extractor_name,
         )
-        appended_steps: list[ExecutionStep] = []
-        test_depends_on = depends_on
+        if external_missing:
+            return ExecutionPlan(
+                status="blocked",
+                primary_skill=plan.primary_skill,
+                current_step=plan.current_step,
+                steps=[],
+                missing=list(dict.fromkeys(list(plan.missing) + external_missing)),
+                notes=list(plan.notes) + [
+                    "External validation requested, but no ready external features "
+                    "or raw external WSI path was found during preflight.",
+                ],
+            )
+
+        steps = list(plan.steps)
         if external_extract_step is not None:
-            appended_steps.append(external_extract_step)
-            test_depends_on = [external_extract_step.id]
-        appended_steps.append(
+            insert_at = next(
+                (
+                    index
+                    for index, step in enumerate(steps)
+                    if step.skill != "feature_extraction"
+                ),
+                len(steps),
+            )
+            steps.insert(insert_at, external_extract_step)
+
+        extraction_step_ids = [
+            step.id for step in steps if step.skill == "feature_extraction"
+        ]
+        train_step_ids = [
+            step.id for step in steps if step.id == "train_downstream"
+        ]
+        normalized_steps: list[ExecutionStep] = []
+        for step in steps:
+            depends_on = list(step.depends_on)
+            if step.id == "train_downstream":
+                depends_on = list(dict.fromkeys(depends_on + extraction_step_ids))
+            normalized_steps.append(
+                ExecutionStep(
+                    id=step.id,
+                    skill=step.skill,
+                    title=step.title,
+                    inputs=dict(step.inputs),
+                    outputs=dict(step.outputs),
+                    depends_on=depends_on,
+                    instructions=list(step.instructions),
+                )
+            )
+
+        test_depends_on = train_step_ids or (
+            [normalized_steps[-1].id] if normalized_steps else []
+        )
+        normalized_steps.append(
             _external_test_step(
                 contract=external_contract,
                 depends_on=test_depends_on,
@@ -482,14 +529,14 @@ def build_execution_plan(
             status=plan.status,
             primary_skill=plan.primary_skill,
             current_step=plan.current_step,
-            steps=list(plan.steps) + appended_steps,
-            missing=list(plan.missing) + external_missing,
+            steps=normalized_steps,
+            missing=list(plan.missing),
             notes=list(plan.notes) + [
                 (
-                    "External raw WSI requested; appending external feature_extraction "
-                    "before evaluation."
+                    "External raw WSI requested; running external feature_extraction "
+                    "before training, then external evaluation."
                     if external_extract_step is not None
-                    else "External test requested; appending evaluation after model-producing steps."
+                    else "External test requested; running evaluation after model-producing steps."
                 ),
             ],
         )

@@ -244,6 +244,53 @@ describe('pathscientist event selectors', () => {
     })
   })
 
+
+  it('uses explicit task profile before literature survival keywords', () => {
+    const events: PathScientistEvent[] = [
+      {
+        kind: 'state',
+        status: 'running',
+        state: {
+          stage: 'execution',
+          task_profile: { task_type: 'mil_classification', asset_level: 'slide' },
+          grounding: {
+            task_profile: { task_type: 'mil_classification', asset_level: 'slide' },
+            selected_extractor: { canonical: 'Virchow2' },
+            selected_mil_model: { canonical: 'CLAM-MB' },
+            papers: [
+              {
+                paper_id: 'survival-paper',
+                title: 'Slide-level survival prediction with weakly supervised pathology models',
+              },
+            ],
+          },
+        },
+      },
+      {
+        kind: 'message',
+        stage: 'grounding',
+        text: 'The literature corpus includes survival prediction papers, but the current run is NSCLC slide MIL classification.',
+      },
+    ]
+    const session = {
+      session_id: 's-task-profile-priority',
+      title: 'NSCLC classification run',
+      question: 'Use Virchow2 and CLAM for NSCLC LUAD vs LUSC classification.',
+      model: 'gpt-5.5',
+      status: 'running',
+      stage: 'execution',
+      events,
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, events)
+
+    expect(view.sessionMetadata).toMatchObject({
+      taskType: 'slide-level classification',
+      foundationModel: 'Virchow2',
+      milMethod: 'CLAM',
+    })
+  })
+
   it('normalizes grounding task profile and literature papers for the grounding card', () => {
     const session = {
       session_id: 's-grounding',
@@ -280,10 +327,27 @@ describe('pathscientist event selectors', () => {
           ],
         },
       },
-      events: [],
+      events: [
+        {
+          kind: 'state',
+          status: 'completed',
+          state: {
+            stage: 'completed',
+            run_history: [
+              {
+                iteration: 0,
+                run_id: 'run_train',
+                committed: true,
+                metric_name: 'external_auc',
+                metric_value: 0.5556,
+              },
+            ],
+          },
+        },
+      ],
     } satisfies PathScientistSessionDetail
 
-    const view = buildPathScientistExecutionView(session, [])
+    const view = buildPathScientistExecutionView(session, session.events)
 
     expect((view as any).grounding).toMatchObject({
       selectedSkill: 'mil_classification',
@@ -861,5 +925,188 @@ describe('pathscientist event selectors', () => {
       sampleCount: 18,
     })
     expect(noExternalView.runSummary.externalTest).toBeNull()
+  })
+
+  it('extracts internal test metrics from the committed training run when external validation also exists', () => {
+    const session = {
+      session_id: 's-internal-and-external',
+      title: 'NSCLC internal and external validation',
+      question: 'Train on TCGA NSCLC and validate internally and externally.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'auc' },
+        best_run_id: 'run_train',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_train',
+            committed: true,
+            model_path: '/workspace/output/runs/run_train/best_model.pth',
+            run_dir: '/workspace/output/runs/run_train',
+            metrics: {
+              internal_test: {
+                loss: 0.9798,
+                accuracy: 0,
+                auc: null,
+                f1: 0,
+                n: 1,
+                coverage: 1,
+                missing_feature_count: 0,
+              },
+              external_validation: {
+                auc: 0.5556,
+                accuracy: 0.6667,
+                n: 6,
+              },
+            },
+          },
+        ],
+        external_test_history: [
+          {
+            run_id: 'run_external',
+            status: 'completed',
+            committed: false,
+            metrics: {
+              auc: 0.5556,
+              accuracy: 0.6667,
+              n_external_evaluated: 6,
+            },
+          },
+        ],
+      },
+      events: [],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, [])
+
+    expect(view.runSummary.internalTest).toMatchObject({
+      runId: 'run_train',
+      status: 'completed',
+      committed: true,
+      modelPath: '/workspace/output/runs/run_train/best_model.pth',
+      runDir: '/workspace/output/runs/run_train',
+      primaryMetric: { name: 'auc', value: null },
+      sampleCount: 1,
+      coverage: 1,
+      missingFeatureCount: 0,
+    })
+    expect(view.runSummary.externalTest).toMatchObject({
+      runId: 'run_external',
+      primaryMetric: { name: 'auc', value: 0.5556 },
+      sampleCount: 6,
+    })
+  })
+
+  it('keeps internal classification display on AUC when objective metric is external AUC', () => {
+    const session = {
+      session_id: 'f79dee7f81b0',
+      title: 'NSCLC internal and external validation',
+      question: 'Train on TCGA NSCLC and validate internally and externally.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'external_auc' },
+        best_run_id: 'run_train',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_train',
+            committed: true,
+            metrics: {
+              internal_test: {
+                accuracy: 0,
+                auc: null,
+                n: 1,
+                coverage: 1,
+                missing_feature_count: 0,
+              },
+            },
+          },
+        ],
+      },
+      events: [],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, [])
+
+    expect(view.runSummary.internalTest?.primaryMetric).toEqual({ name: 'auc', value: null })
+  })
+
+  it('uses external metrics embedded in the committed run history when no external history exists', () => {
+    const session = {
+      session_id: 's-run-history-external',
+      title: 'NSCLC external validation from run metrics',
+      question: 'Train on TCGA NSCLC and validate on external NSCLC.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'auc' },
+        best_run_id: 'run_best',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_best',
+            committed: true,
+            model_path: '/workspace/outputs/best_model.pt',
+            run_dir: '/workspace/output/runs/run_best',
+            metrics: {
+              test: { auc: 0.88 },
+              external_test: {
+                auc: 0.9421,
+                accuracy: 0.875,
+                n_external_evaluated: 4,
+              },
+            },
+          },
+        ],
+      },
+      events: [],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, [])
+
+    expect(view.runSummary.externalTest).toMatchObject({
+      runId: 'run_best',
+      status: 'completed',
+      committed: true,
+      modelPath: '/workspace/outputs/best_model.pt',
+      runDir: '/workspace/output/runs/run_best',
+      primaryMetric: { name: 'auc', value: 0.9421 },
+      sampleCount: 4,
+    })
+  })
+
+  it('normalizes prefixed external metric names for display', () => {
+    const session = {
+      session_id: 's-external-prefixed-metric',
+      title: 'NSCLC external validation',
+      question: 'Train on TCGA NSCLC and validate externally.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'external_auc' },
+        external_test_history: [
+          {
+            run_id: 'run_external',
+            status: 'completed',
+            metrics: {
+              external_auc: 0.5556,
+              auc: 0.5556,
+              accuracy: 0.6667,
+              external: {
+                auc: 0.5556,
+                accuracy: 0.6667,
+              },
+            },
+          },
+        ],
+      },
+      events: [],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, [])
+
+    expect(view.runSummary.externalTest?.primaryMetric).toEqual({ name: 'auc', value: 0.5556 })
   })
 })

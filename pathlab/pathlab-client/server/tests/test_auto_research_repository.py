@@ -1,9 +1,50 @@
+import importlib.util
+import sys
+import types
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from backend.database.models import TrainedModel, TrainingTask
-from backend.database.repositories.auto_research import AutoResearchRepository
+
+
+SERVER_ROOT = Path(__file__).resolve().parents[1]
+
+
+async def _not_implemented_repository_method(*args, **kwargs):
+    raise NotImplementedError
+
+
+class _DataGroupRepositoryStub:
+    get_or_create = staticmethod(_not_implemented_repository_method)
+
+
+class _WSIRepositoryStub:
+    bulk_update_feature_extracted = staticmethod(_not_implemented_repository_method)
+
+
+def install_lightweight_repositories_import():
+    package = types.ModuleType("backend.database.repositories")
+    package.__path__ = [str(SERVER_ROOT / "backend" / "database" / "repositories")]
+    package.DataGroupRepository = _DataGroupRepositoryStub
+    package.WSIRepository = _WSIRepositoryStub
+    sys.modules["backend.database.repositories"] = package
+
+    module_name = "backend.database.repositories.auto_research"
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        SERVER_ROOT / "backend" / "database" / "repositories" / "auto_research.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    package.AutoResearchRepository = module.AutoResearchRepository
+    return module.AutoResearchRepository
+
+
+AutoResearchRepository = install_lightweight_repositories_import()
 from gateway import pathscientist_persistence
 
 
@@ -67,6 +108,72 @@ class _SafeSession:
 
     async def commit(self):
         self.commits += 1
+
+
+@pytest.mark.asyncio
+async def test_get_session_scopes_query_by_user_id_when_provided():
+    db = _FakeDB(scalar=None)
+
+    result = await AutoResearchRepository.get_session(
+        db,
+        "session-owned",
+        user_id="user-other",
+    )
+
+    assert result is None
+    compiled = str(db.executed[-1].compile(compile_kwargs={"literal_binds": True}))
+    assert "auto_research_sessions.session_id = 'session-owned'" in compiled
+    assert "auto_research_sessions.user_id = 'user-other'" in compiled
+
+
+@pytest.mark.asyncio
+async def test_delete_session_scopes_query_by_user_id_when_provided():
+    class _DeleteResult:
+        rowcount = 0
+
+    class _DeleteDB(_FakeDB):
+        async def execute(self, statement):
+            self.executed.append(statement)
+            return _DeleteResult()
+
+    db = _DeleteDB()
+
+    deleted = await AutoResearchRepository.delete_session(
+        db,
+        "session-owned",
+        user_id="user-other",
+    )
+
+    assert deleted is False
+    compiled = str(db.executed[-1].compile(compile_kwargs={"literal_binds": True}))
+    assert "auto_research_sessions.session_id = 'session-owned'" in compiled
+    assert "auto_research_sessions.user_id = 'user-other'" in compiled
+
+
+@pytest.mark.asyncio
+async def test_upsert_session_does_not_overwrite_existing_owner():
+    existing = SimpleNamespace(
+        id=1,
+        session_id="s1",
+        user_id="user-owner",
+        status="running",
+        created_at=object(),
+    )
+    db = _FakeDB(scalar=existing)
+
+    result = await AutoResearchRepository.upsert_session(
+        db,
+        {
+            "session_id": "s1",
+            "user_id": "user-other",
+            "status": "completed",
+        },
+    )
+
+    assert result is existing
+    assert existing.user_id == "user-owner"
+    assert existing.status == "completed"
+    assert db.flushed == 1
 
 
 @pytest.mark.asyncio

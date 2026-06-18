@@ -90,6 +90,17 @@ def test_direct_http_accepts_targz(tmp_path):
     assert result.status == "downloaded"
 
 
+def test_direct_http_rejects_internal_network_url(tmp_path):
+    fake_session = MagicMock()
+    record = _make_record(download=DownloadSpec(
+        kind="direct_http",
+        urls=["http://169.254.169.254/latest/meta-data/data.zip"],
+    ))
+    result = DirectHTTPProvider(session=fake_session).download(record, tmp_path)
+    assert result.status == "failed"
+    fake_session.get.assert_not_called()
+
+
 # ---- ZenodoProvider ----
 
 def test_zenodo_skips_with_no_urls(tmp_path):
@@ -206,6 +217,24 @@ def test_zenodo_resolution_no_files_returns_skipped_policy(tmp_path):
     )
     result = ZenodoProvider(session=session).download(record, tmp_path)
     assert result.status == "skipped_policy"
+
+
+def test_zenodo_rejects_internal_file_url_from_metadata(tmp_path):
+    session = MagicMock()
+    session.get.return_value = _ZenodoResponse(payload={
+        "files": [{
+            "key": "data.zip",
+            "links": {"self": "http://169.254.169.254/latest/meta-data/data.zip"},
+        }]
+    })
+
+    record = _make_record(
+        provider="zenodo",
+        download=DownloadSpec(kind="zenodo", remote_id="123", urls=[]),
+    )
+    result = ZenodoProvider(session=session).download(record, tmp_path)
+    assert result.status == "failed"
+    assert session.get.call_count == 1
 
 
 def test_zenodo_uses_direct_http_when_urls_provided(tmp_path):

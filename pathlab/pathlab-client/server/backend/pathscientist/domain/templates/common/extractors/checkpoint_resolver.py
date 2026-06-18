@@ -27,13 +27,24 @@ class ModelDirSpec:
     optional_required_files: tuple[str, ...] = ()
 
 
+def _bundled_checkpoint_root() -> Path:
+    return Path(__file__).resolve().parent / "checkpoints"
+
+
+def _pathlab_checkpoint_root() -> Path:
+    return Path(__file__).resolve().parents[5] / "ai" / "extractors" / "checkpoints"
+
+
 def checkpoint_root() -> Path:
-    return Path(
-        os.environ.get(
-            "PATHLAB_CKPT_DIR",
-            str(Path(__file__).resolve().parent / "checkpoints"),
-        )
-    )
+    return Path(os.environ.get("PATHLAB_CKPT_DIR") or _pathlab_checkpoint_root())
+
+
+def _candidate_checkpoint_roots() -> list[Path]:
+    roots = [checkpoint_root()]
+    bundled = _bundled_checkpoint_root()
+    if bundled not in roots:
+        roots.append(bundled)
+    return roots
 
 
 def _hf_cache_root() -> Path:
@@ -73,8 +84,12 @@ def _offline() -> bool:
     return os.environ.get("HF_HUB_OFFLINE") == "1" or os.environ.get("TRANSFORMERS_OFFLINE") == "1"
 
 
-def _searched_locations(local_dir: Path, repo_id: str) -> list[str]:
-    return [str(local_dir), *map(str, _snapshot_dirs(repo_id))]
+def _searched_locations(local_dirs: Path | Iterable[Path], repo_id: str) -> list[str]:
+    if isinstance(local_dirs, Path):
+        dirs = [local_dirs]
+    else:
+        dirs = list(local_dirs)
+    return [*(str(path) for path in dirs), *map(str, _snapshot_dirs(repo_id))]
 
 
 def _download_failure_message(display_name: str, exc: Exception) -> str:
@@ -95,11 +110,12 @@ def resolve_model_file(
     token: str = "",
     allow_download: bool = True,
 ) -> Path:
-    local_dir = checkpoint_root() / spec.local_subdir
-    for filename in spec.filenames:
-        candidate = local_dir / filename
-        if candidate.is_file():
-            return candidate
+    local_dirs = [root / spec.local_subdir for root in _candidate_checkpoint_roots()]
+    for local_dir in local_dirs:
+        for filename in spec.filenames:
+            candidate = local_dir / filename
+            if candidate.is_file():
+                return candidate
 
     for snapshot in _snapshot_dirs(spec.repo_id):
         for filename in spec.filenames:
@@ -108,6 +124,7 @@ def resolve_model_file(
                 return candidate
 
     if allow_download and not _offline():
+        local_dir = local_dirs[0]
         local_dir.mkdir(parents=True, exist_ok=True)
         try:
             return Path(
@@ -119,14 +136,14 @@ def resolve_model_file(
                 )
             )
         except Exception as exc:
-            searched = _searched_locations(local_dir, spec.repo_id)
+            searched = _searched_locations(local_dirs, spec.repo_id)
             raise FileNotFoundError(
                 f"{spec.display_name} checkpoint not found locally and could not be downloaded. "
                 f"Expected one of {spec.filenames}; searched: {searched}. "
                 + _download_failure_message(spec.display_name, exc)
             ) from exc
 
-    searched = _searched_locations(local_dir, spec.repo_id)
+    searched = _searched_locations(local_dirs, spec.repo_id)
     raise FileNotFoundError(
         f"{spec.display_name} checkpoint not found. "
         f"Expected one of {spec.filenames}; searched: {searched}"
@@ -139,14 +156,15 @@ def resolve_model_dir(
     token: str = "",
     allow_download: bool = True,
 ) -> Path:
-    local_dir = checkpoint_root() / spec.local_subdir
+    local_dirs = [root / spec.local_subdir for root in _candidate_checkpoint_roots()]
     required = spec.required_files + spec.optional_required_files
-    if (
-        local_dir.is_dir()
-        and _has_all_files(local_dir, required)
-        and _has_any_file(local_dir, spec.any_weight_files)
-    ):
-        return local_dir
+    for local_dir in local_dirs:
+        if (
+            local_dir.is_dir()
+            and _has_all_files(local_dir, required)
+            and _has_any_file(local_dir, spec.any_weight_files)
+        ):
+            return local_dir
 
     for snapshot in _snapshot_dirs(spec.repo_id):
         if (
@@ -156,6 +174,7 @@ def resolve_model_dir(
             return snapshot
 
     if allow_download and not _offline():
+        local_dir = local_dirs[0]
         local_dir.mkdir(parents=True, exist_ok=True)
         try:
             return Path(
@@ -166,7 +185,7 @@ def resolve_model_dir(
                 )
             )
         except Exception as exc:
-            searched = _searched_locations(local_dir, spec.repo_id)
+            searched = _searched_locations(local_dirs, spec.repo_id)
             raise FileNotFoundError(
                 f"{spec.display_name} model directory not found locally and could not be downloaded. "
                 f"Required files={required}, weights={spec.any_weight_files}; "
@@ -174,7 +193,7 @@ def resolve_model_dir(
                 + _download_failure_message(spec.display_name, exc)
             ) from exc
 
-    searched = _searched_locations(local_dir, spec.repo_id)
+    searched = _searched_locations(local_dirs, spec.repo_id)
     raise FileNotFoundError(
         f"{spec.display_name} model directory not found. "
         f"Required files={required}, weights={spec.any_weight_files}; "

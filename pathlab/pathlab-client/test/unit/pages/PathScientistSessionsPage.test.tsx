@@ -183,6 +183,46 @@ describe('PathScientistSessionsPage', () => {
     expect(badges).toHaveTextContent('AUC 0.964')
   })
 
+  it('hides stale epoch progress on completed session cards', async () => {
+    vi.mocked(listPathScientistSessions).mockResolvedValue({
+      items: [
+        {
+          session_id: 'completed-epoch',
+          conversation_id: 'conv-completed-epoch',
+          title: 'Completed epoch',
+          question: 'Train a model',
+          model: 'gpt-5.5',
+          status: 'completed',
+          stage: 'completed',
+          created_at: 1779030000,
+          updated_at: 1779030100,
+          error: '',
+          current_iteration: 1,
+          max_iterations: 1,
+          training_progress: {
+            run_id: 'run_b',
+            current_epoch: 4,
+            total_epochs: 5,
+            current_val_auc: 1,
+            best_val_auc: 1,
+          },
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Completed epoch')).toBeInTheDocument()
+    const badges = screen.getByTestId('pathscientist-session-badges-completed-epoch')
+    expect(badges).toHaveTextContent('completed')
+    expect(badges).not.toHaveTextContent('Epoch')
+    expect(badges).not.toHaveTextContent('AUC')
+  })
+
   it('renders page chrome, empty state, and session actions from zh-CN translations', async () => {
     await i18n.changeLanguage('zh-CN')
     vi.mocked(listPathScientistSessions).mockResolvedValueOnce({ items: [] })

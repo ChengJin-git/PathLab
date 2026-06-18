@@ -33,7 +33,7 @@ interface IterationLadderProps {
 }
 
 function formatMetric(metric: PathScientistMetricView | null) {
-  if (!metric) return '--'
+  if (!metric || typeof metric.value !== 'number') return '--'
   return metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3)
 }
 
@@ -96,6 +96,15 @@ export default function IterationLadder({
   const trainingEpochLabel = trainingProgressEpochLabel(trainingProgress)
   const trainingMetricLabels = trainingProgressMetricLabels(trainingProgress)
   const ladderProgressLabel = [trainingEpochLabel, ...trainingMetricLabels].filter(Boolean).join(' · ')
+  const downloadRun = async (runId: string) => {
+    if (!sessionId) return
+    try {
+      const url = await getPathScientistRunDownloadUrl(sessionId, runId)
+      window.location.assign(url)
+    } catch (error) {
+      console.error('PathScientist run download failed:', error)
+    }
+  }
 
   return (
     <aside
@@ -126,17 +135,20 @@ export default function IterationLadder({
         </div>
         <div className="mt-3 flex items-center justify-between gap-3">
           <p className="text-3xl font-black tracking-tight text-gray-950">{formatMetric(bestMetric)}</p>
-          {sessionId && bestMetric?.runId && (
-            <a
-              href={getPathScientistRunDownloadUrl(sessionId, bestMetric.runId)}
+          {sessionId && bestMetric?.runId && (() => {
+            const runId = bestMetric.runId
+            return (
+            <button
+              type="button"
+              onClick={() => void downloadRun(runId)}
               aria-label={t('pathScientist.iterationLadder.downloadBestRun')}
               className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-extrabold text-emerald-700 ring-1 ring-emerald-100 transition hover:bg-emerald-50"
-              download
             >
               <Download className="h-3.5 w-3.5" />
               ZIP
-            </a>
-          )}
+            </button>
+            )
+          })()}
         </div>
         <p className="mt-1 truncate text-xs font-semibold text-gray-500">{formatMetricName(bestMetric)}{bestMetric?.runId ? t('pathScientist.iterationLadder.metricFromRun', { runId: bestMetric.runId }) : ''}</p>
       </section>
@@ -235,22 +247,25 @@ export default function IterationLadder({
                     <span>{iteration.metricName || bestMetric?.name || 'metric'}</span>
                     <strong className="font-extrabold text-gray-900">{typeof iteration.metricValue === 'number' ? iteration.metricValue.toFixed(3) : '--'}</strong>
                   </div>
-                  {iteration.runId && (
+                  {iteration.runId && (() => {
+                    const runId = iteration.runId
+                    return (
                     <div className="mt-2 flex items-center justify-between gap-2">
-                      <p className="truncate text-[11px] font-medium text-gray-400">{iteration.runId}</p>
+                      <p className="truncate text-[11px] font-medium text-gray-400">{runId}</p>
                       {sessionId && (
-                        <a
-                          href={getPathScientistRunDownloadUrl(sessionId, iteration.runId)}
+                        <button
+                          type="button"
+                          onClick={() => void downloadRun(runId)}
                           aria-label={t('pathScientist.iterationLadder.downloadIterationRun', { iteration: iteration.index })}
                           className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1 text-[11px] font-extrabold text-blue-700 ring-1 ring-blue-100 transition hover:bg-blue-50"
-                          download
                         >
                           <Download className="h-3 w-3" />
                           ZIP
-                        </a>
+                        </button>
                       )}
                     </div>
-                  )}
+                    )
+                  })()}
                 </div>
               )
             })}

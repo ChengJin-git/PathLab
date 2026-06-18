@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from backend.common.net_guard import guarded_requests_get
 from ..downloader import compute_sha256
 from ..types import DatasetRecord
 from .base import DownloadResult
@@ -83,7 +84,12 @@ class DirectHTTPProvider:
             filename = record.download.filename or Path(urlparse(url).path).name
             dest = target_dir / filename
             try:
-                with sess.get(url, stream=True, timeout=self._timeout) as r:
+                with guarded_requests_get(
+                    sess,
+                    url,
+                    stream=True,
+                    timeout=self._timeout,
+                ) as r:
                     r.raise_for_status()
                     try:
                         file_size = int((getattr(r, "headers", {}) or {}).get("content-length") or 0)

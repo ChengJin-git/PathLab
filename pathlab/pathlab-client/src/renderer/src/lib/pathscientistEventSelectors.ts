@@ -137,7 +137,7 @@ export interface PathScientistIterationView {
 
 export interface PathScientistMetricView {
   name: string
-  value: number
+  value: number | null
   runId?: string
   source?: string
 }
@@ -150,6 +150,18 @@ export interface PathScientistExternalTestView {
   runDir: string
   primaryMetric: PathScientistMetricView | null
   sampleCount: number | null
+}
+
+export interface PathScientistInternalTestView {
+  runId: string
+  status: string
+  committed: boolean
+  modelPath: string
+  runDir: string
+  primaryMetric: PathScientistMetricView | null
+  sampleCount: number | null
+  coverage: number | null
+  missingFeatureCount: number | null
 }
 
 export type PathScientistTaskTypeView =
@@ -188,6 +200,7 @@ export interface PathScientistRunSummaryView {
   toolCallCount: number
   iterationCount: number
   bestMetric: PathScientistMetricView | null
+  internalTest: PathScientistInternalTestView | null
   externalTest: PathScientistExternalTestView | null
   sessionMetadata: PathScientistSessionMetadataView
   currentActivityLabel: string
@@ -228,6 +241,82 @@ function asString(value: unknown): string {
 
 function asRecordArray(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.map(asRecord).filter((item) => Object.keys(item).length > 0) : []
+}
+
+function mergeNestedMetricRecords(
+  base: Record<string, unknown>,
+  overlay: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base, ...overlay }
+  Object.keys(merged).forEach((key) => {
+    const baseValue = asRecord(base[key])
+    const overlayValue = asRecord(overlay[key])
+    if (Object.keys(baseValue).length > 0 && Object.keys(overlayValue).length > 0) {
+      merged[key] = { ...baseValue, ...overlayValue }
+    }
+  })
+  return merged
+}
+
+function recordIdentity(record: Record<string, unknown>, index: number): string {
+  const runId = asString(record.run_id).trim()
+  if (runId) return `run:${runId}`
+  const iteration = asNumber(record.iteration)
+  if (typeof iteration === 'number') return `iteration:${iteration}`
+  return `index:${index}`
+}
+
+function mergeStateRecord(base: Record<string, unknown>, overlay: Record<string, unknown>): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...base, ...overlay }
+  const baseMetrics = asRecord(base.metrics)
+  const overlayMetrics = asRecord(overlay.metrics)
+  if (Object.keys(baseMetrics).length > 0 || Object.keys(overlayMetrics).length > 0) {
+    merged.metrics = mergeNestedMetricRecords(baseMetrics, overlayMetrics)
+  }
+  return merged
+}
+
+function mergeRecordHistory(baseValue: unknown, overlayValue: unknown): Record<string, unknown>[] {
+  const base = asRecordArray(baseValue)
+  const overlay = asRecordArray(overlayValue)
+  if (base.length === 0) return overlay
+  if (overlay.length === 0) return base
+
+  const selected = new Map<string, Record<string, unknown>>()
+  const order: string[] = []
+  base.forEach((record, index) => {
+    const key = recordIdentity(record, index)
+    selected.set(key, record)
+    order.push(key)
+  })
+  overlay.forEach((record, index) => {
+    const key = recordIdentity(record, index)
+    const existing = selected.get(key)
+    if (existing) {
+      selected.set(key, mergeStateRecord(existing, record))
+    } else {
+      selected.set(key, record)
+      order.push(key)
+    }
+  })
+
+  return order
+    .map((key) => selected.get(key))
+    .filter((record): record is Record<string, unknown> => Boolean(record))
+}
+
+function mergeSessionState(
+  sessionState: Record<string, unknown>,
+  eventState: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...sessionState, ...eventState }
+  if (sessionState.run_history || eventState.run_history) {
+    merged.run_history = mergeRecordHistory(sessionState.run_history, eventState.run_history)
+  }
+  if (sessionState.external_test_history || eventState.external_test_history) {
+    merged.external_test_history = mergeRecordHistory(sessionState.external_test_history, eventState.external_test_history)
+  }
+  return merged
 }
 
 function asStringList(value: unknown): string[] {
@@ -318,6 +407,13 @@ function runHistory(state: Record<string, unknown>): Record<string, unknown>[] {
 
 function normalizedMetricKey(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
+function displayMetricName(value: string): string {
+  const normalized = normalizedMetricKey(value)
+  const prefixPattern = /^(external|external_test|external_validation|internal|internal_test|test|validation|eval)_/
+  const stripped = normalized.replace(prefixPattern, '')
+  return stripped || normalized || value.trim()
 }
 
 function metricValueByKey(metrics: Record<string, unknown>, metricName: string): number | undefined {
@@ -426,7 +522,7 @@ function eventStatus(event: PathScientistEvent): PathScientistToolStatus {
 
 function latestState(session: PathScientistSessionDetail | null, events: PathScientistEvent[]): Record<string, unknown> {
   const stateEvent = [...events].reverse().find((event) => event.state)
-  return { ...asRecord(session?.state), ...asRecord(stateEvent?.state) }
+  return mergeSessionState(asRecord(session?.state), asRecord(stateEvent?.state))
 }
 
 function timestampValueMs(value: unknown): number | undefined {
@@ -713,7 +809,7 @@ function buildIterations(
     if (index === null) return
     const existing = byIndex.get(index) || { index, status: 'info' as const, tools: [] }
     const metricName = asString(record.metric_name) || objectiveMetricName
-    existing.metricName = metricName || existing.metricName
+    existing.metricName = metricName ? displayMetricName(metricName) : existing.metricName
     const metricValue = metricName ? runMetricValue(record, metricName) : asNumber(record.metric_value)
     existing.metricValue = metricValue
     existing.committed = Boolean(record.committed)
@@ -747,7 +843,7 @@ function buildBestMetric(state: Record<string, unknown>): PathScientistMetricVie
   if (typeof value !== 'number' || value <= 0) return null
   const name = asString(objective.success_metric) || 'metric'
   return {
-    name,
+    name: displayMetricName(name),
     value,
     runId: asString(state.best_run_id) || inferBestRunId(state, name, value),
   }
@@ -758,7 +854,7 @@ function buildTargetMetric(state: Record<string, unknown>): PathScientistMetricV
   const value = asNumber(objective.target_metric_value)
   if (typeof value !== 'number' || value <= 0) return null
   return {
-    name: asString(objective.success_metric) || 'metric',
+    name: displayMetricName(asString(objective.success_metric) || 'metric'),
     value,
     source: asString(objective.target_source) || undefined,
   }
@@ -786,6 +882,60 @@ const EXTERNAL_METRIC_FALLBACK_KEYS = [
   'balanced_accuracy',
 ]
 
+const INTERNAL_SAMPLE_COUNT_KEYS = [
+  'n',
+  'n_test',
+  'n_internal',
+  'n_internal_test',
+  'n_evaluated',
+  'n_samples',
+  'sample_count',
+  'num_samples',
+  'total_samples',
+]
+
+const INTERNAL_MISSING_FEATURE_KEYS = [
+  'missing_feature_count',
+  'missing_features',
+  'missing_feature_total',
+]
+
+const INTERNAL_METRIC_FALLBACK_KEYS = [
+  'auc',
+  'auroc',
+  'accuracy',
+  'acc',
+  'balanced_accuracy',
+  'f1',
+  'loss',
+  'c_index',
+  'cindex',
+  'dice',
+]
+
+function metricFromCandidates(
+  metrics: Record<string, unknown>,
+  candidates: string[],
+): PathScientistMetricView | null {
+  const seen = new Set<string>()
+
+  for (const key of candidates.map((candidate) => candidate.trim()).filter(Boolean)) {
+    const normalized = normalizedMetricKey(key)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    const value = metricValueByKey(metrics, key)
+    if (typeof value === 'number') return { name: displayMetricName(key), value }
+  }
+
+  return null
+}
+
+function metricKeyExists(metrics: Record<string, unknown>, metricName: string): boolean {
+  const normalizedName = normalizedMetricKey(metricName)
+  if (!normalizedName) return false
+  return Object.keys(metrics).some((key) => normalizedMetricKey(key) === normalizedName)
+}
+
 function externalHistory(state: Record<string, unknown>): Record<string, unknown>[] {
   const direct = asRecordArray(state.external_test_history)
   if (direct.length > 0) return direct
@@ -798,6 +948,49 @@ function externalHistory(state: Record<string, unknown>): Record<string, unknown
   return asRecordArray(recovery.external_test_history)
 }
 
+function externalRecordFromRunHistory(state: Record<string, unknown>): Record<string, unknown> {
+  const history = runHistory(state)
+  if (history.length === 0) return {}
+
+  const recordWithExternal = (record: Record<string, unknown>): Record<string, unknown> => {
+    const metrics = asRecord(record.metrics)
+    const externalMetrics = asRecord(metrics.external_test)
+    if (Object.keys(externalMetrics).length === 0) return {}
+    const pathlab = asRecord(record.pathlab)
+    const committed = Boolean(record.committed)
+    return {
+      run_id: asString(record.run_id).trim(),
+      status: asString(record.external_test_status || record.status).trim() || (committed ? 'completed' : ''),
+      committed,
+      model_path: asString(record.model_path || pathlab.model_path).trim(),
+      run_dir: asString(record.run_dir).trim(),
+      metrics: externalMetrics,
+    }
+  }
+
+  const bestRunId = asString(state.best_run_id).trim()
+  if (bestRunId) {
+    const best = history.find((record) => asString(record.run_id).trim() === bestRunId)
+    if (best) {
+      const record = recordWithExternal(best)
+      if (Object.keys(record).length > 0) return record
+    }
+  }
+
+  for (const record of [...history].reverse()) {
+    if (!record.committed) continue
+    const candidate = recordWithExternal(record)
+    if (Object.keys(candidate).length > 0) return candidate
+  }
+
+  for (const record of [...history].reverse()) {
+    const candidate = recordWithExternal(record)
+    if (Object.keys(candidate).length > 0) return candidate
+  }
+
+  return {}
+}
+
 function latestExternalRecord(state: Record<string, unknown>): Record<string, unknown> {
   const direct = asRecord(state.external_test)
   if (Object.keys(direct).length > 0) return direct
@@ -806,7 +999,10 @@ function latestExternalRecord(state: Record<string, unknown>): Record<string, un
   if (history.length > 0) return history[history.length - 1]
 
   const recovery = asRecord(state.recovery_metadata)
-  return asRecord(recovery.external_test)
+  const recovered = asRecord(recovery.external_test)
+  if (Object.keys(recovered).length > 0) return recovered
+
+  return externalRecordFromRunHistory(state)
 }
 
 function externalSampleCount(metrics: Record<string, unknown>, record: Record<string, unknown>): number | null {
@@ -821,22 +1017,11 @@ function externalPrimaryMetric(
   metrics: Record<string, unknown>,
   objectiveMetricName: string,
 ): PathScientistMetricView | null {
-  const candidates = [
+  return metricFromCandidates(metrics, [
     objectiveMetricName,
     ...EXTERNAL_METRIC_FALLBACK_KEYS,
     ...Object.keys(metrics),
-  ].map((key) => key.trim()).filter(Boolean)
-  const seen = new Set<string>()
-
-  for (const key of candidates) {
-    const normalized = normalizedMetricKey(key)
-    if (!normalized || seen.has(normalized)) continue
-    seen.add(normalized)
-    const value = metricValueByKey(metrics, key)
-    if (typeof value === 'number') return { name: key, value }
-  }
-
-  return null
+  ])
 }
 
 function buildExternalTestView(state: Record<string, unknown>): PathScientistExternalTestView | null {
@@ -868,6 +1053,118 @@ function buildExternalTestView(state: Record<string, unknown>): PathScientistExt
     runDir,
     primaryMetric,
     sampleCount: externalSampleCount(metrics, record),
+  }
+}
+
+function internalRecordFromRunHistory(state: Record<string, unknown>): Record<string, unknown> {
+  const history = runHistory(state)
+  if (history.length === 0) return {}
+
+  const recordWithInternal = (record: Record<string, unknown>): Record<string, unknown> => {
+    const metrics = asRecord(record.metrics)
+    const internalMetrics = asRecord(metrics.internal_test)
+    if (Object.keys(internalMetrics).length === 0) return {}
+    const pathlab = asRecord(record.pathlab)
+    const committed = Boolean(record.committed)
+    return {
+      run_id: asString(record.run_id).trim(),
+      status: asString(record.status).trim() || (committed ? 'completed' : ''),
+      committed,
+      model_path: asString(record.model_path || pathlab.model_path).trim(),
+      run_dir: asString(record.run_dir).trim(),
+      metrics: internalMetrics,
+    }
+  }
+
+  const bestRunId = asString(state.best_run_id).trim()
+  if (bestRunId) {
+    const best = history.find((record) => asString(record.run_id).trim() === bestRunId)
+    if (best) {
+      const record = recordWithInternal(best)
+      if (Object.keys(record).length > 0) return record
+    }
+  }
+
+  for (const record of [...history].reverse()) {
+    if (!record.committed) continue
+    const candidate = recordWithInternal(record)
+    if (Object.keys(candidate).length > 0) return candidate
+  }
+
+  for (const record of [...history].reverse()) {
+    const candidate = recordWithInternal(record)
+    if (Object.keys(candidate).length > 0) return candidate
+  }
+
+  return {}
+}
+
+function internalSampleCount(metrics: Record<string, unknown>, record: Record<string, unknown>): number | null {
+  for (const key of INTERNAL_SAMPLE_COUNT_KEYS) {
+    const value = asNumber(metrics[key] ?? record[key])
+    if (typeof value === 'number' && value >= 0) return value
+  }
+  return null
+}
+
+function internalMissingFeatureCount(metrics: Record<string, unknown>): number | null {
+  for (const key of INTERNAL_MISSING_FEATURE_KEYS) {
+    const value = asNumber(metrics[key])
+    if (typeof value === 'number' && value >= 0) return value
+  }
+  return null
+}
+
+function internalPrimaryMetric(
+  metrics: Record<string, unknown>,
+  objectiveMetricName: string,
+): PathScientistMetricView | null {
+  const requestedMetric = displayMetricName(objectiveMetricName)
+  if (requestedMetric) {
+    const value = metricValueByKey(metrics, requestedMetric)
+    if (typeof value === 'number') return { name: displayMetricName(requestedMetric), value }
+    if (metricKeyExists(metrics, requestedMetric)) return { name: displayMetricName(requestedMetric), value: null }
+  }
+
+  return metricFromCandidates(metrics, [
+    ...INTERNAL_METRIC_FALLBACK_KEYS,
+    ...Object.keys(metrics),
+  ])
+}
+
+function buildInternalTestView(state: Record<string, unknown>): PathScientistInternalTestView | null {
+  const record = internalRecordFromRunHistory(state)
+  if (Object.keys(record).length === 0) return null
+
+  const metrics = asRecord(record.metrics)
+  const objective = asRecord(state.objective)
+  const primaryMetric = internalPrimaryMetric(metrics, asString(objective.success_metric))
+  const runId = asString(record.run_id).trim()
+  const status = asString(record.status).trim()
+  const modelPath = asString(record.model_path).trim()
+  const runDir = asString(record.run_dir).trim()
+  const coverage = asNumber(metrics.coverage)
+  const missingFeatureCount = internalMissingFeatureCount(metrics)
+  const hasDisplayableData = Boolean(
+    runId
+    || status
+    || modelPath
+    || runDir
+    || primaryMetric
+    || Object.keys(metrics).length > 0,
+  )
+  if (!hasDisplayableData) return null
+
+  return {
+    runId,
+    status,
+    committed: Boolean(record.committed),
+    modelPath,
+    runDir,
+    primaryMetric,
+    sampleCount: internalSampleCount(metrics, record),
+    coverage: typeof coverage === 'number' ? coverage : null,
+    missingFeatureCount,
   }
 }
 
@@ -1175,6 +1472,33 @@ function inferTaskType(corpus: string): PathScientistTaskTypeView {
   return 'Not detected'
 }
 
+
+
+function explicitTaskTypeFromProfile(state: Record<string, unknown>): PathScientistTaskTypeView | null {
+  const profiles = [
+    asRecord(state.task_profile),
+    asRecord(nestedGrounding(state).task_profile),
+  ].filter((profile) => Object.keys(profile).length > 0)
+
+  for (const profile of profiles) {
+    const taskType = asString(profile.task_type || profile.taskType).trim().toLowerCase()
+    const assetLevel = asString(profile.asset_level || profile.assetLevel).trim().toLowerCase()
+    const predictionTarget = asString(profile.prediction_target || profile.predictionTarget).trim().toLowerCase()
+    const combined = `${taskType} ${assetLevel} ${predictionTarget}`
+    if (/survival|time[_\s-]?to[_\s-]?event|c[_\s-]?index/.test(combined)) {
+      return 'slide-level survival prediction'
+    }
+    if (taskType.includes('patch') || assetLevel.includes('patch')) {
+      return 'patch-level classification'
+    }
+    if (/mil[_\s-]?classification|wsi[_\s-]?classification|slide[_\s-]?classification|classification/.test(combined)) {
+      return 'slide-level classification'
+    }
+  }
+
+  return null
+}
+
 function firstPatternMatch(patterns: Array<[RegExp, string]>, corpus: string): string {
   for (const [pattern, label] of patterns) {
     if (pattern.test(corpus)) return label
@@ -1283,7 +1607,7 @@ function buildSessionMetadata(
   events: PathScientistEvent[],
 ): PathScientistSessionMetadataView {
   const corpus = buildMetadataCorpus(session, state, events)
-  const taskType = inferTaskType(corpus)
+  const taskType = explicitTaskTypeFromProfile(state) || inferTaskType(corpus)
   const isSlideLevel = taskType.startsWith('slide-level')
   return {
     taskType,
@@ -1307,7 +1631,9 @@ function formatSummaryMetric(
   iterations: PathScientistIterationView[] = [],
 ): string {
   if (!metric) return ''
-  const value = metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3)
+  const value = typeof metric.value === 'number'
+    ? (metric.value >= 10 ? metric.value.toFixed(2) : metric.value.toFixed(3))
+    : '--'
   const iterationLabel = iterationLabelForRunId(iterations, metric.runId)
   return `${metric.name.toUpperCase()} ${value}${iterationLabel ? ` ${iterationLabel}` : ''}`
 }
@@ -1393,6 +1719,7 @@ function buildRunSummary(
   toolCards: PathScientistToolView[],
   iterations: PathScientistIterationView[],
   bestMetric: PathScientistMetricView | null,
+  internalTest: PathScientistInternalTestView | null,
   externalTest: PathScientistExternalTestView | null,
   sessionMetadata: PathScientistSessionMetadataView,
   currentActivity: PathScientistActivityView | null,
@@ -1420,6 +1747,7 @@ function buildRunSummary(
     toolCallCount: toolCards.length,
     iterationCount: iterations.length,
     bestMetric,
+    internalTest,
     externalTest,
     sessionMetadata,
     currentActivityLabel: currentActivity?.label || 'Waiting for events',
@@ -1443,6 +1771,7 @@ export function buildPathScientistExecutionView(
   const stages = buildStages(session, visibleEvents, state, acquisition, nowMs)
   const iterations = buildIterations(state, toolCards, iterationDisplay)
   const bestMetric = buildBestMetric(state)
+  const internalTest = buildInternalTestView(state)
   const externalTest = buildExternalTestView(state)
   const sessionMetadata = buildSessionMetadata(session, state, visibleEvents)
   const grounding = buildGroundingView(state)
@@ -1466,6 +1795,7 @@ export function buildPathScientistExecutionView(
       toolCards,
       iterations,
       bestMetric,
+      internalTest,
       externalTest,
       sessionMetadata,
       currentActivity,

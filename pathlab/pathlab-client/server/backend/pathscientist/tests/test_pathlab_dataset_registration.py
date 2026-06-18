@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import asyncio
 import sys
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -10,7 +11,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from pathscientist.dataset.types import DatasetManifest
 
 
+def _install_registration_repository_stubs(monkeypatch):
+    package = types.ModuleType("backend.database.repositories")
+    package.__path__ = [str(Path(__file__).parents[2] / "database" / "repositories")]
+
+    class _Repo:
+        pass
+
+    package.DataGroupRepository = _Repo
+    package.DatasetRepository = _Repo
+    package.WSIRepository = _Repo
+    monkeypatch.setitem(sys.modules, "backend.database.repositories", package)
+
+    stats = types.ModuleType("backend.database.repositories.dataset_stats")
+    stats.DatasetStatsRepository = _Repo
+    monkeypatch.setitem(sys.modules, "backend.database.repositories.dataset_stats", stats)
+
+
 def test_register_manifest_creates_pathlab_dataset_and_wsi_rows(tmp_path, monkeypatch):
+    _install_registration_repository_stubs(monkeypatch)
     from pathscientist.dataset import pathlab_registration as reg
 
     prepared = tmp_path / "prepared"
@@ -116,7 +135,46 @@ def test_register_manifest_creates_pathlab_dataset_and_wsi_rows(tmp_path, monkey
     assert rows["slide_b.svs"]["split"] == "test"
 
 
+def test_register_manifest_skips_without_owner(tmp_path, monkeypatch):
+    _install_registration_repository_stubs(monkeypatch)
+    from pathscientist.dataset import pathlab_registration as reg
+
+    wsi_dir = tmp_path / "prepared" / "WSIs"
+    wsi_dir.mkdir(parents=True)
+    (wsi_dir / "slide_a.svs").write_bytes(b"a" * 40)
+    manifest = DatasetManifest(
+        dataset_id="demo:slides",
+        provider="local",
+        selected_for_task="mil_classification",
+        raw_root=str(tmp_path / "raw"),
+        prepared_root=str(tmp_path / "prepared"),
+        data_mounts={},
+        prepared_contract={"wsi_dir": str(wsi_dir)},
+        access="public",
+        status="prepared",
+    )
+
+    class _DatasetRepo:
+        @staticmethod
+        async def get_or_create(*args, **kwargs):
+            raise AssertionError("ownerless registration must not create datasets")
+
+    monkeypatch.setattr(reg, "DatasetRepository", _DatasetRepo)
+
+    result = asyncio.run(
+        reg.register_manifest_with_pathlab(
+            db=object(),
+            manifest=manifest,
+            session_id="sid",
+            user_id="",
+        )
+    )
+
+    assert result == {"status": "skipped", "reason": "no_owner"}
+
+
 def test_register_manifest_is_idempotent_for_existing_wsi_rows(tmp_path, monkeypatch):
+    _install_registration_repository_stubs(monkeypatch)
     from pathscientist.dataset import pathlab_registration as reg
 
     wsi_dir = tmp_path / "prepared" / "WSIs"

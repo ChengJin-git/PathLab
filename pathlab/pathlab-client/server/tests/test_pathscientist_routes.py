@@ -10,14 +10,68 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from jose import jwt
 
 
 ROUTE_PATH = Path(__file__).resolve().parents[1] / "gateway" / "routes" / "pathscientist.py"
+SERVER_ROOT = Path(__file__).resolve().parents[1]
+
+
+async def _not_implemented_repository_method(*args, **kwargs):
+    raise NotImplementedError
+
+
+class _DataGroupRepositoryStub:
+    get_or_create = staticmethod(_not_implemented_repository_method)
+
+
+class _DatasetRepositoryStub:
+    get_by_name = staticmethod(_not_implemented_repository_method)
+    get_or_create = staticmethod(_not_implemented_repository_method)
+
+
+class _DatasetStatsRepositoryStub:
+    recompute = staticmethod(_not_implemented_repository_method)
+
+
+class _WSIRepositoryStub:
+    bulk_update_feature_extracted = staticmethod(_not_implemented_repository_method)
+    get_by_id = staticmethod(_not_implemented_repository_method)
+    create = staticmethod(_not_implemented_repository_method)
+
+
+def install_lightweight_auto_research_import():
+    package = types.ModuleType("backend.database.repositories")
+    package.__path__ = [str(SERVER_ROOT / "backend" / "database" / "repositories")]
+    package.DataGroupRepository = _DataGroupRepositoryStub
+    package.DatasetRepository = _DatasetRepositoryStub
+    package.DatasetStatsRepository = _DatasetStatsRepositoryStub
+    package.WSIRepository = _WSIRepositoryStub
+    sys.modules["backend.database.repositories"] = package
+
+    dataset_stats = types.ModuleType("backend.database.repositories.dataset_stats")
+    dataset_stats.DatasetStatsRepository = _DatasetStatsRepositoryStub
+    sys.modules["backend.database.repositories.dataset_stats"] = dataset_stats
+
+    module_name = "backend.database.repositories.auto_research"
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        SERVER_ROOT / "backend" / "database" / "repositories" / "auto_research.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    package.AutoResearchRepository = module.AutoResearchRepository
+    return module.AutoResearchRepository
 
 
 def load_route_module():
+    install_lightweight_auto_research_import()
     spec = importlib.util.spec_from_file_location("pathscientist_route_under_test", ROUTE_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
@@ -31,11 +85,43 @@ def load_route_module():
     return module
 
 
-def install_fake_user(app: FastAPI, route_module, user_id: str = "user-test"):
+def install_fake_user(
+    app: FastAPI,
+    route_module,
+    user_id: str = "user-test",
+    *,
+    override_pathscientist_access_token: bool = True,
+):
     fake_user = lambda: SimpleNamespace(id=user_id)
     app.dependency_overrides[route_module.current_active_user] = fake_user
     app.dependency_overrides[route_module.get_user_from_header_or_param] = fake_user
     app.dependency_overrides[route_module.get_user_from_token_param] = fake_user
+    if override_pathscientist_access_token and hasattr(
+        route_module,
+        "get_pathscientist_access_token_claims",
+    ):
+        app.dependency_overrides[route_module.get_pathscientist_access_token_claims] = (
+            lambda: {
+                "user": SimpleNamespace(id=user_id),
+                "purpose": "header",
+                "sid": "",
+                "rid": "",
+            }
+        )
+    if override_pathscientist_access_token and hasattr(
+        route_module,
+        "get_pathscientist_header_or_access_token_claims",
+    ):
+        app.dependency_overrides[
+            route_module.get_pathscientist_header_or_access_token_claims
+        ] = (
+            lambda: {
+                "user": SimpleNamespace(id=user_id),
+                "purpose": "header",
+                "sid": "",
+                "rid": "",
+            }
+        )
 
 
 def disable_persistence(route_module):
@@ -72,6 +158,270 @@ def make_app():
     app.include_router(route_module.router)
     install_fake_user(app, route_module)
     return app
+
+
+def test_can_access_record_denies_empty_owner_for_non_admin():
+    route_module = load_route_module()
+    record = route_module.SessionRecord(
+        session_id="session-ownerless",
+        conversation_id="",
+        question="ownerless",
+        model="gpt-5.5",
+        user_id="",
+    )
+    non_admin = SimpleNamespace(id="user-other", is_admin=lambda: False)
+    admin = SimpleNamespace(id="admin", is_admin=lambda: True)
+
+    assert route_module._can_access_record(record, non_admin) is False
+    assert route_module._can_access_record(record, admin) is True
+
+
+def test_registry_payload_round_trips_user_id(tmp_path):
+    route_module = load_route_module()
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    route_module._gateway_session_registry_path = (
+        lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    )
+    record = route_module.SessionRecord(
+        session_id="session-owned",
+        conversation_id="conv-owned",
+        question="owned",
+        model="gpt-5.5",
+        user_id="user-owner",
+        status="completed",
+        stage="completed",
+    )
+
+    route_module._save_gateway_session_record(record)
+    [loaded] = route_module._load_gateway_session_records()
+
+    assert loaded.user_id == "user-owner"
+    assert loaded.summary()["user_id"] == "user-owner"
+
+
+def test_persisted_summary_owner_is_loaded_from_research_session():
+    route_module = load_route_module()
+
+    assert (
+        route_module._owner_from_persisted_summary(
+            {"research_session": {"pathlab_user_id": "user-owner"}}
+        )
+        == "user-owner"
+    )
+    assert (
+        route_module._owner_from_persisted_summary(
+            {"research_session": {"recovery_metadata": {"user_id": "user-recovery"}}}
+        )
+        == "user-recovery"
+    )
+    assert route_module._owner_from_persisted_summary({}) == ""
+
+
+def test_ownerless_persisted_record_is_hidden_from_non_admin():
+    route_module = load_route_module()
+    record = route_module.SessionRecord(
+        session_id="legacy-ownerless",
+        conversation_id="conv",
+        question="legacy",
+        model="",
+        user_id="",
+        status="completed",
+        stage="completed",
+    )
+    non_admin = SimpleNamespace(id="user-other", is_admin=lambda: False)
+
+    assert route_module._can_access_record(record, non_admin) is False
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "json_payload"),
+    [
+        ("get", "/pathscientist/sessions/session-owned-by-x", None),
+        ("post", "/pathscientist/sessions/session-owned-by-x/stop", None),
+        ("post", "/pathscientist/sessions/session-owned-by-x/resume", {"question": "resume"}),
+        ("delete", "/pathscientist/sessions/session-owned-by-x", None),
+        ("post", "/pathscientist/sessions/session-owned-by-x/access-token", {"purpose": "events"}),
+        ("get", "/pathscientist/sessions/session-owned-by-x/download", None),
+        ("get", "/pathscientist/sessions/session-owned-by-x/runs/run-a/download", None),
+        ("get", "/pathscientist/sessions/session-owned-by-x/events", None),
+    ],
+)
+def test_session_endpoints_deny_other_users_in_memory_record(method, path, json_payload):
+    route_module = load_route_module()
+    manager = route_module.PathScientistSessionManager()
+    manager._sessions["session-owned-by-x"] = route_module.SessionRecord(
+        session_id="session-owned-by-x",
+        conversation_id="",
+        question="private",
+        model="gpt-5.5",
+        user_id="user-x",
+        status="completed",
+        stage="completed",
+        state={"workspace_path": "/tmp/pathscientist-private-workspace"},
+    )
+    route_module._SESSION_MANAGER = manager
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module, user_id="user-y")
+    client = TestClient(app)
+
+    request = getattr(client, method)
+    kwargs = {"json": json_payload} if json_payload is not None else {}
+    response = request(path, **kwargs)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_session_rejects_ownerless_memory_record_when_db_denies(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    manager = route_module.PathScientistSessionManager()
+    manager._sessions["session-shadow"] = route_module.SessionRecord(
+        session_id="session-shadow",
+        conversation_id="",
+        question="shadow",
+        model="gpt-5.5",
+        user_id="",
+        status="completed",
+        stage="completed",
+    )
+    route_module._SESSION_MANAGER = manager
+
+    async def fake_load_db_record(session_id, **kwargs):
+        assert session_id == "session-shadow"
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_load_db_record)
+
+    with pytest.raises(HTTPException) as exc:
+        await route_module.get_session(
+            "session-shadow",
+            user=SimpleNamespace(id="user-other", is_admin=lambda: False),
+        )
+
+    assert exc.value.status_code == 403
+
+
+def test_pathscientist_access_token_replaces_full_jwt_query_token(tmp_path):
+    route_module = load_route_module()
+    route_module._resolve_pathscientist_base_dir = lambda: tmp_path
+    workspace = tmp_path / "session-token"
+    workspace.mkdir()
+    (workspace / "notes.txt").write_text("hello\n", encoding="utf-8")
+    run_dir = workspace / ".evidence" / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "record.json").write_text(
+        json.dumps({"run_id": "run-1", "artifacts": []}),
+        encoding="utf-8",
+    )
+    manager = route_module.PathScientistSessionManager()
+    record = route_module.SessionRecord(
+        session_id="session-token",
+        conversation_id="conv-token",
+        question="token hardening",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+        state={"workspace_dir": str(workspace)},
+    )
+    manager._sessions[record.session_id] = record
+    route_module._SESSION_MANAGER = manager
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(
+        app,
+        route_module,
+        override_pathscientist_access_token=False,
+    )
+    client = TestClient(app)
+
+    minted = client.post(
+        "/pathscientist/sessions/session-token/access-token",
+        json={"purpose": "run_download", "run_id": "run-1"},
+    )
+    assert minted.status_code == 200
+    access_token = minted.json()["token"]
+    assert minted.json()["expires_in"] <= 300
+
+    full_jwt = jwt.encode(
+        {"sub": "user-test", "aud": "fastapi-users:auth", "sn": "nonce"},
+        route_module.PATHSCIENTIST_ACCESS_TOKEN_SECRET,
+        algorithm="HS256",
+    )
+    full_jwt_response = client.get(
+        "/pathscientist/sessions/session-token/runs/run-1/download",
+        params={"token": full_jwt},
+    )
+    assert full_jwt_response.status_code == 401
+
+    response = client.get(
+        "/pathscientist/sessions/session-token/runs/run-1/download",
+        params={"token": access_token},
+    )
+    assert response.status_code == 200
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+
+    wrong_run = client.get(
+        "/pathscientist/sessions/session-token/runs/run-2/download",
+        params={"token": access_token},
+    )
+    assert wrong_run.status_code == 403
+
+
+def test_pathscientist_events_require_single_purpose_access_token():
+    route_module = load_route_module()
+    manager = route_module.PathScientistSessionManager()
+    record = route_module.SessionRecord(
+        session_id="session-events-token",
+        conversation_id="conv-events-token",
+        question="token hardening",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+        state={"stage": "completed"},
+    )
+    record.add_event({"kind": "state", "state": {"stage": "completed"}, "status": "completed"})
+    manager._sessions[record.session_id] = record
+    route_module._SESSION_MANAGER = manager
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(
+        app,
+        route_module,
+        override_pathscientist_access_token=False,
+    )
+    client = TestClient(app)
+
+    minted = client.post(
+        "/pathscientist/sessions/session-events-token/access-token",
+        json={"purpose": "events"},
+    )
+    assert minted.status_code == 200
+    events_token = minted.json()["token"]
+
+    response = client.get(
+        "/pathscientist/sessions/session-events-token/events",
+        params={"token": events_token},
+    )
+    assert response.status_code == 200
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+
+    wrong_purpose = client.post(
+        "/pathscientist/sessions/session-events-token/access-token",
+        json={"purpose": "session_download"},
+    ).json()["token"]
+    rejected = client.get(
+        "/pathscientist/sessions/session-events-token/events",
+        params={"token": wrong_purpose},
+    )
+    assert rejected.status_code == 403
 
 
 def test_lists_registered_skills():
@@ -284,6 +634,132 @@ def test_session_manager_passes_pathlab_user_id_to_resume_config(monkeypatch):
     assert captured == ["user-test"]
 
 
+def test_create_session_preserves_patch_external_task_type(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    internal_dir = tmp_path / "internal_patch_dataset"
+    external_dir = tmp_path / "external_patch_dataset"
+    for root in (internal_dir, external_dir):
+        (root / "images").mkdir(parents=True)
+        (root / "splits.json").write_text("{}", encoding="utf-8")
+    route_module._gateway_session_registry_path = (
+        lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    )
+    route_module._queue_session_title_generation = lambda record, config: None
+    route_module._scan_persisted_conversations = lambda *, curated_only=False: []
+    captured_configs = []
+
+    async def fake_resolve_dataset_mounts(dataset_ids, user, question=""):
+        return {
+            str(internal_dir): "/data/internal_patch_dataset",
+            str(external_dir): "/data/external_patch_dataset",
+        }
+
+    monkeypatch.setattr(
+        route_module,
+        "_resolve_pathlab_dataset_mounts",
+        fake_resolve_dataset_mounts,
+        raising=False,
+    )
+    manager = route_module.PathScientistSessionManager()
+
+    def fake_runner(config, question, emit):
+        captured_configs.append(config)
+        return {"stage": "completed", "conversation_id": "conv_patch_external"}
+
+    manager.create_runner = fake_runner
+    route_module._SESSION_MANAGER = manager
+    disable_persistence(route_module)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module, user_id="user-dataset")
+    client = TestClient(app)
+
+    response = client.post(
+        "/pathscientist/sessions",
+        json={
+            "question": "Train a patch-level classifier on internal_patch_dataset, then validate on external_patch_dataset.",
+            "skill": "patch_classification",
+        },
+    )
+
+    assert response.status_code == 200
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not captured_configs:
+        time.sleep(0.01)
+    config = captured_configs[0]
+    assert config.external_test_enabled is True
+    assert config.external_test_contract["external_task_type"] == "patch_classification"
+    assert config.external_test_contract["external_images_dir"] == "/data/external_patch_dataset/images"
+
+
+def test_create_session_marks_external_named_dataset_in_contract(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    internal_dir = tmp_path / "local_tcga_nsclc_subset4_521c7518"
+    external_dir = tmp_path / "synthetic_nsclc_external_test_b84756e8"
+    for root in (internal_dir, external_dir):
+        (root / "wsi_files").mkdir(parents=True)
+        (root / "features" / "virchow2").mkdir(parents=True)
+        (root / "splits.json").write_text("{}", encoding="utf-8")
+    route_module._gateway_session_registry_path = (
+        lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    )
+    route_module._queue_session_title_generation = lambda record, config: None
+    route_module._scan_persisted_conversations = lambda *, curated_only=False: []
+    captured_configs = []
+
+    async def fake_resolve_dataset_mounts(dataset_ids, user, question=""):
+        return {
+            str(internal_dir): "/data/local_tcga_nsclc_subset4_521c7518",
+            str(external_dir): "/data/synthetic_nsclc_external_test_b84756e8",
+        }
+
+    monkeypatch.setattr(
+        route_module,
+        "_resolve_pathlab_dataset_mounts",
+        fake_resolve_dataset_mounts,
+        raising=False,
+    )
+    manager = route_module.PathScientistSessionManager()
+
+    def fake_runner(config, question, emit):
+        captured_configs.append(config)
+        return {"stage": "completed", "conversation_id": "conv_external"}
+
+    manager.create_runner = fake_runner
+    route_module._SESSION_MANAGER = manager
+    disable_persistence(route_module)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module, user_id="user-dataset")
+    client = TestClient(app)
+
+    response = client.post(
+        "/pathscientist/sessions",
+        json={
+            "question": "Train on local - tcga-nsclc-subset4, then validate on nsclc_external_test.",
+        },
+    )
+
+    assert response.status_code == 200
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not captured_configs:
+        time.sleep(0.01)
+    config = captured_configs[0]
+    assert config.external_test_enabled is True
+    assert config.external_test_contract["external_wsi_dir"] == "/data/synthetic_nsclc_external_test_b84756e8/wsi_files"
+    assert config.external_test_contract["external_splits_file"] == "/data/synthetic_nsclc_external_test_b84756e8/splits.json"
+    external_dataset = next(
+        item for item in config.external_test_contract["datasets"] if item["role"] == "external"
+    )
+    assert external_dataset["paths"] == ["/data/synthetic_nsclc_external_test_b84756e8"]
+
+
 def test_create_session_resolves_pathlab_dataset_name_from_question_without_client_paths(monkeypatch, tmp_path):
     route_module = load_route_module()
     registry_dir = tmp_path / "registry"
@@ -348,6 +824,43 @@ def test_match_pathlab_datasets_from_question_prefers_visible_name_matches():
     )
 
     assert matches == ["dataset-luad"]
+
+
+def test_match_pathlab_datasets_from_question_does_not_treat_synthetic_as_named_external_cache():
+    route_module = load_route_module()
+
+    matches = route_module._match_pathlab_datasets_from_question(
+        "Train on local - tcga-nsclc-subset4, then validate on nsclc_external_test.",
+        [
+            {"dataset_id": "internal", "dataset_name": "local - tcga-nsclc-subset4"},
+            {"dataset_id": "synthetic", "dataset_name": "synthetic - NSCLC-external-test"},
+        ],
+    )
+
+    assert matches == ["internal"]
+
+
+def test_classify_pathlab_mount_roles_keeps_chinese_internal_dataset_internal(tmp_path):
+    route_module = load_route_module()
+    view_dir = tmp_path / "local_tcga_nsclc_subset4_521c7518"
+    view_dir.mkdir()
+    (view_dir / "dataset_manifest.json").write_text(
+        json.dumps({"dataset_name": "local - tcga-nsclc-subset4"}),
+        encoding="utf-8",
+    )
+
+    roles = route_module._classify_pathlab_mount_roles(
+        (
+            "使用内部数据集 local - tcga-nsclc-subset4 训练一个快速的 NSCLC "
+            "LUAD vs LUSC MIL 分类模型。优先使用已有的 virchow2 features，"
+            "调试用最小配置，只跑 1 个 iteration / 少量 epoch。然后用 "
+            "nsclc_external_test 作为 external validation。"
+        ),
+        {str(view_dir): "/data/local_tcga_nsclc_subset4_521c7518"},
+    )
+
+    assert roles.get("internal", {}).get("container") == "/data/local_tcga_nsclc_subset4_521c7518"
+    assert "external" not in roles
 
 
 def test_resolve_pathlab_dataset_mounts_matches_question_dataset_name(monkeypatch, tmp_path):
@@ -479,6 +992,55 @@ def test_prepare_pathlab_dataset_view_uses_symlinks_and_generates_contract(tmp_p
     splits = json.loads((view_dir / "splits.json").read_text(encoding="utf-8"))
     assert set(splits) >= {"train", "val", "test", "labels"}
     assert all(splits[key] for key in ("train", "val", "test"))
+
+
+
+def test_prepare_pathlab_dataset_view_links_tcga_patches_features_by_view_slide_id(tmp_path):
+    route_module = load_route_module()
+    pathology_root = tmp_path / "Pathology"
+    slide_specs = [
+        ("LUAD", "uuid-luad-1", "TCGA-05-4244-01Z-00-DX1.d4ff32cd-38cf-40ea-8213-45c2b100ac01", "luad", "train"),
+        ("LUAD", "uuid-luad-2", "TCGA-05-4245-01Z-00-DX1.36ff5403-d4bb-4415-b2c5-7c750d655cde", "luad", "val"),
+        ("LUSC", "uuid-lusc-1", "TCGA-18-3406-01Z-00-DX1.8D07F006-425C-4724-BBB3-5BA099401234", "lusc", "train"),
+        ("LUSC", "uuid-lusc-2", "TCGA-18-3407-01Z-00-DX1.E7DDA7E3-45A2-4E06-A081-E6A81A672155", "lusc", "test"),
+    ]
+    slides = []
+    expected_features = {}
+    for cohort, wsi_id, tcga_stem, label, split in slide_specs:
+        source_dir = pathology_root / "original_data" / "TCGA" / cohort / "slides" / f"case-{wsi_id}"
+        source_dir.mkdir(parents=True)
+        source = source_dir / f"{tcga_stem}.svs"
+        source.write_text("wsi", encoding="utf-8")
+        feature_dir = pathology_root / "Patches" / "TCGA" / f"TCGA-{cohort}" / "pt_files" / "virchow2"
+        feature_dir.mkdir(parents=True, exist_ok=True)
+        feature = feature_dir / f"{tcga_stem}.pt"
+        feature.write_bytes(b"feature")
+        expected_features[wsi_id] = feature
+        slides.append(
+            SimpleNamespace(
+                wsi_id=wsi_id,
+                wsi_path=str(source),
+                original_filename=f"{cohort}__{tcga_stem}.svs",
+                label=label,
+                split=split,
+            )
+        )
+    dataset = SimpleNamespace(
+        dataset_id="dataset-tcga-nsclc",
+        name="local - tcga-nsclc-subset4",
+        source_organ="lung",
+    )
+
+    view_dir = route_module._prepare_pathlab_dataset_view(
+        dataset=dataset,
+        slides=slides,
+        view_dir=tmp_path / "view",
+    )
+
+    for wsi_id, feature in expected_features.items():
+        linked = view_dir / "features" / "virchow2" / f"{wsi_id}.pt"
+        assert linked.is_symlink()
+        assert linked.resolve() == feature.resolve()
 
 
 def test_sync_pathscientist_download_manifest_registers_pathlab_dataset(monkeypatch, tmp_path):
@@ -638,6 +1200,55 @@ def test_sync_pathscientist_manifest_registers_uploads_root(monkeypatch, tmp_pat
         encoding="utf-8",
     )
     monkeypatch.setattr(route_module.Config, "get_uploads_dir", staticmethod(lambda: uploads))
+
+    class FakeDb:
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return FakeDb()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+
+    from backend.database.repositories import (
+        DataGroupRepository,
+        DatasetRepository,
+        DatasetStatsRepository,
+        WSIRepository,
+    )
+
+    async def fake_group_get_or_create(db, **kwargs):
+        return SimpleNamespace(group_id="group-1", **kwargs)
+
+    async def fake_dataset_get_or_create(db, name, **kwargs):
+        return SimpleNamespace(dataset_id="dataset-1", name=name, **kwargs)
+
+    async def fake_dataset_get_by_name(db, name, user_id=None):
+        return None
+
+    async def fake_get_by_id(db, wsi_id):
+        return None
+
+    async def fake_wsi_create(db, **kwargs):
+        return SimpleNamespace(**kwargs)
+
+    async def fake_recompute(db, dataset_id):
+        return None
+
+    monkeypatch.setattr(DataGroupRepository, "get_or_create", staticmethod(fake_group_get_or_create))
+    monkeypatch.setattr(DatasetRepository, "get_by_name", staticmethod(fake_dataset_get_by_name))
+    monkeypatch.setattr(DatasetRepository, "get_or_create", staticmethod(fake_dataset_get_or_create))
+    monkeypatch.setattr(WSIRepository, "get_by_id", staticmethod(fake_get_by_id))
+    monkeypatch.setattr(WSIRepository, "create", staticmethod(fake_wsi_create))
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", staticmethod(fake_recompute))
+
     record = route_module.SessionRecord(
         session_id="session-download",
         conversation_id="",
@@ -697,6 +1308,18 @@ def test_create_session_returns_pending_title_without_waiting_for_llm_title():
     assert data["title_pending"] is True
     assert data["question"] == question
     assert queued == [data["session_id"]]
+
+
+def test_create_session_rejects_overlong_question():
+    route_module = load_route_module()
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.post("/pathscientist/sessions", json={"question": "x" * 4001})
+
+    assert response.status_code == 422
 
 
 def test_create_session_persists_current_user_id():
@@ -762,6 +1385,7 @@ def test_stop_running_session_marks_record_interrupted():
         conversation_id="",
         question="long run",
         model="gpt-5.5",
+        user_id="user-test",
         status="running",
         stage="execution",
     )
@@ -920,6 +1544,7 @@ def test_stop_session_endpoint_returns_interrupted_summary():
         conversation_id="",
         question="long run",
         model="gpt-5.5",
+        user_id="user-test",
         status="running",
         stage="execution",
     )
@@ -957,6 +1582,7 @@ def test_delete_session_endpoint_removes_terminal_gateway_session():
         conversation_id="conv-delete",
         question="old run",
         model="gpt-5.5",
+        user_id="user-test",
         status="completed",
         stage="completed",
     )
@@ -998,6 +1624,7 @@ def test_delete_session_endpoint_removes_safe_workspace(tmp_path):
         conversation_id="conv-delete-workspace",
         question="old run",
         model="gpt-5.5",
+        user_id="user-test",
         status="completed",
         stage="completed",
         state={"workspace_dir": str(workspace)},
@@ -1045,6 +1672,7 @@ def test_delete_session_endpoint_does_not_remove_workspace_outside_base(tmp_path
         conversation_id="conv-delete-outside-workspace",
         question="old run",
         model="gpt-5.5",
+        user_id="user-test",
         status="completed",
         stage="completed",
         state={"workspace_dir": str(outside_workspace)},
@@ -1081,6 +1709,7 @@ def test_delete_session_endpoint_rejects_running_session():
         conversation_id="",
         question="live run",
         model="gpt-5.5",
+        user_id="user-test",
         status="running",
         stage="execution",
     )
@@ -1109,6 +1738,7 @@ def test_delete_session_hides_legacy_conversation():
         conversation_id="conv-legacy-delete",
         question="legacy run",
         model="",
+        user_id="user-test",
         status="completed",
         stage="completed",
     )
@@ -1738,6 +2368,7 @@ def test_list_sessions_includes_curated_legacy_by_default():
         conversation_id="legacy-conv",
         question="meaningful CLI run",
         model="",
+        user_id="user-test",
         status="finished",
         stage="finished",
     )
@@ -1767,6 +2398,7 @@ def test_list_sessions_deduplicates_legacy_rows_when_gateway_has_same_conversati
         conversation_id="conv-dup",
         question="same run",
         model="gpt-5.5",
+        user_id="user-test",
         status="completed",
         stage="completed",
     )
@@ -1775,6 +2407,7 @@ def test_list_sessions_deduplicates_legacy_rows_when_gateway_has_same_conversati
         conversation_id="conv-dup",
         question="same run",
         model="",
+        user_id="user-test",
         status="finished",
         stage="completed",
     )
@@ -1807,6 +2440,7 @@ def test_list_sessions_deduplicates_legacy_rows_when_gateway_has_live_state_conv
         conversation_id="",
         question="same live run",
         model="gpt-5.5",
+        user_id="user-test",
         status="running",
         stage="execution",
         state={"conversation_id": "conv-live-dup", "session_id": "workspace123"},
@@ -1816,6 +2450,7 @@ def test_list_sessions_deduplicates_legacy_rows_when_gateway_has_live_state_conv
         conversation_id="conv-live-dup",
         question="same live run",
         model="",
+        user_id="user-test",
         status="running",
         stage="execution",
     )
@@ -1845,6 +2480,7 @@ def test_list_sessions_deduplicates_legacy_rows_after_restart_using_persisted_st
         conversation_id="",
         question="same restarted run",
         model="gpt-5.5",
+        user_id="user-test",
         status="running",
         stage="starting",
     )
@@ -1868,6 +2504,7 @@ def test_list_sessions_deduplicates_legacy_rows_after_restart_using_persisted_st
         conversation_id="conv-restart-dup",
         question="same restarted run",
         model="",
+        user_id="user-test",
         status="running",
         stage="execution",
     )
@@ -1896,6 +2533,7 @@ def test_deleted_legacy_tombstone_does_not_hide_gateway_session_with_same_conver
         conversation_id="conv-dup",
         question="same run",
         model="gpt-5.5",
+        user_id="user-test",
         status="completed",
         stage="completed",
     )
@@ -1934,6 +2572,7 @@ def test_legacy_sessions_include_generated_title():
         question=question,
         model="",
         title=route_module._generate_session_title(question),
+        user_id="user-test",
         status="finished",
         stage="finished",
     )
@@ -1969,6 +2608,10 @@ def test_title_generation_forces_chat_completion_for_codex_relay(monkeypatch):
     from backend.pathscientist import llm_client
 
     captured: dict[str, str] = {}
+    sdk_module = types.ModuleType("openhands.sdk.llm")
+    sdk_module.Message = lambda **kwargs: kwargs
+    sdk_module.TextContent = lambda **kwargs: kwargs
+    monkeypatch.setitem(sys.modules, "openhands.sdk.llm", sdk_module)
 
     monkeypatch.setattr(llm_client, "build_chat_llm", lambda *args, **kwargs: object())
 
@@ -2506,6 +3149,24 @@ def test_build_config_fixed_extractor_mode_keeps_virchow2_compatibility(monkeypa
     assert os.environ["PATHSCIENTIST_FEATURE_EXTRACTOR"] == "virchow2"
 
 
+def test_build_config_defaults_pathlab_ckpt_dir_to_main_extractor_root(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    from backend.common.config import Config
+
+    monkeypatch.delenv("PATHLAB_CKPT_DIR", raising=False)
+    monkeypatch.setenv("PATHSCIENTIST_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(Config, "get_uploads_dir", staticmethod(lambda: tmp_path / "uploads"))
+    monkeypatch.setattr(Config, "get_global_settings", staticmethod(lambda: {}))
+
+    route_module._build_config(
+        route_module.StartPathScientistSessionRequest(question="align checkpoint root")
+    )
+
+    assert os.environ["PATHLAB_CKPT_DIR"] == str(
+        route_module.SERVER_ROOT / "backend" / "ai" / "extractors" / "checkpoints"
+    )
+
+
 def test_include_persisted_exposes_uncurated_legacy():
     route_module = load_route_module()
     registry_dir = Path(tempfile.mkdtemp(prefix="pathscientist-route-test-"))
@@ -2520,6 +3181,7 @@ def test_include_persisted_exposes_uncurated_legacy():
         conversation_id="noise-conv",
         question="tiny failed boot stub",
         model="",
+        user_id="user-test",
         status="error",
         stage="error",
     )
@@ -2825,6 +3487,7 @@ def test_builds_legacy_state_with_review_summary():
 
 def test_downloads_run_artifacts_as_zip(tmp_path):
     route_module = load_route_module()
+    route_module._resolve_pathscientist_base_dir = lambda: tmp_path
     workspace = tmp_path / "workspace"
     evidence_run = workspace / ".evidence" / "runs" / "run_a"
     artifacts_dir = evidence_run / "artifacts"
@@ -2862,6 +3525,7 @@ def test_downloads_run_artifacts_as_zip(tmp_path):
         conversation_id="conv",
         question="q",
         model="gpt-5.5",
+        user_id="user-test",
         status="completed",
         stage="completed",
         state={
@@ -2897,6 +3561,31 @@ def test_downloads_run_artifacts_as_zip(tmp_path):
         assert "artifacts/best_model.pth" in names
         assert json.loads(archive.read("metrics.json")) == {"auc": 0.91}
         assert archive.read("artifacts/best_model.pth") == b"model-bytes"
+
+
+def test_run_artifact_zip_rejects_workspace_outside_base_dir(tmp_path, monkeypatch):
+    route_module = load_route_module()
+    base_dir = tmp_path / "pathscientist-base"
+    outside = tmp_path / "outside-workspace"
+    evidence_run = outside / ".evidence" / "runs" / "run_a"
+    evidence_run.mkdir(parents=True)
+    (evidence_run / "record.json").write_text(
+        json.dumps({"run_id": "run_a", "metrics": {"auc": 0.9}}),
+        encoding="utf-8",
+    )
+    record = route_module.SessionRecord(
+        session_id="s1",
+        conversation_id="",
+        question="q",
+        model="",
+        status="completed",
+        stage="completed",
+        state={"run_history": [{"run_id": "run_a", "metrics": {"auc": 0.9}}]},
+    )
+    monkeypatch.setattr(route_module, "_resolve_pathscientist_base_dir", lambda: base_dir)
+
+    with pytest.raises(FileNotFoundError, match="outside PathScientist base dir"):
+        route_module._build_run_artifact_zip(record, outside, "run_a")
 
 
 def test_hydrates_legacy_events_from_hyphenated_conversation_id(tmp_path, monkeypatch):
@@ -3107,6 +3796,64 @@ def test_get_session_falls_back_to_db_record(monkeypatch):
     assert data["question"] == "from db"
     assert data["resume_available"] is True
     assert data["events"][0]["text"] == "hello"
+
+
+def test_get_session_enriches_external_test_from_workspace_artifacts(tmp_path):
+    route_module = load_route_module()
+    workspace = tmp_path / "workspace"
+    run_dir = workspace / "output" / "runs" / "run_best"
+    run_dir.mkdir(parents=True)
+    (run_dir / "metrics.json").write_text(
+        json.dumps({
+            "test": {"auc": 0.88},
+            "external_test": {"auc": 0.9421, "accuracy": 0.875, "n_external_evaluated": 4},
+        }),
+        encoding="utf-8",
+    )
+    (run_dir / "external_test_report.json").write_text(
+        json.dumps({
+            "external_test": {"auc": 0.9421, "accuracy": 0.875, "n_external_evaluated": 4},
+            "features_dir": "/data/nsclc_external_test/features/virchow2/paramsabc",
+            "splits_file": "/data/nsclc_external_test/splits.json",
+        }),
+        encoding="utf-8",
+    )
+    manager = route_module.PathScientistSessionManager()
+    manager._sessions["s-external-artifact"] = route_module.SessionRecord(
+        session_id="s-external-artifact",
+        conversation_id="",
+        question="external validation",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+        state={
+            "workspace_dir": str(workspace),
+            "objective": {"success_metric": "auc"},
+            "best_run_id": "run_best",
+            "run_history": [{"run_id": "run_best", "committed": True}],
+            "external_test": {},
+            "external_test_history": [],
+        },
+    )
+    route_module._SESSION_MANAGER = manager
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    data = client.get("/pathscientist/sessions/s-external-artifact").json()
+
+    assert data["state"]["external_test"] == {
+        "run_id": "run_best",
+        "status": "completed",
+        "committed": True,
+        "run_dir": str(run_dir),
+        "metrics": {"auc": 0.9421, "accuracy": 0.875, "n_external_evaluated": 4},
+        "features_dir": "/data/nsclc_external_test/features/virchow2/paramsabc",
+        "splits_file": "/data/nsclc_external_test/splits.json",
+    }
 
 
 def test_db_running_session_without_recent_updates_is_marked_interrupted(monkeypatch):
@@ -3342,6 +4089,34 @@ def test_get_session_denies_other_users_db_record(monkeypatch):
     client = TestClient(app)
 
     response = client.get("/pathscientist/sessions/private-session")
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("post", "/pathscientist/sessions/private-session/stop"),
+        ("delete", "/pathscientist/sessions/private-session"),
+    ],
+)
+def test_mutating_session_endpoints_deny_other_users_db_record(monkeypatch, method, path):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    route_module._SESSION_MANAGER = route_module.PathScientistSessionManager()
+
+    async def forbidden_db_record(session_id, **_kwargs):
+        assert session_id == "private-session"
+        raise route_module.HTTPException(status_code=403, detail="PathScientist session access denied")
+
+    monkeypatch.setattr(route_module, "_load_db_record", forbidden_db_record)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module, user_id="user-a")
+    client = TestClient(app)
+
+    response = getattr(client, method)(path)
 
     assert response.status_code == 403
 

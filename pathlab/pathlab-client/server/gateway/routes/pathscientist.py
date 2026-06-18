@@ -32,7 +32,11 @@ from starlette.background import BackgroundTask
 
 from backend.auth import (
     User,
+    PATHSCIENTIST_ACCESS_TOKEN_SECRET,
+    create_pathscientist_access_token,
     current_active_user,
+    get_pathscientist_access_token_claims,
+    get_pathscientist_header_or_access_token_claims,
     get_user_from_header_or_param,
     get_user_from_token_param,
 )
@@ -42,6 +46,7 @@ from backend.database.repositories.auto_research import AutoResearchRepository
 from gateway import pathscientist_persistence
 logger = logging.getLogger(__name__)
 
+SERVER_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_LLM_PROFILE = "codex-relay"
 DEFAULT_LLM_WIRE_API = "completion"
@@ -72,7 +77,7 @@ _TRAINING_METRIC_RE = re.compile(
 class StartPathScientistSessionRequest(BaseModel):
     """Request body for starting a PathScientist session."""
 
-    question: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1, max_length=4000)
     skill: str = ""
     mode: str = "research"
     max_iter: int = Field(5, ge=1, le=20)
@@ -84,6 +89,11 @@ class StartPathScientistSessionRequest(BaseModel):
     dataset_ids: list[str] = Field(default_factory=list)
     external_test_enabled: bool = False
     external_test_contract: dict[str, str] = Field(default_factory=dict)
+
+
+class PathScientistAccessTokenRequest(BaseModel):
+    purpose: str = Field(..., pattern=r"^(events|session_download|run_download)$")
+    run_id: str = ""
 
 
 @dataclass
@@ -181,6 +191,7 @@ class SessionRecord:
             "title_pending": self.title_pending,
             "question": self.question,
             "model": self.model,
+            "user_id": self.user_id,
             "status": self.status,
             "stage": self.stage,
             "created_at": self.created_at,
@@ -263,6 +274,7 @@ class PathScientistSessionManager:
         config.pathlab_user_id = str(user_id or "")
         if dataset_mounts:
             _merge_data_mounts(config.data_mounts, dataset_mounts)
+            _apply_external_contract_from_pathlab_mounts(req, config)
         record = SessionRecord(
             session_id=uuid.uuid4().hex[:12],
             conversation_id="",
@@ -2201,13 +2213,22 @@ async def _load_db_record(
         return None
     try:
         async with safe_session() as db:
-            session = await AutoResearchRepository.get_session(db, session_id)
+            owner_scope = _db_owner_scope_for_user(user)
+            session = await AutoResearchRepository.get_session(
+                db,
+                session_id,
+                user_id=owner_scope,
+            )
             if session is None:
                 return None
             if not _can_access_db_session(session, user):
                 raise HTTPException(status_code=403, detail="PathScientist session access denied")
             event_rows = (
-                await AutoResearchRepository.get_session_events(db, session_id)
+                await AutoResearchRepository.get_session_events(
+                    db,
+                    session_id,
+                    user_id=owner_scope,
+                )
                 if include_events
                 else []
             )
@@ -2233,12 +2254,21 @@ async def _load_db_events(session_id: str, *, user: User | None = None) -> list[
         return []
     try:
         async with safe_session() as db:
-            session = await AutoResearchRepository.get_session(db, session_id)
+            owner_scope = _db_owner_scope_for_user(user)
+            session = await AutoResearchRepository.get_session(
+                db,
+                session_id,
+                user_id=owner_scope,
+            )
             if session is None:
                 return []
             if not _can_access_db_session(session, user):
                 raise HTTPException(status_code=403, detail="PathScientist session access denied")
-            rows = await AutoResearchRepository.get_session_events(db, session_id)
+            rows = await AutoResearchRepository.get_session_events(
+                db,
+                session_id,
+                user_id=owner_scope,
+            )
     except HTTPException:
         raise
     except Exception as exc:
@@ -2294,11 +2324,52 @@ def _can_access_db_session(session: Any, user: User | None) -> bool:
     return bool(owner) and owner == str(getattr(user, "id", "") or "")
 
 
+def _db_owner_scope_for_user(user: User | None) -> str | None:
+    if user is None or _user_is_admin(user):
+        return None
+    user_id = str(getattr(user, "id", "") or "").strip()
+    return user_id if user_id else "__pathscientist_no_authenticated_user__"
+
+
 def _can_access_record(record: SessionRecord, user: User | None) -> bool:
     if user is None or _user_is_admin(user):
         return True
     owner = str(getattr(record, "user_id", "") or "").strip()
-    return not owner or owner == str(getattr(user, "id", "") or "")
+    return bool(owner) and owner == str(getattr(user, "id", "") or "")
+
+
+def _claims_user(claims: dict[str, Any]) -> User:
+    user = claims.get("user")
+    if user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+def _validate_pathscientist_access_claims(
+    claims: dict[str, Any],
+    *,
+    session_id: str,
+    purpose: str,
+    run_id: str = "",
+) -> User:
+    user = _claims_user(claims)
+    token_purpose = str(claims.get("purpose") or "")
+    if token_purpose == "header":
+        return user
+    if token_purpose != purpose or str(claims.get("sid") or "") != session_id:
+        raise HTTPException(status_code=403, detail="PathScientist access token scope denied")
+    if purpose == "run_download" and str(claims.get("rid") or "") != run_id:
+        raise HTTPException(status_code=403, detail="PathScientist access token scope denied")
+    return user
+
+
+def _pathscientist_no_referrer_headers(
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    headers = {"Referrer-Policy": "no-referrer"}
+    if extra:
+        headers.update(extra)
+    return headers
 
 
 def _is_curated_db_session(session: Any) -> bool:
@@ -2399,6 +2470,40 @@ def _enrich_persisted_summary(
     if isinstance(grounding, dict):
         enriched.setdefault("grounding", grounding)
     return enriched
+
+
+def _owner_from_persisted_summary(summary: dict[str, Any]) -> str:
+    candidates: list[Any] = [
+        summary.get("user_id"),
+        summary.get("pathlab_user_id"),
+        summary.get("owner_user_id"),
+    ]
+    research_session = summary.get("research_session")
+    if isinstance(research_session, dict):
+        candidates.extend([
+            research_session.get("user_id"),
+            research_session.get("pathlab_user_id"),
+            research_session.get("owner_user_id"),
+        ])
+        recovery = research_session.get("recovery_metadata")
+        if isinstance(recovery, dict):
+            candidates.extend([
+                recovery.get("user_id"),
+                recovery.get("pathlab_user_id"),
+                recovery.get("owner_user_id"),
+            ])
+    recovery = summary.get("recovery_metadata")
+    if isinstance(recovery, dict):
+        candidates.extend([
+            recovery.get("user_id"),
+            recovery.get("pathlab_user_id"),
+            recovery.get("owner_user_id"),
+        ])
+    for value in candidates:
+        owner = str(value or "").strip()
+        if owner:
+            return owner
+    return ""
 
 
 def _read_nested_dict(container: dict[str, Any], *keys: str) -> dict[str, Any]:
@@ -2861,6 +2966,7 @@ def _scan_persisted_conversations(*, curated_only: bool = False) -> list[Session
             conversation_id=conv_id,
             question=str(question)[:280],
             model="",
+            user_id=_owner_from_persisted_summary(summary),
             # Avoid blocking the history list on many LLM calls. New web
             # sessions queue title generation at creation; legacy sessions get
             # a deterministic concise fallback unless already migrated later.
@@ -2954,6 +3060,25 @@ def _normalize_dataset_match_text(value: str) -> str:
     return re.sub(r"\s+", " ", normalized)
 
 
+def _dataset_match_aliases(value: str) -> set[str]:
+    normalized = _normalize_dataset_match_text(value)
+    if not normalized:
+        return set()
+    aliases = {normalized, normalized.replace(" ", "")}
+    tokens = [token for token in normalized.split() if token]
+    stop = {"dataset", "local"}
+    meaningful = [token for token in tokens if token not in stop]
+    if meaningful:
+        aliases.add(" ".join(meaningful))
+        aliases.add("".join(meaningful))
+    return {alias for alias in aliases if alias}
+
+
+def _dataset_alias_score(alias: str) -> int:
+    tokens = alias.split()
+    return max(len(alias), len(tokens) * 20)
+
+
 def _match_pathlab_datasets_from_question(
     question: str,
     datasets: list[dict[str, Any]],
@@ -2977,9 +3102,11 @@ def _match_pathlab_datasets_from_question(
         if normalized_id and f" {normalized_id} " in normalized_question:
             matched = True
             score = max(score, len(normalized_id) + 900)
-        if normalized_name and f" {normalized_name} " in normalized_question:
-            matched = True
-            score = max(score, len(normalized_name))
+        name_aliases = _dataset_match_aliases(dataset_name)
+        for alias in name_aliases:
+            if alias and f" {alias} " in normalized_question:
+                matched = True
+                score = max(score, _dataset_alias_score(alias))
         if matched:
             seen.add(dataset_id)
             matches.append((score, dataset_id))
@@ -3065,6 +3192,123 @@ async def _resolve_pathlab_dataset_mounts(
     return mounts
 
 
+_FEATURE_TENSOR_EXTS = (".pt", ".pth")
+
+
+def _create_relative_view_symlink(link_path: Path, target_path: Path) -> None:
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    if link_path.exists() or link_path.is_symlink():
+        link_path.unlink()
+    try:
+        rel_target = os.path.relpath(target_path, link_path.parent)
+        os.symlink(rel_target, link_path)
+    except OSError:
+        os.symlink(target_path, link_path)
+
+
+def _tcga_pathology_root_and_cohort(source: Path) -> tuple[Path, str] | None:
+    try:
+        resolved = source.resolve(strict=False)
+    except OSError:
+        resolved = source
+    parts = resolved.parts
+    lowered = [part.lower() for part in parts]
+    for idx, part in enumerate(lowered):
+        if part != "original_data":
+            continue
+        if idx + 2 >= len(parts) or lowered[idx + 1] != "tcga":
+            continue
+        root = Path(*parts[:idx]) if idx else Path(parts[0])
+        cohort = str(parts[idx + 2]).strip()
+        if cohort:
+            return root, cohort
+    return None
+
+
+def _tcga_feature_stem_candidates(source: Path, original_filename: str) -> list[str]:
+    candidates = [source.stem]
+    if original_filename:
+        original_stem = Path(original_filename).stem
+        candidates.append(original_stem)
+        if "__" in original_stem:
+            candidates.append(original_stem.split("__", 1)[1])
+    out: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        key = value.lower()
+        if value and key not in seen:
+            seen.add(key)
+            out.append(value)
+    return out
+
+
+def _discover_tcga_patches_feature_files(
+    *,
+    source: Path,
+    original_filename: str,
+) -> dict[str, Path]:
+    root_and_cohort = _tcga_pathology_root_and_cohort(source)
+    if root_and_cohort is None:
+        return {}
+    pathology_root, cohort = root_and_cohort
+    cohort_dirs = []
+    for name in (cohort, cohort.upper(), cohort.lower()):
+        candidate = pathology_root / "Patches" / "TCGA" / f"TCGA-{name}" / "pt_files"
+        if candidate not in cohort_dirs:
+            cohort_dirs.append(candidate)
+    stems = _tcga_feature_stem_candidates(source, original_filename)
+    found: dict[str, Path] = {}
+    for pt_root in cohort_dirs:
+        if not pt_root.is_dir():
+            continue
+        try:
+            extractor_dirs = sorted(path for path in pt_root.iterdir() if path.is_dir())
+        except OSError:
+            continue
+        for extractor_dir in extractor_dirs:
+            extractor = extractor_dir.name
+            if extractor in found:
+                continue
+            for stem in stems:
+                for suffix in _FEATURE_TENSOR_EXTS:
+                    feature = extractor_dir / f"{stem}{suffix}"
+                    if feature.is_file():
+                        found[extractor] = feature
+                        break
+                if extractor in found:
+                    break
+    return found
+
+
+def _link_existing_pathlab_features_for_view_slide(
+    *,
+    view_dir: Path,
+    slide_id: str,
+    source: Path,
+    original_filename: str,
+) -> dict[str, Path]:
+    feature_files = _discover_tcga_patches_feature_files(
+        source=source,
+        original_filename=original_filename,
+    )
+    linked: dict[str, Path] = {}
+    for extractor, feature_path in feature_files.items():
+        link_path = view_dir / "features" / extractor / f"{slide_id}{feature_path.suffix.lower()}"
+        try:
+            _create_relative_view_symlink(link_path, feature_path)
+        except OSError as exc:
+            logger.debug(
+                "Failed to link PathLab feature %s for PathScientist slide %s: %s",
+                feature_path,
+                slide_id,
+                exc,
+            )
+            continue
+        linked[extractor] = link_path
+    return linked
+
+
 def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: Path) -> Path:
     view_dir.mkdir(parents=True, exist_ok=True)
     wsi_dir = view_dir / "wsi_files"
@@ -3086,6 +3330,8 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
     rows: list[dict[str, str]] = []
     used_slide_ids: set[str] = set()
     missing_sources: list[str] = []
+    linked_feature_count = 0
+    linked_feature_extractors: set[str] = set()
     for slide in slides:
         source_raw = str(getattr(slide, "wsi_path", "") or "").strip()
         if not source_raw:
@@ -3113,6 +3359,14 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         if link_path.is_symlink() or link_path.exists():
             link_path.unlink()
         os.symlink(source, link_path)
+        linked_features = _link_existing_pathlab_features_for_view_slide(
+            view_dir=view_dir,
+            slide_id=slide_id,
+            source=source,
+            original_filename=original_filename,
+        )
+        linked_feature_count += len(linked_features)
+        linked_feature_extractors.update(linked_features)
         rows.append({
             "slide_id": slide_id,
             "label": label,
@@ -3162,6 +3416,8 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         "label_counts": label_counts,
         "source_organ": getattr(dataset, "source_organ", None),
         "missing_source_count": len(missing_sources),
+        "feature_link_count": linked_feature_count,
+        "feature_extractors": sorted(linked_feature_extractors),
     }
     (view_dir / "dataset_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True),
@@ -3174,6 +3430,241 @@ def _merge_data_mounts(data_mounts: dict[str, str], extra_data_mounts: dict[str,
     used = set(data_mounts.values())
     for host, container in (extra_data_mounts or {}).items():
         _add_data_mount(data_mounts, used, host, container)
+
+
+def _container_path_join(root: str, *parts: str) -> str:
+    clean = [str(part).strip("/") for part in parts if str(part or "").strip("/")]
+    return "/".join([str(root or "").rstrip("/")] + clean)
+
+
+def _pathlab_view_feature_leaf(view_dir: Path) -> Path | None:
+    features_root = view_dir / "features"
+    if not features_root.is_dir():
+        return None
+    for candidate in [features_root, *sorted(features_root.rglob("*"))]:
+        if not candidate.is_dir():
+            continue
+        try:
+            if any(path.is_file() and path.suffix.lower() in _FEATURE_TENSOR_EXTS for path in candidate.iterdir()):
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _pathlab_view_manifest(view_dir: Path) -> dict[str, Any]:
+    manifest_path = view_dir / "dataset_manifest.json"
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _role_marker_positions(question: str) -> list[tuple[int, str]]:
+    raw = str(question or "").lower()
+    markers = (
+        ("internal", "internal"),
+        ("training", "internal"),
+        ("train", "internal"),
+        ("内部", "internal"),
+        ("训练", "internal"),
+        ("external validation", "external"),
+        ("external", "external"),
+        ("validation", "external"),
+        ("validate", "external"),
+        ("independent", "external"),
+        ("验证", "external"),
+        ("外部", "external"),
+    )
+    positions: list[tuple[int, str]] = []
+    for marker, role in markers:
+        start = 0
+        while True:
+            pos = raw.find(marker, start)
+            if pos < 0:
+                break
+            positions.append((pos, role))
+            start = pos + max(1, len(marker))
+    positions.sort(key=lambda item: item[0])
+    return positions
+
+
+def _dataset_alias_raw_variants(alias: str) -> set[str]:
+    alias_text = str(alias or "").strip().lower()
+    if not alias_text:
+        return set()
+    variants = {alias_text}
+    dashed = re.sub(r"\s+", "-", alias_text)
+    underscored = re.sub(r"\s+", "_", alias_text)
+    spaced_hyphen = re.sub(r"\s+", " - ", alias_text)
+    variants.update({dashed, underscored, spaced_hyphen})
+    return {item for item in variants if item}
+
+
+def _alias_occurrences_in_question(question: str, aliases: set[str]) -> list[tuple[int, int]]:
+    raw = str(question or "").lower()
+    occurrences: list[tuple[int, int]] = []
+    for alias in aliases:
+        for variant in _dataset_alias_raw_variants(alias):
+            start = 0
+            while True:
+                pos = raw.find(variant, start)
+                if pos < 0:
+                    break
+                occurrences.append((pos, pos + len(variant)))
+                start = pos + max(1, len(variant))
+    return occurrences
+
+
+def _role_for_alias_occurrences(
+    question: str,
+    occurrences: list[tuple[int, int]],
+) -> str:
+    markers = _role_marker_positions(question)
+    best: tuple[int, int, str] | None = None
+    for start, end in occurrences:
+        for marker_pos, role in markers:
+            if marker_pos <= start:
+                distance = start - marker_pos
+                if distance > 120:
+                    continue
+                side_penalty = 0
+            else:
+                distance = marker_pos - end
+                if distance > 48:
+                    continue
+                side_penalty = 20
+            candidate = (distance + side_penalty, 0 if role == "internal" else 1, role)
+            if best is None or candidate < best:
+                best = candidate
+    return best[2] if best is not None else ""
+
+
+def _classify_pathlab_mount_roles(question: str, mounts: dict[str, str]) -> dict[str, dict[str, str]]:
+    roles: dict[str, dict[str, str]] = {}
+    for host, container in mounts.items():
+        view_dir = Path(str(host))
+        manifest = _pathlab_view_manifest(view_dir)
+        dataset_name = str(manifest.get("dataset_name") or view_dir.name).strip()
+        aliases = _dataset_match_aliases(dataset_name) | _dataset_match_aliases(view_dir.name)
+        role = _role_for_alias_occurrences(
+            question,
+            _alias_occurrences_in_question(question, aliases),
+        )
+        lower_name = _normalize_dataset_match_text(dataset_name)
+        lower_view = _normalize_dataset_match_text(view_dir.name)
+        if not role and (" external " in f" {lower_name} " or " external " in f" {lower_view} "):
+            role = "external"
+        if role:
+            roles[role] = {
+                "host": str(host),
+                "container": str(container).rstrip("/"),
+                "dataset_name": dataset_name,
+            }
+    return roles
+
+
+def _pathlab_dataset_contract_updates(host: str, container: str) -> dict[str, str]:
+    view_dir = Path(str(host))
+    container_root = str(container).rstrip("/")
+    updates: dict[str, str] = {
+        "pathlab_uploads_dir": container_root,
+        "data_layout": "pathlab_uploads",
+    }
+    wsi_dir = view_dir / "wsi_files"
+    if wsi_dir.is_dir():
+        updates["wsi_dir"] = _container_path_join(container_root, "wsi_files")
+        updates["pathlab_wsi_files_dir"] = updates["wsi_dir"]
+    images_dir = view_dir / "images"
+    if images_dir.is_dir():
+        updates["images_dir"] = _container_path_join(container_root, "images")
+    splits_file = view_dir / "splits.json"
+    if splits_file.is_file():
+        updates["splits_file"] = _container_path_join(container_root, "splits.json")
+    labels_json = view_dir / "labels.json"
+    if labels_json.is_file():
+        updates["labels_file"] = _container_path_join(container_root, "labels.json")
+    feature_leaf = _pathlab_view_feature_leaf(view_dir)
+    if feature_leaf is not None:
+        rel = feature_leaf.relative_to(view_dir).as_posix()
+        updates["features_dir"] = _container_path_join(container_root, rel)
+        updates["external_features_ready"] = "true"
+    return updates
+
+
+def _set_contract_dataset_paths(contract: dict[str, Any], role: str, path: str) -> None:
+    path_text = str(path or "").strip()
+    if not path_text:
+        return
+    datasets = contract.setdefault("datasets", [])
+    dataset = next(
+        (item for item in datasets if isinstance(item, dict) and item.get("role") == role),
+        None,
+    )
+    if dataset is None:
+        dataset = {"role": role}
+        datasets.append(dataset)
+    paths = [str(item) for item in dataset.get("paths") or [] if str(item or "").strip()]
+    if path_text not in paths:
+        paths.append(path_text)
+    dataset["paths"] = paths
+
+
+def _external_task_type_from_request(req: StartPathScientistSessionRequest) -> str:
+    explicit = str((req.external_test_contract or {}).get("external_task_type") or "").strip()
+    if explicit:
+        return explicit
+    skill = str(req.skill or "").strip()
+    if skill in {"patch_classification", "mil_classification", "survival", "segmentation"}:
+        return skill
+    question = f" {_normalize_dataset_match_text(req.question)} "
+    if any(token in question for token in (" patch ", " patch level ", " patch classification ")):
+        return "patch_classification"
+    return "mil_classification"
+
+
+def _apply_external_contract_from_pathlab_mounts(req: StartPathScientistSessionRequest, config: Any) -> None:
+    mounts = dict(getattr(config, "data_mounts", {}) or {})
+    if not mounts:
+        return
+    roles = _classify_pathlab_mount_roles(req.question, mounts)
+    external = roles.get("external")
+    if not external:
+        return
+    try:
+        from backend.pathscientist.orchestrator.external_contract import (
+            normalize_external_test_contract,
+            update_external_dataset,
+        )
+    except Exception as exc:
+        logger.debug("PathScientist external contract helper unavailable: %s", exc)
+        return
+
+    contract = normalize_external_test_contract(getattr(config, "external_test_contract", {}) or {})
+    contract.setdefault("model_source", "best_run")
+    contract.setdefault("external_task_type", _external_task_type_from_request(req))
+    contract = update_external_dataset(
+        contract,
+        {
+            "dataset_name": external.get("dataset_name", ""),
+            **_pathlab_dataset_contract_updates(external["host"], external["container"]),
+        },
+    )
+    _set_contract_dataset_paths(contract, "external", external.get("container", ""))
+    internal = roles.get("internal")
+    if internal:
+        contract = normalize_external_test_contract(
+            contract,
+            training_data={
+                "role": "internal",
+                "dataset_name": internal.get("dataset_name", ""),
+                "paths": [internal.get("container", "")],
+            },
+        )
+        _set_contract_dataset_paths(contract, "internal", internal.get("container", ""))
+    config.external_test_enabled = True
+    config.external_test_contract = contract
 
 
 def _path_is_within(parent: Path, child: Path) -> bool:
@@ -3351,6 +3842,10 @@ def _set_env_default(name: str, value: str) -> bool:
     return True
 
 
+def _pathlab_feature_checkpoint_dir() -> Path:
+    return SERVER_ROOT / "backend" / "ai" / "extractors" / "checkpoints"
+
+
 def _normalize_pathscientist_model(model: str) -> str:
     """Return a LiteLLM/OpenHands-compatible model id."""
     model = str(model or "").strip()
@@ -3442,6 +3937,7 @@ def _apply_pathscientist_gateway_defaults(config: Any) -> None:
     _apply_pathscientist_llm_defaults(config)
 
     _apply_pathlab_huggingface_token(config)
+    _set_env_default("PATHLAB_CKPT_DIR", str(_pathlab_feature_checkpoint_dir()))
 
     if _set_env_default("PATHSCIENTIST_SANDBOX", "auto"):
         config.sandbox_mode = "auto"
@@ -3532,13 +4028,21 @@ async def create_session(
 
 
 @router.post("/sessions/{session_id}/stop")
-def stop_session(
+async def stop_session(
     session_id: str,
     user: User = Depends(current_active_user),
 ):
     existing = _SESSION_MANAGER.get(session_id)
     if existing is not None and not _can_access_record(existing, user):
         raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if existing is None:
+        await _load_db_record(
+            session_id,
+            user=user,
+            include_events=False,
+            hydrate_disk=False,
+            register=False,
+        )
     record = _SESSION_MANAGER.stop(session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="PathScientist session not found")
@@ -3573,13 +4077,21 @@ async def resume_session(
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(
+async def delete_session(
     session_id: str,
     user: User = Depends(current_active_user),
 ):
     existing = _SESSION_MANAGER.get(session_id)
     if existing is not None and not _can_access_record(existing, user):
         raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if existing is None:
+        await _load_db_record(
+            session_id,
+            user=user,
+            include_events=False,
+            hydrate_disk=False,
+            register=False,
+        )
     try:
         result = _SESSION_MANAGER.delete(session_id)
     except SessionDeleteRejected as exc:
@@ -3604,6 +4116,38 @@ async def list_sessions(
     return {"items": [record.summary() for record in records]}
 
 
+@router.post("/sessions/{session_id}/access-token")
+async def mint_pathscientist_access_token(
+    session_id: str,
+    request: PathScientistAccessTokenRequest,
+    user: User = Depends(current_active_user),
+):
+    record = _SESSION_MANAGER.get(session_id)
+    if record is not None and not _can_access_record(record, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if record is None:
+        record = await _load_db_record(session_id, user=user)
+    if record is None:
+        raise HTTPException(status_code=404, detail="PathScientist session not found")
+    if request.purpose == "run_download" and not _is_safe_run_id(request.run_id):
+        raise HTTPException(status_code=400, detail="Invalid run id")
+
+    token, expires_in = create_pathscientist_access_token(
+        user=user,
+        session_id=session_id,
+        purpose=request.purpose,
+        run_id=request.run_id,
+    )
+    return {
+        "token": token,
+        "token_type": "pathscientist_access",
+        "purpose": request.purpose,
+        "session_id": session_id,
+        "run_id": request.run_id if request.purpose == "run_download" else "",
+        "expires_in": expires_in,
+    }
+
+
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: str,
@@ -3616,9 +4160,10 @@ async def get_session(
         record = await _load_db_record(session_id, user=user)
     if record is None:
         raise HTTPException(status_code=404, detail="PathScientist session not found")
+    state = _session_detail_state(record)
     return {
         **record.summary(),
-        "state": record.state,
+        "state": state,
         "events": record.events,
     }
 
@@ -3626,8 +4171,13 @@ async def get_session(
 @router.get("/sessions/{session_id}/download")
 async def download_session_artifacts(
     session_id: str,
-    user: User = Depends(get_user_from_header_or_param),
+    access_claims: dict[str, Any] = Depends(get_pathscientist_header_or_access_token_claims),
 ):
+    user = _validate_pathscientist_access_claims(
+        access_claims,
+        session_id=session_id,
+        purpose="session_download",
+    )
     record = _SESSION_MANAGER.get(session_id)
     if record is not None and not _can_access_record(record, user):
         raise HTTPException(status_code=403, detail="PathScientist session access denied")
@@ -3650,6 +4200,7 @@ async def download_session_artifacts(
         zip_path,
         media_type="application/zip",
         filename=filename,
+        headers=_pathscientist_no_referrer_headers(),
         background=BackgroundTask(lambda path=zip_path: Path(path).unlink(missing_ok=True)),
     )
 
@@ -3658,8 +4209,14 @@ async def download_session_artifacts(
 async def download_run_artifacts(
     session_id: str,
     run_id: str,
-    user: User = Depends(get_user_from_header_or_param),
+    access_claims: dict[str, Any] = Depends(get_pathscientist_header_or_access_token_claims),
 ):
+    user = _validate_pathscientist_access_claims(
+        access_claims,
+        session_id=session_id,
+        purpose="run_download",
+        run_id=run_id,
+    )
     record = _SESSION_MANAGER.get(session_id)
     if record is not None and not _can_access_record(record, user):
         raise HTTPException(status_code=403, detail="PathScientist session access denied")
@@ -3684,6 +4241,7 @@ async def download_run_artifacts(
         zip_path,
         media_type="application/zip",
         filename=filename,
+        headers=_pathscientist_no_referrer_headers(),
         background=BackgroundTask(lambda path=zip_path: Path(path).unlink(missing_ok=True)),
     )
 
@@ -3691,8 +4249,13 @@ async def download_run_artifacts(
 @router.get("/sessions/{session_id}/events")
 async def stream_session_events(
     session_id: str,
-    user: User = Depends(get_user_from_token_param),
+    access_claims: dict[str, Any] = Depends(get_pathscientist_access_token_claims),
 ):
+    user = _validate_pathscientist_access_claims(
+        access_claims,
+        session_id=session_id,
+        purpose="events",
+    )
     record = _SESSION_MANAGER.get(session_id)
     if record is not None and not _can_access_record(record, user):
         raise HTTPException(status_code=403, detail="PathScientist session access denied")
@@ -3760,6 +4323,7 @@ async def stream_session_events(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "Referrer-Policy": "no-referrer",
             "X-Accel-Buffering": "no",
         },
     )
@@ -3865,6 +4429,107 @@ def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
 def _resolve_session_workspace(record: SessionRecord) -> Path | None:
     """Find the workspace that owns a Gateway session."""
     return _resolve_workspace_from_state(_record_state(record))
+
+
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _preferred_external_run_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
+    history = state.get("run_history")
+    entries = [entry for entry in history if isinstance(entry, dict)] if isinstance(history, list) else []
+    if not entries:
+        return []
+    ordered: list[dict[str, Any]] = []
+    best_run_id = str(state.get("best_run_id") or "").strip()
+    if best_run_id:
+        ordered.extend(entry for entry in entries if str(entry.get("run_id") or "") == best_run_id)
+    ordered.extend(entry for entry in reversed(entries) if bool(entry.get("committed")))
+    ordered.extend(reversed(entries))
+    deduped: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for entry in ordered:
+        marker = id(entry)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(entry)
+    return deduped
+
+
+def _external_metrics_record_from_run(
+    *,
+    workspace: Path,
+    run_entry: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = str(run_entry.get("run_id") or "").strip()
+    if not run_id or not _is_safe_run_id(run_id):
+        return {}
+    run_dir = workspace / "output" / "runs" / run_id
+    metrics = {}
+    report = _read_json_file(run_dir / "external_test_report.json")
+    report_metrics = report.get("external_test")
+    if isinstance(report_metrics, dict) and report_metrics:
+        metrics = dict(report_metrics)
+    if not metrics:
+        metrics_payload = _read_json_file(run_dir / "metrics.json")
+        nested_external = metrics_payload.get("external_test")
+        if isinstance(nested_external, dict) and nested_external:
+            metrics = dict(nested_external)
+    if not metrics:
+        history_metrics = run_entry.get("metrics")
+        nested_history_external = history_metrics.get("external_test") if isinstance(history_metrics, dict) else None
+        if isinstance(nested_history_external, dict) and nested_history_external:
+            metrics = dict(nested_history_external)
+    if not metrics:
+        return {}
+
+    pathlab = run_entry.get("pathlab") if isinstance(run_entry.get("pathlab"), dict) else {}
+    record: dict[str, Any] = {
+        "run_id": run_id,
+        "status": str(run_entry.get("external_test_status") or run_entry.get("status") or "completed"),
+        "committed": bool(run_entry.get("committed")),
+        "run_dir": str(run_dir),
+        "metrics": metrics,
+    }
+    model_path = str(run_entry.get("model_path") or pathlab.get("model_path") or "").strip()
+    if model_path:
+        record["model_path"] = model_path
+    for key in ("features_dir", "splits_file"):
+        value = str(report.get(key) or "").strip()
+        if value:
+            record[key] = value
+    return record
+
+
+def _external_test_from_workspace(record: SessionRecord) -> dict[str, Any]:
+    state = _record_state(record)
+    workspace = _resolve_session_workspace(record)
+    if workspace is None:
+        return {}
+    for run_entry in _preferred_external_run_entries(state):
+        external = _external_metrics_record_from_run(workspace=workspace, run_entry=run_entry)
+        if external:
+            return external
+    return {}
+
+
+def _session_detail_state(record: SessionRecord) -> dict[str, Any]:
+    state = dict(_record_state(record))
+    has_external = bool(state.get("external_test"))
+    history = state.get("external_test_history")
+    has_external_history = bool(history) if isinstance(history, list) else False
+    if not has_external and not has_external_history:
+        external = _external_test_from_workspace(record)
+        if external:
+            state["external_test"] = external
+    return state
 
 
 def _download_progress_path_from_state(state: dict[str, Any]) -> Path | None:
@@ -4262,9 +4927,12 @@ def _resolve_artifact_source(
         candidate = workspace / candidate
     candidate = candidate.resolve(strict=False)
     data_output_dir = str(record_data.get("data_output_dir") or "")
+    base_dir = _resolve_pathscientist_base_dir().resolve(strict=False)
     allowed_roots = [workspace.resolve(strict=False)]
     if data_output_dir:
-        allowed_roots.append(Path(data_output_dir).expanduser().resolve(strict=False))
+        data_root = Path(data_output_dir).expanduser().resolve(strict=False)
+        if _path_under(data_root, workspace) or _path_under(data_root, base_dir):
+            allowed_roots.append(data_root)
     if not any(_path_under(candidate, root) for root in allowed_roots):
         return None
     return candidate if candidate.is_file() else None
@@ -4305,6 +4973,11 @@ def _build_session_artifact_zip(record: SessionRecord, workspace: Path) -> str:
 
 def _build_run_artifact_zip(record: SessionRecord, workspace: Path, run_id: str) -> str:
     """Create a zip containing one iteration's results and model artifacts."""
+    workspace = workspace.resolve(strict=False)
+    base_dir = _resolve_pathscientist_base_dir().resolve(strict=False)
+    if workspace != base_dir and not workspace.is_relative_to(base_dir):
+        raise FileNotFoundError("Workspace is outside PathScientist base dir")
+
     state = _record_state(record)
     history_entry = _run_history_entry(state, run_id)
     loaded = _load_evidence_record(workspace, run_id)

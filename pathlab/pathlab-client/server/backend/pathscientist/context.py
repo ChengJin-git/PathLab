@@ -232,7 +232,7 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
         )
 
     lines = [
-        "Pre-installed feature extractors (loadable OFFLINE via registry):",
+        "Pre-installed pathology foundation models (loadable OFFLINE via registry):",
     ]
     width = max(len(d) for d, _, _ in usable)
     for display, key, size in usable:

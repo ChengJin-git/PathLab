@@ -132,6 +132,17 @@ def _is_quick_check() -> bool:
     return any(os.getenv(key, "").lower() in {"1", "true", "yes"} for key in keys)
 
 
+def _quick_check_max_patches() -> int | None:
+    if not _is_quick_check():
+        return None
+    raw = os.getenv("PATHSCIENTIST_QUICK_CHECK_MAX_PATCHES", "64")
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 64
+    return max(1, value)
+
+
 def atomic_torch_save(tensor, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -346,6 +357,9 @@ def _manual_patch_loader(wsi_path, coords_h5, transforms, batch_size, patch_erro
     except Exception as exc:
         patch_errors.append(f"coords_read_failed: {type(exc).__name__}: {exc}")
         return None
+    max_patches = _quick_check_max_patches()
+    if max_patches is not None and len(coords) > max_patches:
+        coords = coords[:max_patches]
 
     read_size = int(attrs.get("read_size", attrs.get("patch_size", PATCH_SIZE)))
     try:

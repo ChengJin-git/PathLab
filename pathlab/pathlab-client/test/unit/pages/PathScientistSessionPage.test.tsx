@@ -17,7 +17,7 @@ vi.mock('@renderer/api/pathscientist', () => ({
   getPathScientistEventsUrl: vi.fn(),
   resumePathScientistSession: vi.fn(),
   stopPathScientistSession: vi.fn(),
-  getPathScientistRunDownloadUrl: (sessionId: string, runId: string) => (
+  getPathScientistRunDownloadUrl: (sessionId: string, runId: string) => Promise.resolve(
     `/api/pathscientist/sessions/${sessionId}/runs/${runId}/download`
   ),
 }))
@@ -106,7 +106,7 @@ describe('PathScientistSessionPage', () => {
       stage: 'finished',
       events: events.map((event, index) => ({ ...event, seq: index + 1, status: index === 0 ? 'finished' : event.status })),
     })
-    vi.mocked(getPathScientistEventsUrl).mockReturnValue('/api/pathscientist/sessions/s1/events')
+    vi.mocked(getPathScientistEventsUrl).mockResolvedValue('/api/pathscientist/sessions/s1/events')
     vi.mocked(stopPathScientistSession).mockResolvedValue({
       session_id: session.session_id,
       conversation_id: session.conversation_id,
@@ -350,6 +350,32 @@ describe('PathScientistSessionPage', () => {
     expect(screen.getAllByText('completed').length).toBeGreaterThan(0)
     expect(screen.queryByText('running')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /stop run/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the backend failure reason for failed sessions', async () => {
+    vi.mocked(getPathScientistSession).mockResolvedValue({
+      ...session,
+      status: 'failed',
+      stage: 'failed',
+      error: 'run_experiment failed: CUDA out of memory while allocating tensor',
+      state: {
+        stage: 'failed',
+        error: 'run_experiment failed: CUDA out of memory while allocating tensor',
+      },
+      events: [
+        {
+          kind: 'error',
+          status: 'failed',
+          stage: 'execution',
+          message: 'run_experiment failed: CUDA out of memory while allocating tensor',
+        },
+      ],
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('Failure details')).toBeInTheDocument()
+    expect(screen.getByText('run_experiment failed: CUDA out of memory while allocating tensor')).toBeInTheDocument()
   })
 
   it('clears stale session content immediately when the route changes to a different session id', async () => {

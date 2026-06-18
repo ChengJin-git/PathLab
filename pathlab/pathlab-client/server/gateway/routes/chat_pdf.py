@@ -34,6 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from ..dependencies import logger
+from backend.common.net_guard import EgressDeniedError, guarded_get
 from backend.auth import User
 from backend.auth.dependencies import get_user_from_header_or_param
 from backend.common.config import Config
@@ -1012,8 +1013,8 @@ async def _fetch_lightweight_web_markdown(
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,text/plain,text/markdown;q=0.9,*/*;q=0.8",
         }
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            response = await guarded_get(client, url, headers=headers)
 
         if response.status_code != 200:
             result["error_code"] = "http_status"
@@ -1092,6 +1093,11 @@ async def _fetch_lightweight_web_markdown(
         result["error_detail"] = (
             "The page took too long to respond. Please try again later or open it directly."
         )
+        return result
+    except EgressDeniedError as e:
+        logger.warning(f"Blocked lightweight web fetch for {url}: {e}")
+        result["error_code"] = "blocked_url"
+        result["error_detail"] = "This URL is not available for automatic reading."
         return result
     except Exception as e:
         result["error"] = "parse_failed"

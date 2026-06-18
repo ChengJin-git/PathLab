@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import shutil
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -364,23 +365,94 @@ def _resolve_best_run_model_path(
     run_history: list[dict] | None = None,
     primary_metric: str = "auc",
 ) -> str:
-    """Find an existing checkpoint for model_source=best_run external tests."""
+    """Find an existing checkpoint for model_source=best_run external tests.
+
+    Prefer committed metric-best runs. If a small debug run produced a valid
+    model but no positive primary metric, fall back to the latest successful
+    training checkpoint so requested external validation can still run.
+    """
     pending = _entry_model_path(last_experiment)
     if pending and Path(pending).expanduser().exists():
         return pending
 
-    candidates: list[tuple[float, str]] = []
-    for entry in run_history or []:
-        if not isinstance(entry, dict) or not entry.get("committed", False):
+    committed_candidates: list[tuple[float, str]] = []
+    fallback_candidates: list[tuple[int, float, str]] = []
+    for index, entry in enumerate(run_history or []):
+        if not isinstance(entry, dict):
             continue
         model_path = _entry_model_path(entry)
         if not model_path or not Path(model_path).expanduser().exists():
             continue
-        candidates.append((_entry_metric_value(entry, primary_metric), model_path))
-    if not candidates:
-        return ""
-    return max(candidates, key=lambda item: item[0])[1]
+        value = _entry_metric_value(entry, primary_metric)
+        if entry.get("committed", False):
+            committed_candidates.append((value, model_path))
+            continue
+        if str(entry.get("run_kind") or "").strip().lower() in {"", "training", "mil_classification"}:
+            fallback_candidates.append((index, value, model_path))
+    if committed_candidates:
+        return max(committed_candidates, key=lambda item: item[0])[1]
+    if fallback_candidates:
+        return max(fallback_candidates, key=lambda item: (item[0], item[1]))[2]
+    return ""
 
+
+
+def _durable_model_artifact_root(*, workspace_root: Path, config) -> Path:
+    configured = str(getattr(config, "model_artifact_dir", "") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return workspace_root.parent / "model_artifacts"
+
+
+
+def _register_durable_artifact_mount(config, artifact_root: Path) -> None:
+    mounts = getattr(config, "data_mounts", None)
+    if not isinstance(mounts, dict):
+        mounts = {}
+        try:
+            setattr(config, "data_mounts", mounts)
+        except Exception:
+            return
+    root_text = str(artifact_root)
+    mounts.setdefault(root_text, root_text)
+
+
+
+def _materialize_durable_model_artifact(
+    *,
+    config,
+    workspace_root: Path,
+    session_id: str,
+    run_id: str,
+    model_path: str | None,
+) -> str:
+    source_text = str(model_path or "").strip()
+    if not source_text or not session_id or not run_id:
+        return source_text
+    source = Path(source_text).expanduser()
+    if not source.is_file():
+        return source_text
+
+    artifact_root = _durable_model_artifact_root(
+        workspace_root=Path(workspace_root),
+        config=config,
+    )
+    destination = artifact_root / str(session_id) / str(run_id) / source.name
+    if source.resolve(strict=False) == destination.resolve(strict=False):
+        _register_durable_artifact_mount(config, artifact_root)
+        return str(destination)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        _register_durable_artifact_mount(config, artifact_root)
+        return str(destination)
+    except OSError:
+        return source_text
+
+
+
+def _materialize_durable_model_artifact_for_test(**kwargs) -> str:
+    return _materialize_durable_model_artifact(**kwargs)
 
 
 def _clean_path(value) -> Path | None:
@@ -1043,6 +1115,10 @@ class RunExperimentExecutor(ToolExecutor):
         )
 
         # Enforce iteration policy
+        ignores_training_budget = semantic_run_kind in {
+            "external_test",
+            "feature_extraction",
+        }
         iteration_state = self._get_iteration_state()
         if iteration_state:
             iteration_state.last_run_id = run_id
@@ -1058,13 +1134,13 @@ class RunExperimentExecutor(ToolExecutor):
                     iteration_state.check_can_quick_check(
                         file_hash,
                         script_path=action.script_path,
-                        ignore_budget=semantic_run_kind == "external_test",
+                        ignore_budget=ignores_training_budget,
                     )
                 else:
                     iteration_state.check_can_full_run(
                         file_hash,
                         script_path=action.script_path,
-                        ignore_budget=semantic_run_kind == "external_test",
+                        ignore_budget=ignores_training_budget,
                     )
             except PolicyViolation as e:
                 return RunExperimentObservation(
@@ -1276,6 +1352,14 @@ class RunExperimentExecutor(ToolExecutor):
             best_model = run_dir / "best_model.pth"
             if best_model.exists():
                 model_path = str(best_model)
+                if semantic_run_kind == "training":
+                    model_path = _materialize_durable_model_artifact(
+                        config=self._config,
+                        workspace_root=self._workspace.root,
+                        session_id=self._session_id,
+                        run_id=run_id,
+                        model_path=model_path,
+                    )
 
             # Plan T6: enforce the quick-check contract. If the agent
             # ran with quick_check=True but the script wrote

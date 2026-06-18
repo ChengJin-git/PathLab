@@ -61,6 +61,7 @@ export function sessionIterationLabel(session?: PathScientistSessionSummary | nu
 }
 
 export function sessionTrainingProgressLabel(session?: PathScientistSessionSummary | null) {
+  if (!isLiveSessionStatus(session?.status)) return ''
   const epoch = trainingProgressEpochLabel(session?.training_progress)
   if (!epoch) return ''
   const labels = [sessionIterationLabel(session), epoch, ...trainingProgressMetricLabels(session?.training_progress)]

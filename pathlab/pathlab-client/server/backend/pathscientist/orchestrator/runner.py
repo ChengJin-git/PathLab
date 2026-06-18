@@ -19,10 +19,14 @@ from ..literature.sota_cache import SotaCache
 from ..literature.sota_lookup import SotaLookup
 from ..orchestrator.director import ResearchDirector
 from ..orchestrator.external_contract import (
+    normalize_dataset_role,
     normalize_external_test_contract,
     update_external_dataset,
 )
-from ..orchestrator.external_request import infer_external_request
+from ..orchestrator.external_request import (
+    _discover_contract_paths,
+    infer_external_request,
+)
 from ..orchestrator.prompts import build_execution_brief
 from ..orchestrator.review import run_review_stage
 from ..orchestrator.state_bridge import persist_research_session_state
@@ -500,6 +504,31 @@ def _apply_external_request_inference(
         state.grounding = {}
         grounding = state.grounding
 
+    existing_request = grounding.get("external_test_request")
+    if isinstance(existing_request, dict):
+        existing_contract = normalize_external_test_contract(
+            existing_request.get("contract") or {}
+        )
+        existing_missing = [
+            item for item in (existing_request.get("missing") or [])
+            if str(item or "").strip()
+        ]
+        if (
+            llm_caller is None
+            and existing_contract
+            and existing_request.get("enabled")
+            and not existing_missing
+        ):
+            config.external_test_enabled = True
+            config.external_test_contract = dict(existing_contract)
+            existing_request["requested"] = True
+            existing_request["enabled"] = True
+            existing_request["contract"] = dict(existing_contract)
+            existing_request["missing"] = []
+            existing_request.setdefault("status", "enabled")
+            grounding["external_test_request"] = existing_request
+            return None
+
     explicit_contract = normalize_external_test_contract(
         getattr(config, "external_test_contract", {}) or {}
     )
@@ -613,11 +642,24 @@ def _prepare_data_readiness_and_execution_plan(
     )
     extractor_name = extractor_selection.name
     state.grounding["selected_extractor"] = extractor_selection.to_dict()
+    config.planned_feature_extractor = extractor_name
+    _apply_external_request_inference(
+        state,
+        config,
+        selected_skill=(state.grounding or {}).get("selected_skill", "") or profile.preferred_skill,
+    )
 
     workspace_root = _Path(session.workspace_dir)
     data_mounts: dict[str, str] = {}
     data_mounts.update(manifest_mounts)
     data_mounts.update(getattr(config, "data_mounts", {}) or {})
+    _sync_named_dataset_contract_paths_from_mounts(
+        state,
+        config,
+        data_mounts=data_mounts,
+        task_type=profile.task_type,
+        preferred_extractor=extractor_name,
+    )
     internal_readiness_mounts = _internal_readiness_data_mounts(
         state,
         config,
@@ -632,6 +674,13 @@ def _prepare_data_readiness_and_execution_plan(
         question=state.objective.question,
         generated_contract_root=workspace_root / ".dataset" / "readiness",
         preferred_feature_extractor=extractor_name,
+    )
+    _downgrade_external_features_when_dim_mismatch(
+        state,
+        config,
+        readiness=readiness,
+        data_mounts=data_mounts,
+        extractor_name=extractor_name,
     )
     selected_skill = (state.grounding or {}).get("selected_skill", "") or profile.preferred_skill
     mil_selection = None
@@ -680,11 +729,6 @@ def _prepare_data_readiness_and_execution_plan(
         workspace_root=workspace_root,
         wsi_dir=wsi_dir_host,
         raw_root=manifest_raw_root,
-    )
-    _apply_external_request_inference(
-        state,
-        config,
-        selected_skill=selected_skill,
     )
     plan = build_execution_plan(
         profile=profile,
@@ -863,19 +907,23 @@ def _advance_execution_plan_after_iteration(
     actual_features_dir = str(features_dir)
     step_id = str(step.get("id") or "")
     step.setdefault("outputs", {})["features_dir"] = actual_features_dir
-    if current + 1 < len(steps):
-        next_step = steps[current + 1]
-        if isinstance(next_step, dict):
-            next_inputs = next_step.setdefault("inputs", {})
-            if step_id == "extract_external_features":
-                next_inputs.update(
+    if step_id == "extract_external_features":
+        for future_step in steps[current + 1:]:
+            if (
+                isinstance(future_step, dict)
+                and str(future_step.get("skill") or "") == "external_test"
+            ):
+                future_inputs = future_step.setdefault("inputs", {})
+                future_inputs.update(
                     update_external_dataset(
-                        next_inputs,
+                        future_inputs,
                         {"features_dir": actual_features_dir},
                     )
                 )
-            else:
-                next_inputs["features_dir"] = actual_features_dir
+    elif current + 1 < len(steps):
+        next_step = steps[current + 1]
+        if isinstance(next_step, dict):
+            next_step.setdefault("inputs", {})["features_dir"] = actual_features_dir
 
     plan["current_step"] = current + 1
     plan["steps"] = steps
@@ -975,17 +1023,30 @@ def _advance_execution_plan_after_metric_step(
         state.grounding["execution_plan"] = state.execution_plan
         if skill == "external_test":
             experiment = dict(last_experiment or {})
+            metrics = dict(experiment.get("metrics") or {})
+            committed = bool(experiment.get("committed", True))
+            failed = (
+                bool(metrics.get("error"))
+                or bool(metrics.get("quick_check_failed"))
+                or int(experiment.get("exit_code", 0) or 0) != 0
+                or bool(experiment.get("is_error"))
+            )
+            status = "failed" if failed else "completed"
             record = {
                 "run_id": str(experiment.get("run_id") or ""),
-                "metrics": dict(experiment.get("metrics") or {}),
-                "committed": bool(experiment.get("committed", True)),
+                "metrics": metrics,
+                "committed": committed,
                 "model_path": str(experiment.get("model_path") or ""),
                 "run_dir": str(experiment.get("run_dir") or ""),
-                "status": "completed",
+                "status": status,
             }
+            if not committed and not failed:
+                record["ratchet_status"] = "reverted_non_improving"
             state.external_test = record
             state.external_test_history.append(record)
-            state.stop_reason = state.stop_reason or "external_test_completed"
+            state.stop_reason = state.stop_reason or (
+                "external_test_failed" if failed else "external_test_completed"
+            )
         return True
     return False
 
@@ -1007,10 +1068,9 @@ def _best_run_model_path_from_state(
         if text and Path(text).expanduser().exists():
             return text
 
-    candidates: list[tuple[float, str]] = []
-    for record in getattr(state, "run_history", []) or []:
-        if not getattr(record, "committed", False):
-            continue
+    committed_candidates: list[tuple[float, str]] = []
+    fallback_candidates: list[tuple[int, float, str]] = []
+    for index, record in enumerate(getattr(state, "run_history", []) or []):
         for value in (
             getattr(record, "model_path", ""),
             (getattr(record, "pathlab", {}) or {}).get("model_path")
@@ -1018,12 +1078,19 @@ def _best_run_model_path_from_state(
             else "",
         ):
             text = str(value or "").strip()
-            if text and Path(text).expanduser().exists():
-                candidates.append((float(getattr(record, "metric_value", 0.0) or 0.0), text))
-                break
-    if not candidates:
-        return ""
-    return max(candidates, key=lambda item: item[0])[1]
+            if not text or not Path(text).expanduser().exists():
+                continue
+            metric_value = float(getattr(record, "metric_value", 0.0) or 0.0)
+            if getattr(record, "committed", False):
+                committed_candidates.append((metric_value, text))
+            elif str(getattr(record, "run_kind", "") or "").strip().lower() in {"", "training", "mil_classification"}:
+                fallback_candidates.append((index, metric_value, text))
+            break
+    if committed_candidates:
+        return max(committed_candidates, key=lambda item: item[0])[1]
+    if fallback_candidates:
+        return max(fallback_candidates, key=lambda item: (item[0], item[1]))[2]
+    return ""
 
 
 def _run_record_from_tracker_entry(
@@ -1051,6 +1118,43 @@ def _run_record_from_tracker_entry(
         run_kind=str(entry.get("run_kind") or ""),
         error_type=str(entry.get("error_type") or ""),
     )
+
+
+def _promote_embedded_external_validation(
+    state: ResearchSessionState,
+    record: RunRecord | None,
+) -> bool:
+    """Expose training-script external_validation metrics as session external_test."""
+    if record is None:
+        return False
+    metrics = dict(getattr(record, "metrics", {}) or {})
+    external = metrics.get("external_validation")
+    if not isinstance(external, dict) or not external:
+        return False
+    status_text = str(external.get("status") or "").strip().lower()
+    failed = status_text in {"failed", "error"} or bool(external.get("error"))
+    external_metrics = external.get("metrics") if isinstance(external.get("metrics"), dict) else {}
+    coverage = external.get("coverage") if isinstance(external.get("coverage"), dict) else {}
+    payload = {
+        "run_id": record.run_id,
+        "metrics": dict(external_metrics or {}),
+        "coverage": dict(coverage or {}),
+        "status": "failed" if failed else "completed",
+        "source": "training_metrics.external_validation",
+        "committed": bool(record.committed),
+        "model_path": record.model_path,
+        "run_dir": record.run_dir,
+        "raw": dict(external),
+    }
+    state.external_test = payload
+    existing_ids = {
+        str(item.get("run_id") or "")
+        for item in state.external_test_history
+        if isinstance(item, dict)
+    }
+    if record.run_id not in existing_ids:
+        state.external_test_history.append(payload)
+    return True
 
 
 def _maybe_run_acquisition_for_missing_data(
@@ -1294,6 +1398,433 @@ def _safe_cache_mount_name(name: str) -> str:
     return cleaned or "dataset"
 
 
+
+_DATASET_MATCH_STOPWORDS = {"local", "dataset", "data", "synthetic", "mock", "demo"}
+
+
+def _dataset_match_tokens(value: str) -> list[str]:
+    import re
+
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+    return [token for token in normalized.split() if token]
+
+
+def _dataset_match_aliases(value: str) -> set[str]:
+    tokens = _dataset_match_tokens(value)
+    if not tokens:
+        return set()
+    aliases = {" ".join(tokens), "".join(tokens)}
+    meaningful = [token for token in tokens if token not in _DATASET_MATCH_STOPWORDS]
+    if meaningful:
+        aliases.add(" ".join(meaningful))
+        aliases.add("".join(meaningful))
+    if "external" in meaningful:
+        without_external = [token for token in meaningful if token != "external"]
+        if without_external:
+            aliases.add(" ".join(without_external))
+            aliases.add("".join(without_external))
+    return {alias for alias in aliases if alias}
+
+
+def _dataset_name_match_score(requested: str, candidate: str) -> int:
+    requested_aliases = _dataset_match_aliases(requested)
+    candidate_aliases = _dataset_match_aliases(candidate)
+    exact = requested_aliases & candidate_aliases
+    if not exact:
+        return 0
+    return max(len(alias) for alias in exact) + 1000
+
+
+def _dataset_names_for_mount(host: str | Path) -> list[str]:
+    root = Path(host).expanduser()
+    names = [root.name]
+    manifest_path = root / "dataset_manifest.json"
+    if manifest_path.is_file():
+        try:
+            import json
+
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for key in ("dataset_name", "name", "dataset_id"):
+                value = str(manifest.get(key) or "").strip()
+                if value:
+                    names.append(value)
+        except Exception:
+            pass
+    out: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        key = name.lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(name)
+    return out
+
+
+def _mount_match_score(dataset_name: str, host: str | Path) -> int:
+    return max(
+        (_dataset_name_match_score(dataset_name, candidate) for candidate in _dataset_names_for_mount(host)),
+        default=0,
+    )
+
+
+def _mounts_for_dataset_names(
+    mounts: dict[str, str],
+    dataset_names: list[str],
+) -> dict[str, str]:
+    selected: dict[str, str] = {}
+    for dataset_name in dataset_names:
+        best: tuple[int, int, str, str] | None = None
+        for host, container in (mounts or {}).items():
+            score = _mount_match_score(dataset_name, host)
+            if score <= 0:
+                continue
+            candidate = (score, len(str(host)), str(host), str(container).rstrip("/"))
+            if best is None or candidate > best:
+                best = candidate
+        if best is not None:
+            _score, _host_len, host, container = best
+            selected[host] = container
+    return selected
+
+
+def _requested_dataset_names_for_role(state, config, role: str) -> list[str]:
+    normalized_role = normalize_dataset_role(role)
+    names: list[str] = []
+
+    def _append(value: Any) -> None:
+        text = str(value or "").strip()
+        if text and text not in names:
+            names.append(text)
+
+    request = (getattr(state, "grounding", {}) or {}).get("external_test_request")
+    payloads: list[dict[str, Any]] = []
+    if isinstance(request, dict):
+        payloads.append(request)
+    explicit_contract = getattr(config, "external_test_contract", {}) or {}
+    if isinstance(explicit_contract, dict):
+        payloads.append({"contract": explicit_contract})
+
+    for payload in payloads:
+        if normalized_role == "internal":
+            data = payload.get("training_data")
+        else:
+            data = payload.get("external_data")
+        if isinstance(data, dict):
+            data_role = normalize_dataset_role(data.get("role") or data.get("data_role"), default=normalized_role)
+            if data_role == normalized_role:
+                _append(data.get("dataset_name") or data.get("name"))
+
+        contract = payload.get("contract")
+        if isinstance(contract, dict):
+            normalized = normalize_external_test_contract(contract)
+            for item in normalized.get("datasets") or []:
+                if not isinstance(item, dict):
+                    continue
+                if normalize_dataset_role(item.get("role") or item.get("data_role")) != normalized_role:
+                    continue
+                _append(item.get("dataset_name") or item.get("name"))
+    return names
+
+
+def _dataset_name_mentioned_score(candidate_name: str, question: str) -> int:
+    question_tokens = _dataset_match_tokens(question)
+    if not question_tokens:
+        return 0
+    question_text = f" {' '.join(question_tokens)} "
+    question_compact = "".join(question_tokens)
+    score = 0
+    for alias in _dataset_match_aliases(candidate_name):
+        if " " in alias:
+            if f" {alias} " in question_text:
+                score = max(score, len(alias))
+        elif alias and alias in question_compact:
+            score = max(score, len(alias))
+    return score
+
+
+def _meaningful_dataset_tokens(value: str) -> list[str]:
+    return [
+        token for token in _dataset_match_tokens(value)
+        if token not in _DATASET_MATCH_STOPWORDS
+    ]
+
+
+def _is_token_prefix(shorter: list[str], longer: list[str]) -> bool:
+    return bool(shorter) and len(shorter) < len(longer) and longer[:len(shorter)] == shorter
+
+
+def _cache_mounts_mentioned_in_question(
+    cache_mounts: dict[str, str],
+    question: str,
+) -> dict[str, str]:
+    records: list[tuple[int, list[str], str, str]] = []
+    for host, container in (cache_mounts or {}).items():
+        if str(container).rstrip("/") == "/data/cache":
+            continue
+        names = _dataset_names_for_mount(host)
+        score = max((_dataset_name_mentioned_score(name, question) for name in names), default=0)
+        if score <= 0:
+            continue
+        tokens = _meaningful_dataset_tokens(names[0])
+        records.append((score, tokens, str(host), str(container).rstrip("/")))
+    if not records:
+        return {}
+
+    filtered: dict[str, str] = {}
+    for index, (score, tokens, host, container) in enumerate(records):
+        shadowed = False
+        for other_index, (other_score, other_tokens, _other_host, _other_container) in enumerate(records):
+            if other_index == index:
+                continue
+            if other_score >= score and _is_token_prefix(tokens, other_tokens):
+                shadowed = True
+                break
+        if not shadowed:
+            filtered[host] = container
+    return filtered
+
+
+def _cache_mounts_for_requested_dataset_roles(state, config, cache_mounts: dict[str, str]) -> dict[str, str]:
+    selected: dict[str, str] = {}
+    for role in ("internal", "external"):
+        names = _requested_dataset_names_for_role(state, config, role)
+        selected.update(_mounts_for_dataset_names(cache_mounts, names))
+    return selected
+
+
+def _external_task_type_for_resolution(contract: dict[str, Any], fallback: str) -> str:
+    task_type = str(contract.get("external_task_type") or fallback or "").strip()
+    if task_type == "survival_analysis":
+        return "survival"
+    return task_type or "mil_classification"
+
+
+
+def _read_feature_dim_from_manifest(root: Path, extractor_name: str) -> int | None:
+    manifest = root / "dataset_manifest.json"
+    if not manifest.exists():
+        return None
+    try:
+        import json
+
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    extractor = str(extractor_name or "").strip().lower()
+    for item in data.get("feature_extractors") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip().lower()
+        if extractor and name and name != extractor:
+            continue
+        try:
+            return int(item.get("feature_dim"))
+        except (TypeError, ValueError):
+            return None
+    prepared = data.get("prepared_contract") or {}
+    if isinstance(prepared, dict):
+        try:
+            return int(prepared.get("feature_dim"))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _feature_dim_from_feature_file(features_dir: Path) -> int | None:
+    try:
+        sample = next(
+            p for p in sorted(features_dir.iterdir())
+            if p.is_file() and p.suffix.lower() in {".pt", ".pth"}
+        )
+    except (OSError, StopIteration):
+        return None
+    try:
+        import torch
+
+        obj = torch.load(sample, map_location="cpu", weights_only=False)
+    except Exception:
+        return None
+    if isinstance(obj, dict):
+        for key in ("features", "feats", "embeddings", "x", "patch_features"):
+            value = obj.get(key)
+            if hasattr(value, "shape") and len(value.shape) >= 1:
+                return int(value.shape[-1])
+        tensors = [v for v in obj.values() if hasattr(v, "shape") and len(v.shape) >= 1]
+        if tensors:
+            return int(max(tensors, key=lambda v: int(v.shape[-1])).shape[-1])
+        return None
+    if hasattr(obj, "shape") and len(obj.shape) >= 1:
+        return int(obj.shape[-1])
+    return None
+
+
+def _dataset_root_for_feature_dir(feature_dir: Path, extractor_name: str) -> Path:
+    extractor = str(extractor_name or "").strip().lower()
+    for parent in [feature_dir, *feature_dir.parents]:
+        if (parent / "dataset_manifest.json").exists():
+            return parent
+    if extractor:
+        for parent in feature_dir.parents:
+            if parent.name.lower() == extractor:
+                try:
+                    return parent.parents[1]
+                except IndexError:
+                    break
+    return feature_dir
+
+
+def _feature_dim_for_dir(features_dir: Path, extractor_name: str) -> int | None:
+    root = _dataset_root_for_feature_dir(features_dir, extractor_name)
+    return _read_feature_dim_from_manifest(root, extractor_name) or _feature_dim_from_feature_file(features_dir)
+
+
+def _downgrade_external_features_when_dim_mismatch(
+    state,
+    config,
+    *,
+    readiness,
+    data_mounts: dict[str, str],
+    extractor_name: str,
+) -> None:
+    if getattr(readiness, "status", "") != "features_ready":
+        return
+    request = (getattr(state, "grounding", {}) or {}).get("external_test_request")
+    if not isinstance(request, dict):
+        return
+    contract = normalize_external_test_contract(
+        request.get("contract") or getattr(config, "external_test_contract", {}) or {}
+    )
+    if str(contract.get("external_features_ready") or "").strip().lower() not in {"1", "true", "yes", "ready"}:
+        return
+    external_feature_text = str(contract.get("external_features_dir") or "").strip()
+    if not external_feature_text:
+        return
+    internal_host = Path(str(getattr(readiness, "features_dir_host", "") or "")).expanduser()
+    external_host = _host_path_from_mounts(external_feature_text, data_mounts)
+    if not internal_host.exists() or external_host is None or not external_host.exists():
+        return
+    internal_dim = _feature_dim_for_dir(internal_host, extractor_name)
+    external_dim = _feature_dim_for_dir(external_host, extractor_name)
+    if not internal_dim or not external_dim or internal_dim == external_dim:
+        return
+
+    contract["external_features_ready"] = "false"
+    contract["external_features_incompatible"] = "true"
+    contract["external_features_feature_dim"] = str(external_dim)
+    contract["external_features_expected_dim"] = str(internal_dim)
+    contract["external_features_incompatibility_reason"] = (
+        f"feature_dim mismatch: external={external_dim}, internal={internal_dim}"
+    )
+    request["contract"] = contract
+    request["enabled"] = True
+    request["requested"] = True
+    request["status"] = "enabled"
+    state.grounding["external_test_request"] = request
+    config.external_test_enabled = True
+    config.external_test_contract = dict(contract)
+
+
+def _external_contract_missing_requirements(contract: dict[str, Any], task_type: str) -> list[str]:
+    normalized = normalize_external_test_contract(contract or {})
+    task = _external_task_type_for_resolution(normalized, task_type)
+    missing: list[str] = []
+    has_features = bool(str(normalized.get("external_features_dir") or "").strip())
+    has_wsi = bool(str(normalized.get("external_wsi_dir") or "").strip())
+    has_images = bool(str(normalized.get("external_images_dir") or "").strip())
+    has_splits = bool(str(normalized.get("external_splits_file") or "").strip())
+    has_labels = bool(str(normalized.get("external_labels_file") or "").strip())
+    if task in {"mil_classification", "survival"} and not (has_features or has_wsi):
+        missing.append("external_wsi_dir_or_external_features_dir")
+    if task == "patch_classification" and not (has_features or has_images):
+        missing.append("external_features_dir_or_external_images_dir")
+    if task in {"mil_classification", "patch_classification", "survival"} and not (has_splits or has_labels):
+        missing.append("external_splits_file")
+    return missing
+
+
+def _ensure_contract_dataset(contract: dict[str, Any], role: str) -> dict[str, Any]:
+    datasets = contract.setdefault("datasets", [])
+    for item in datasets:
+        if isinstance(item, dict) and normalize_dataset_role(item.get("role")) == role:
+            return item
+    item = {"role": role}
+    datasets.append(item)
+    return item
+
+
+def _sync_named_dataset_contract_paths_from_mounts(
+    state,
+    config,
+    *,
+    data_mounts: dict[str, str],
+    task_type: str,
+    preferred_extractor: str,
+) -> None:
+    request = (getattr(state, "grounding", {}) or {}).get("external_test_request")
+    if not isinstance(request, dict):
+        return
+    if not (request.get("requested") or request.get("enabled") or request.get("contract")):
+        return
+
+    contract = normalize_external_test_contract(
+        request.get("contract") or getattr(config, "external_test_contract", {}) or {}
+    )
+    changed = False
+    for role in ("internal", "external"):
+        names = _requested_dataset_names_for_role(state, config, role)
+        matches = _mounts_for_dataset_names(data_mounts, names)
+        if not matches:
+            continue
+        host, container = next(iter(matches.items()))
+        dataset = _ensure_contract_dataset(contract, role)
+        if names and not dataset.get("dataset_name"):
+            dataset["dataset_name"] = names[0]
+        dataset["paths"] = [str(container).rstrip("/")]
+        changed = True
+        if role == "external":
+            external_task = _external_task_type_for_resolution(contract, task_type)
+            discovered, _missing = _discover_contract_paths(
+                [str(host)],
+                task_type=external_task,
+                data_mounts=data_mounts,
+                preferred_extractor=preferred_extractor,
+            )
+            if discovered:
+                contract.update(discovered)
+            external_data = request.setdefault("external_data", {})
+            if isinstance(external_data, dict):
+                external_data["paths"] = [str(container).rstrip("/")]
+                if names:
+                    external_data.setdefault("dataset_name", names[0])
+                external_data["data_role"] = "external"
+        elif role == "internal":
+            training_data = request.setdefault("training_data", {})
+            if isinstance(training_data, dict):
+                training_data["paths"] = [str(container).rstrip("/")]
+                if names:
+                    training_data.setdefault("dataset_name", names[0])
+                training_data["data_role"] = "internal"
+
+    if not changed:
+        return
+
+    contract = normalize_external_test_contract(
+        contract,
+        task_type=_external_task_type_for_resolution(contract, task_type),
+    )
+    missing = _external_contract_missing_requirements(contract, task_type)
+    request["contract"] = contract
+    request["missing"] = missing
+    if not missing:
+        request["enabled"] = True
+        request["requested"] = True
+        request["status"] = "enabled"
+        config.external_test_enabled = True
+    elif request.get("requested") or request.get("enabled"):
+        request["status"] = "missing_external_data"
+    config.external_test_contract = dict(contract)
+    state.grounding["external_test_request"] = request
+
 def _cache_readiness_mounts(cache_dir: str | Path, *, max_children: int = 128) -> dict[str, str]:
     """Return bounded mounts for probing the persistent dataset cache.
 
@@ -1429,7 +1960,11 @@ def _internal_readiness_data_mounts(
     if not external_paths:
         return dict(data_mounts or {})
     internal_paths = _role_paths("internal")
-    manifest_paths = {_resolve(Path(path)) for path in (manifest_mounts or {})}
+    fallback_internal_paths = (
+        set()
+        if internal_paths
+        else {_resolve(Path(path)) for path in (manifest_mounts or {})}
+    )
 
     filtered: dict[str, str] = {}
     for host, container in (data_mounts or {}).items():
@@ -1440,8 +1975,10 @@ def _internal_readiness_data_mounts(
         )
         is_internal = any(
             _contains(mount_host, path) or _contains(path, mount_host)
-            for path in internal_paths | manifest_paths
+            for path in internal_paths | fallback_internal_paths
         )
+        if internal_paths and not is_internal:
+            continue
         if is_external and not is_internal:
             continue
         filtered[host] = container
@@ -1594,27 +2131,67 @@ def _skip_acquisition_if_cache_features_ready(
     config,
 ) -> ResearchSessionState | None:
     """Skip download when persistent features + splits are already complete."""
-    cache_mounts = _cache_readiness_mounts(
+    all_cache_mounts = _cache_readiness_mounts(
         getattr(config, "dataset_cache_dir", "") or "",
     )
-    if not cache_mounts:
+    if not all_cache_mounts:
         return None
 
     existing_mounts = dict(getattr(config, "data_mounts", {}) or {})
+    question_cache_mounts = _cache_mounts_mentioned_in_question(
+        all_cache_mounts,
+        getattr(getattr(state, "objective", None), "question", "") or "",
+    )
+    cache_mounts = question_cache_mounts or all_cache_mounts
+
     probe_mounts = dict(existing_mounts)
     probe_mounts.update(cache_mounts)
     probe_config = _config_proxy_with_data_mounts(config, probe_mounts)
     _prepare_data_readiness_and_execution_plan(state, session, probe_config)
-    if (state.data_readiness or {}).get("status") != "features_ready":
+
+    role_cache_mounts = _cache_mounts_for_requested_dataset_roles(
+        state,
+        probe_config,
+        all_cache_mounts,
+    )
+    if role_cache_mounts and role_cache_mounts != cache_mounts:
+        cache_mounts = role_cache_mounts
+        probe_mounts = dict(existing_mounts)
+        probe_mounts.update(cache_mounts)
+        probe_config = _config_proxy_with_data_mounts(config, probe_mounts)
+        _prepare_data_readiness_and_execution_plan(state, session, probe_config)
+
+    readiness_status = (state.data_readiness or {}).get("status")
+    if readiness_status == "features_ready":
+        ready_mounts = _cache_mounts_covering_ready_features(
+            cache_mounts,
+            state.data_readiness or {},
+        )
+        ready_mounts.update(
+            _cache_mounts_for_requested_dataset_roles(state, probe_config, cache_mounts)
+        )
+        if not ready_mounts:
+            ready_mounts = cache_mounts
+        acquisition_note = (
+            "existing complete feature cache found in dataset_cache_dir; "
+            "raw-slide download skipped"
+        )
+    elif readiness_status == "raw_wsi_ready" and role_cache_mounts:
+        ready_mounts = dict(role_cache_mounts)
+        acquisition_note = (
+            "named dataset cache contains raw WSI; acquisition skipped and "
+            "feature_extraction will run before training"
+        )
+    else:
         return None
 
-    ready_mounts = _cache_mounts_covering_ready_features(
-        cache_mounts,
-        state.data_readiness or {},
-    ) or cache_mounts
     if not isinstance(getattr(config, "data_mounts", None), dict):
         config.data_mounts = {}
     config.data_mounts.update(ready_mounts)
+    if getattr(probe_config, "external_test_enabled", False):
+        config.external_test_enabled = True
+    if getattr(probe_config, "external_test_contract", None):
+        config.external_test_contract = dict(probe_config.external_test_contract)
     if hasattr(config, "planned_data_output_dir"):
         config.planned_data_output_dir = getattr(
             probe_config,
@@ -1622,10 +2199,7 @@ def _skip_acquisition_if_cache_features_ready(
             "",
         )
     state.acquisition_status = "skipped"
-    state.acquisition_notes = (
-        "existing complete feature cache found in dataset_cache_dir; "
-        "raw-slide download skipped"
-    )
+    state.acquisition_notes = acquisition_note
     state.grounding["data_cache_readiness_mounts"] = ready_mounts
     return state
 
@@ -2519,14 +3093,16 @@ def run_research_session(
                 if not run_id:
                     run_id = f"run_{state.iteration_index}"
 
-                state.record_run(_run_record_from_tracker_entry(
+                record = _run_record_from_tracker_entry(
                     entry=entry,
                     iteration=state.iteration_index,
                     metric_name=state.objective.success_metric,
                     metric_value=metric_value,
                     committed=committed,
                     run_id=run_id,
-                ))
+                )
+                state.record_run(record)
+                _promote_embedded_external_validation(state, record)
                 state.iteration_index += 1
                 processed += 1
             _reset_stall_counters(state)  # Reset on successful finalization
@@ -2835,14 +3411,16 @@ def continue_research_session(
                 run_id = entry.get("run_id", "") if isinstance(entry, dict) else ""
                 if not run_id:
                     run_id = f"run_{state.iteration_index}"
-                state.record_run(_run_record_from_tracker_entry(
+                record = _run_record_from_tracker_entry(
                     entry=entry,
                     iteration=state.iteration_index,
                     metric_name=state.objective.success_metric,
                     metric_value=metric_value,
                     committed=committed,
                     run_id=run_id,
-                ))
+                )
+                state.record_run(record)
+                _promote_embedded_external_validation(state, record)
                 state.iteration_index += 1
                 processed += 1
             _reset_stall_counters(state)

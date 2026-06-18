@@ -67,12 +67,15 @@ class CheckpointExecutor(ToolExecutor):
             )
 
     def _create(self, name: str) -> CheckpointObservation:
-        commit_hash = self._workspace.create_checkpoint(name)
-        return CheckpointObservation(
-            checkpoint_name=name,
-            commit_hash=commit_hash,
-            content=[TextContent(text=f"Checkpoint '{name}' created at {commit_hash[:8]}")],
-        )
+        try:
+            commit_hash = self._workspace.create_checkpoint(name)
+            return CheckpointObservation(
+                checkpoint_name=name,
+                commit_hash=commit_hash,
+                content=[TextContent(text=f"Checkpoint '{name}' created at {commit_hash[:8]}")],
+            )
+        except ValueError as e:
+            return CheckpointObservation.from_text(text=str(e), is_error=True)
 
     def _restore(self, name: str) -> CheckpointObservation:
         try:
@@ -97,7 +100,10 @@ class CheckpointExecutor(ToolExecutor):
         return CheckpointObservation(content=[TextContent(text=text)])
 
     def _delete(self, name: str) -> CheckpointObservation:
-        deleted = self._workspace.delete_checkpoint(name)
+        try:
+            deleted = self._workspace.delete_checkpoint(name)
+        except ValueError as e:
+            return CheckpointObservation.from_text(text=str(e), is_error=True)
         if deleted:
             return CheckpointObservation(
                 checkpoint_name=name,

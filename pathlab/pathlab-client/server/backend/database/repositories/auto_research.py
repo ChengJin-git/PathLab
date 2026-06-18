@@ -15,6 +15,21 @@ from ..models import AutoResearchSession, AutoResearchExperiment, AutoResearchEv
 logger = logging.getLogger(__name__)
 
 
+def _session_owner_clause(statement, user_id: str | None):
+    if user_id is None:
+        return statement
+    return statement.where(AutoResearchSession.user_id == user_id)
+
+
+def _session_owned_event_ids(session_id: str, user_id: str | None):
+    statement = select(AutoResearchSession.session_id).where(
+        AutoResearchSession.session_id == session_id
+    )
+    if user_id is not None:
+        statement = statement.where(AutoResearchSession.user_id == user_id)
+    return statement
+
+
 class AutoResearchRepository:
     """Repository for Auto Research Session, Experiment, and Event operations."""
 
@@ -29,9 +44,17 @@ class AutoResearchRepository:
         return session
 
     @staticmethod
-    async def get_session(db: AsyncSession, session_id: str) -> Optional[AutoResearchSession]:
+    async def get_session(
+        db: AsyncSession,
+        session_id: str,
+        user_id: str | None = None,
+    ) -> Optional[AutoResearchSession]:
+        statement = select(AutoResearchSession).where(
+            AutoResearchSession.session_id == session_id
+        )
+        statement = _session_owner_clause(statement, user_id)
         result = await db.execute(
-            select(AutoResearchSession).where(AutoResearchSession.session_id == session_id)
+            statement
         )
         return result.scalar_one_or_none()
 
@@ -82,6 +105,8 @@ class AutoResearchRepository:
         for key, value in data.items():
             if key in {"id", "created_at"}:
                 continue
+            if key == "user_id" and str(getattr(existing, "user_id", "") or ""):
+                continue
             if hasattr(existing, key):
                 setattr(existing, key, value)
         existing.updated_at = utc_now()
@@ -90,11 +115,18 @@ class AutoResearchRepository:
         return existing
 
     @staticmethod
-    async def delete_session(db: AsyncSession, session_id: str) -> bool:
+    async def delete_session(
+        db: AsyncSession,
+        session_id: str,
+        user_id: str | None = None,
+    ) -> bool:
+        statement = delete(AutoResearchSession).where(
+            AutoResearchSession.session_id == session_id
+        )
+        if user_id is not None:
+            statement = statement.where(AutoResearchSession.user_id == user_id)
         result = await db.execute(
-            delete(AutoResearchSession).where(
-                AutoResearchSession.session_id == session_id
-            )
+            statement
         )
         await db.flush()
         return result.rowcount > 0
@@ -246,10 +278,15 @@ class AutoResearchRepository:
         db: AsyncSession,
         session_id: str,
         limit: int = 5000,
+        user_id: str | None = None,
     ) -> list[AutoResearchEvent]:
         result = await db.execute(
             select(AutoResearchEvent)
-            .where(AutoResearchEvent.session_id == session_id)
+            .where(
+                AutoResearchEvent.session_id.in_(
+                    _session_owned_event_ids(session_id, user_id)
+                )
+            )
             .order_by(AutoResearchEvent.sequence)
             .limit(limit)
         )
@@ -261,6 +298,7 @@ class AutoResearchRepository:
         session_id: str,
         cursor: int = 0,
         limit: int = 100,
+        user_id: str | None = None,
     ) -> list[AutoResearchEvent]:
         """
         Get events after a cursor position for SSE replay.
@@ -268,7 +306,9 @@ class AutoResearchRepository:
         result = await db.execute(
             select(AutoResearchEvent)
             .where(
-                AutoResearchEvent.session_id == session_id,
+                AutoResearchEvent.session_id.in_(
+                    _session_owned_event_ids(session_id, user_id)
+                ),
                 AutoResearchEvent.sequence > cursor,
             )
             .order_by(AutoResearchEvent.sequence)
@@ -280,11 +320,16 @@ class AutoResearchRepository:
     async def get_latest_sequence(
         db: AsyncSession,
         session_id: str,
+        user_id: str | None = None,
     ) -> int:
         """Get the latest event sequence number for a session."""
         result = await db.execute(
             select(AutoResearchEvent.sequence)
-            .where(AutoResearchEvent.session_id == session_id)
+            .where(
+                AutoResearchEvent.session_id.in_(
+                    _session_owned_event_ids(session_id, user_id)
+                )
+            )
             .order_by(desc(AutoResearchEvent.sequence))
             .limit(1)
         )

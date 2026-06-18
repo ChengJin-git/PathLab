@@ -77,6 +77,15 @@ def test_delete_checkpoint(workspace):
     assert len(workspace.list_checkpoints()) == 0
 
 
+def test_checkpoint_name_rejects_shell_metacharacters(workspace):
+    pwned = workspace.root / "pwned"
+
+    with pytest.raises(ValueError, match="Invalid checkpoint name"):
+        workspace.create_checkpoint(f"bad; touch {pwned}")
+
+    assert not pwned.exists()
+
+
 def test_checkpoint_does_not_affect_other_session(workspace):
     """Checkpoints are git tags scoped to this workspace's repo."""
     with tempfile.TemporaryDirectory(prefix="cp_other_") as tmpdir:

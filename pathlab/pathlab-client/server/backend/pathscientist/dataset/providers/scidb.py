@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
+from backend.common.net_guard import guarded_requests_get
 from ..types import DatasetRecord
 from .base import DownloadResult
 
@@ -198,7 +199,8 @@ class SciDBProvider:
     def _files_from_detail(self, detail_url: str) -> tuple[list[_SciDBFile], str]:
         sess = self._session or requests
         try:
-            resp = sess.get(
+            resp = guarded_requests_get(
+                sess,
                 detail_url,
                 timeout=self._timeout,
                 headers={"User-Agent": _USER_AGENT},
@@ -339,7 +341,8 @@ class SciDBProvider:
         last_error = None
         for attempt in range(self._retry_attempts + 1):
             try:
-                with sess.get(
+                with guarded_requests_get(
+                    sess,
                     entry.url,
                     stream=True,
                     timeout=self._timeout,

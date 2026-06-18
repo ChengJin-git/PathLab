@@ -133,6 +133,27 @@ def test_gdc_failed_request_returns_structured_failure(tmp_path):
     assert "gdc" in result.reason.lower() or "network" in result.reason.lower()
 
 
+def test_gdc_download_rejects_redirect_to_internal_url(tmp_path):
+    from unittest.mock import MagicMock
+    from pathscientist.dataset.providers.gdc import GDCProvider
+
+    class _RedirectResp:
+        status_code = 302
+        headers = {"location": "http://169.254.169.254/latest/meta-data/"}
+        def raise_for_status(self): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return None
+
+    session = MagicMock()
+    session.get.return_value = _RedirectResp()
+    result = GDCProvider(session=session).download(
+        _record(kind="gdc_data_urls", urls=["https://api.gdc.cancer.gov/data/uuid"]),
+        tmp_path,
+    )
+    assert result.status == "failed"
+    assert session.get.call_count == 1
+
+
 def test_gdc_no_urls_returns_skipped_policy(tmp_path):
     from pathscientist.dataset.providers.gdc import GDCProvider
 

@@ -91,18 +91,12 @@ describe('PathScientistExecutionConsole', () => {
     expect(screen.getAllByText('MIL method').length).toBeGreaterThan(0)
     expect(screen.getAllByText('ABMIL').length).toBeGreaterThan(0)
     expect(screen.getByText('Best so far')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /download artifacts for best run/i }).getAttribute('href')).toContain(
-      '/pathscientist/sessions/s1/runs/run_b/download',
-    )
+    expect(screen.getByRole('button', { name: /download artifacts for best run/i })).toBeInTheDocument()
     expect(screen.getByText('Iteration ladder')).toBeInTheDocument()
     expect(screen.getAllByText('Iter 1').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Iter 2').length).toBeGreaterThan(0)
-    expect(screen.getByRole('link', { name: /download artifacts for iter 1/i }).getAttribute('href')).toContain(
-      '/pathscientist/sessions/s1/runs/run_a/download',
-    )
-    expect(screen.getByRole('link', { name: /download artifacts for iter 2/i }).getAttribute('href')).toContain(
-      '/pathscientist/sessions/s1/runs/run_b/download',
-    )
+    expect(screen.getByRole('button', { name: /download artifacts for iter 1/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /download artifacts for iter 2/i })).toBeInTheDocument()
     expect(screen.getAllByText('run_experiment').length).toBeGreaterThan(0)
     expect(screen.getAllByText('ImportError in train.py').length).toBeGreaterThan(0)
     expect(screen.queryByText(/open stream/i)).not.toBeInTheDocument()
@@ -162,8 +156,76 @@ describe('PathScientistExecutionConsole', () => {
     expect(externalCard).toHaveTextContent('AUC 0.913')
     expect(externalCard).toHaveTextContent('18 samples')
     expect(externalCard).toHaveTextContent('completed')
-    expect(externalCard).toHaveTextContent('external_run_001')
-    expect(externalCard).toHaveTextContent('/workspace/outputs/best_model.pt')
+    expect(externalCard).not.toHaveTextContent('external_run_001')
+    expect(externalCard).not.toHaveTextContent('/workspace/outputs/best_model.pt')
+    expect(externalCard).not.toHaveTextContent('Run dir')
+  })
+
+  it('renders internal test and external validation summaries when both results exist', () => {
+    const completedSession: PathScientistSessionDetail = {
+      ...session,
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        ...session.state,
+        objective: { success_metric: 'auc' },
+        best_run_id: 'run_train',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_train',
+            committed: true,
+            model_path: '/workspace/outputs/best_model.pt',
+            run_dir: '/workspace/runs/run_train',
+            metrics: {
+              internal_test: {
+                loss: 0.9798,
+                accuracy: 0,
+                auc: null,
+                f1: 0,
+                n: 1,
+                coverage: 1,
+                missing_feature_count: 0,
+              },
+            },
+          },
+        ],
+        external_test_history: [
+          {
+            run_id: 'external_run_001',
+            status: 'completed',
+            committed: true,
+            metrics: {
+              auc: 0.91342,
+              accuracy: 0.842,
+              n_external_evaluated: 18,
+            },
+          },
+        ],
+      },
+    }
+
+    render(<PathScientistExecutionConsole session={completedSession} events={events} streamStatus="closed" />)
+
+    const internalCard = screen.getByTestId('pathscientist-internal-summary')
+    expect(internalCard).toHaveTextContent('Internal test')
+    expect(internalCard).toHaveTextContent('AUC --')
+    expect(internalCard).toHaveTextContent('1 samples')
+    expect(internalCard).toHaveTextContent('completed')
+    expect(internalCard).not.toHaveTextContent('coverage 100%')
+    expect(internalCard).not.toHaveTextContent('missing features 0')
+    expect(internalCard).not.toHaveTextContent('run_train')
+    expect(internalCard).not.toHaveTextContent('Model')
+    expect(internalCard).not.toHaveTextContent('Run dir')
+
+    const externalCard = screen.getByTestId('pathscientist-external-summary')
+    expect(externalCard).toHaveTextContent('External validation')
+    expect(externalCard).toHaveTextContent('AUC 0.913')
+    expect(externalCard).toHaveTextContent('18 samples')
+    expect(externalCard).toHaveTextContent('completed')
+    expect(externalCard).not.toHaveTextContent('external_run_001')
+    expect(externalCard).not.toHaveTextContent('Model')
+    expect(externalCard).not.toHaveTextContent('Run dir')
   })
 
   it('does not render an empty external validation card for sessions without external results', () => {
@@ -425,6 +487,25 @@ describe('PathScientistExecutionConsole', () => {
     expect(progress).toHaveTextContent('Epoch 7/30')
     expect(progress).toHaveTextContent('val AUC 0.964')
     expect(progress).toHaveTextContent('best 0.968')
+  })
+
+  it('hides stale epoch training progress after the session finishes', () => {
+    const completedTrainingSession: PathScientistSessionDetail = {
+      ...session,
+      status: 'running',
+      stage: 'completed',
+      training_progress: {
+        run_id: 'run_b',
+        current_epoch: 7,
+        total_epochs: 30,
+        current_val_auc: 0.9636,
+        best_val_auc: 0.9683,
+      },
+    }
+
+    render(<PathScientistExecutionConsole session={completedTrainingSession} events={events} streamStatus="closed" />)
+
+    expect(screen.queryByTestId('pathscientist-training-progress-badge')).not.toBeInTheDocument()
   })
 
   it('maps zero-based live iteration state to the displayed running iteration', () => {

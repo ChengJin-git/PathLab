@@ -16,6 +16,11 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from backend.common.net_guard import (
+    EgressDeniedError,
+    guarded_requests_get,
+    guarded_requests_post,
+)
 from ..types import DatasetRecord
 from .base import DownloadResult
 
@@ -315,7 +320,8 @@ class GDCProvider:
                 "from": offset,
                 "sort": "file_name:asc",
             }
-            resp = sess.post(
+            resp = guarded_requests_post(
+                sess,
                 _GDC_FILES_URL,
                 json=query,
                 timeout=self._timeout,
@@ -501,7 +507,8 @@ class GDCProvider:
             for attempt in range(1, self._max_retries + 1):
                 part_path: Path | None = None
                 try:
-                    with sess.get(
+                    with guarded_requests_get(
+                        sess,
                         url,
                         stream=True,
                         timeout=self._timeout,
@@ -552,6 +559,8 @@ class GDCProvider:
                         self._max_retries,
                         e,
                     )
+                    if isinstance(e, EgressDeniedError):
+                        break
                     if attempt < self._max_retries and self._retry_backoff_seconds > 0:
                         time.sleep(self._retry_backoff_seconds)
 
