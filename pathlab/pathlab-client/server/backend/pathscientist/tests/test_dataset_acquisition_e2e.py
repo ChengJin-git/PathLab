@@ -12,9 +12,11 @@ No network. Plan T9 from 2026-04-25-pathscientist-dataset-download-next-implemen
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from uuid import uuid4
 
@@ -239,6 +241,27 @@ def test_run_acquisition_stage_e2e_with_monkeypatched_service(tmp_path, monkeypa
     from pathscientist.dataset import acquisition as acq_mod
     monkeypatch.setattr(acq_mod, "DatasetAcquisitionService", _FakeService, raising=False)
 
+    registration_calls = []
+    def _fake_register(state, session, result, config=None):
+        registration_calls.append((
+            state.session_id,
+            str(result.manifest_path),
+            getattr(config, "pathlab_user_id", None),
+        ))
+        return {
+            "status": "registered",
+            "dataset_id": "pathlab-dataset-1",
+            "created_wsi_count": 2,
+            "skipped_wsi_count": 0,
+        }
+
+    monkeypatch.setattr(
+        runner_mod,
+        "_register_acquired_dataset_with_pathlab",
+        _fake_register,
+        raising=False,
+    )
+
     state = _state()
     state.advance(STAGE_GROUNDING)
     state.grounding = {"task_profile": _profile().to_dict()}
@@ -251,6 +274,7 @@ def test_run_acquisition_stage_e2e_with_monkeypatched_service(tmp_path, monkeypa
     config.download_policy = "public_only"
     config.max_download_size_gb = 20.0
     config.allow_large_downloads = False
+    config.pathlab_user_id = "user-1"
 
     session = type("S", (), {})()
     session.persistence_root = tmp_path / "persist"
@@ -264,5 +288,88 @@ def test_run_acquisition_stage_e2e_with_monkeypatched_service(tmp_path, monkeypa
     assert state.dataset_manifest_path == str(manifest_path)
     assert state.selected_dataset["name"] == "FakeDataset"
     assert state.selected_dataset["provider"] == "huggingface"
+    assert state.selected_dataset["pathlab_registration"]["dataset_id"] == "pathlab-dataset-1"
+    assert registration_calls == [("sid", str(manifest_path), "user-1")]
     # config.data_mounts mutated with the prepared paths
     assert config.data_mounts == {str(tmp_path / "prepared"): "/data"}
+
+
+def test_run_async_best_effort_uses_configured_gateway_loop_from_worker_thread(monkeypatch):
+    from pathscientist.orchestrator import runner as runner_mod
+
+    gateway_loop = asyncio.new_event_loop()
+    thread_name = "pathlab-gateway-loop-test"
+    thread_ready = threading.Event()
+    stop_loop = threading.Event()
+    executed: list[str] = []
+
+    def _loop_thread() -> None:
+        asyncio.set_event_loop(gateway_loop)
+        thread_ready.set()
+        gateway_loop.run_until_complete(
+            asyncio.to_thread(stop_loop.wait)
+        )
+
+    thread = threading.Thread(target=_loop_thread, daemon=True, name=thread_name)
+    thread.start()
+    thread_ready.wait(timeout=5)
+
+    class _PersistenceModule:
+        _gateway_loop = gateway_loop
+        _persist_lock = threading.Lock()
+
+    async def _work():
+        executed.append(threading.current_thread().name)
+        return {"status": "registered"}
+
+    monkeypatch.setattr(
+        runner_mod,
+        "_pathscientist_persistence_module",
+        lambda: _PersistenceModule,
+        raising=False,
+    )
+
+    try:
+        result = runner_mod._run_async_best_effort(
+            _work(), "PathLab dataset registration",
+        )
+    finally:
+        stop_loop.set()
+        gateway_loop.call_soon_threadsafe(lambda: None)
+        thread.join(timeout=5)
+        gateway_loop.close()
+
+    assert result == {"status": "registered"}
+    assert executed == [thread_name], "coroutine should run on the configured gateway loop"
+
+
+def test_run_async_best_effort_schedules_when_already_on_gateway_loop(monkeypatch):
+    from pathscientist.orchestrator import runner as runner_mod
+
+    async def _scenario():
+        loop = asyncio.get_running_loop()
+        executed: list[str] = []
+
+        class _PersistenceModule:
+            _gateway_loop = loop
+            _persist_lock = threading.Lock()
+
+        async def _work():
+            executed.append("ran")
+            return {"status": "registered"}
+
+        monkeypatch.setattr(
+            runner_mod,
+            "_pathscientist_persistence_module",
+            lambda: _PersistenceModule,
+            raising=False,
+        )
+
+        result = runner_mod._run_async_best_effort(
+            _work(), "PathLab dataset registration",
+        )
+        assert result == {"status": "scheduled"}
+        await asyncio.sleep(0)
+        assert executed == ["ran"]
+
+    asyncio.run(_scenario())

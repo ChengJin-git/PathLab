@@ -103,9 +103,10 @@ def find_generated_features_dir(
 
     Search order:
     1. ``expected_dir`` (the deterministic path the runner pre-baked)
-    2. ``<root>/.dataset/generated_features/pt_files/*``
-    3. ``<root>/output/pt_files/*``
-    4. ``<root>/output/runs/*/pt_files/*`` (only as a fallback)
+    2. ``expected_dir/*`` for PathLab ``features/<extractor>/<params_hash>``
+    3. ``<root>/.dataset/generated_features/pt_files/*``
+    4. ``<root>/output/pt_files/*``
+    5. ``<root>/output/runs/*/pt_files/*`` (only as a fallback)
     """
     if (
         expected_dir
@@ -115,6 +116,9 @@ def find_generated_features_dir(
         return Path(expected_dir)
     root = Path(output_root)
     candidates: list[Path] = []
+    expected = Path(expected_dir) if expected_dir else None
+    if expected and expected.is_dir():
+        candidates.extend(sorted(p for p in expected.iterdir() if p.is_dir()))
     rooted = root / ".dataset" / "generated_features" / "pt_files"
     if rooted.is_dir():
         candidates.extend(sorted(rooted.glob("*")))
@@ -286,7 +290,38 @@ def _leaf_feature_dir(
     except OSError:
         return None
     if not children:
-        return None
+        try:
+            nested = [
+                p
+                for p in candidate.host_path.rglob("*")
+                if (
+                    p.is_dir()
+                    and ".locks" not in p.parts
+                    and _contains_direct_files_with_ext(p, FEATURE_EXTS)
+                )
+            ]
+        except OSError:
+            return None
+        if not nested:
+            return None
+        strict_preferred = str(preferred_feature_extractor or "").strip().lower()
+        if strict_preferred:
+            nested = [
+                p for p in nested
+                if any(parent.name.lower() == strict_preferred for parent in p.parents)
+            ]
+            if not nested:
+                return None
+        chosen = sorted(nested, key=lambda p: (len(p.parts), str(p).lower()))[0]
+        rel = chosen.relative_to(candidate.host_path)
+        runtime = candidate.runtime_path
+        for part in rel.parts:
+            runtime = _runtime_join(runtime, part)
+        return ResolvedPath(
+            host_path=chosen,
+            runtime_path=runtime,
+            source=candidate.source,
+        )
 
     by_name = {p.name.lower(): p for p in children}
     strict_preferred = str(preferred_feature_extractor or "").strip().lower()
@@ -428,6 +463,7 @@ _CONVENTIONAL_FEATURE_DIRS = ("features", "pt_files")
 _CONVENTIONAL_IMAGE_DIRS = ("images", "patch_images")
 _CONVENTIONAL_WSI_DIRS = (
     "WSIs", "wsis",  # canonical, then legacy lowercase variant
+    "wsi_files",  # PathLab uploads raw slide store
     "wsi", "WSI", "wsi_images",
     "slides", "slide",  # legacy normalizer output
 )
@@ -564,6 +600,19 @@ def _conventional_under(host_root: str, container_root: str) -> ReadinessCandida
                 runtime_path=_runtime_join(container, sub),
                 source="mount",
             ))
+    training_root = host / "training"
+    if training_root.is_dir():
+        for feature_dir in sorted(training_root.glob("*/features")):
+            if feature_dir.is_dir():
+                rel = feature_dir.relative_to(host)
+                runtime = container
+                for part in rel.parts:
+                    runtime = _runtime_join(runtime, part)
+                _append_unique(cands.features_dirs, ResolvedPath(
+                    host_path=feature_dir,
+                    runtime_path=runtime,
+                    source="mount",
+                ))
     for sub in _CONVENTIONAL_IMAGE_DIRS:
         host_sub = host / sub
         if host_sub.is_dir():
@@ -882,8 +931,9 @@ def _assess_patch_classification_readiness(
         source="preflight",
         missing=missing,
         notes=[
-            "need DATA_DIR/features/<class>/*.pt or "
-            "DATA_DIR/images/<class>/*.{png,jpg,tif}",
+            "need PathLab DB-selected patch images with labels/splits, or "
+            "filesystem fallback DATA_DIR/images/<class>/* / "
+            "DATA_DIR/features/<class>/*.pt",
         ],
     )
 

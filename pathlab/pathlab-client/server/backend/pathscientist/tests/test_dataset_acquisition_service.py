@@ -171,6 +171,138 @@ def test_acquisition_failed_when_provider_returns_failed(tmp_path):
     assert "auth" in result.reason
 
 
+def test_download_only_wsi_uses_pathlab_dataset_layout(tmp_path):
+    rec = DatasetRecord(
+        dataset_id="hf:demo/wsi",
+        name="DemoWSI",
+        provider="huggingface",
+        access="public",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["lung"],
+        estimated_size_gb=1.0,
+        download=DownloadSpec(kind="hf_dataset", remote_id="demo/wsi"),
+    )
+    reg = _registry_with([rec], tmp_path)
+    workspace = tmp_path / "workspace"
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={
+            "huggingface": _FakeProvider(
+                status="downloaded",
+                files_to_create=[("slide_001.svs", b"wsi")],
+            )
+        },
+        normalizers=[],
+        cache_root=tmp_path / "uploads",
+        policy=AcquisitionPolicy(download_policy="all"),
+        download_only=True,
+    )
+
+    result = service.acquire(_profile("mil_classification", organ="lung"), workspace_root=workspace)
+
+    assert result.status == "prepared"
+    assert Path(result.manifest.raw_root) == tmp_path / "uploads" / "DemoWSI" / "wsi_files"
+    assert (tmp_path / "uploads" / "DemoWSI" / "wsi_files" / "slide_001.svs").exists()
+
+
+class _FailingProvider:
+    provider_name = "huggingface"
+
+    def probe(self, record):
+        return record
+
+    def download(self, record, target_dir):
+        raise AssertionError(
+            "download should be skipped for feature-ready TCGA-NSCLC cache"
+        )
+
+
+def _tcga_record(project: str, label: str) -> DatasetRecord:
+    return DatasetRecord(
+        dataset_id=f"gdc:{project}",
+        name=project,
+        provider="huggingface",
+        access="public",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["lung"],
+        estimated_size_gb=1.0,
+        tags=[label, "nsclc"],
+        download=DownloadSpec(kind="gdc", remote_id=project),
+    )
+
+
+def _write_tcga_nsclc_feature_cache(root: Path) -> None:
+    (root / "WSIs").mkdir(parents=True)
+    (root / "features" / "virchow2").mkdir(parents=True)
+    slide_ids = [
+        "LUAD__slide_001",
+        "LUAD__slide_002",
+        "LUSC__slide_003",
+        "LUSC__slide_004",
+    ]
+    for slide_id in slide_ids:
+        (root / "WSIs" / f"{slide_id}.svs").write_text("wsi")
+        (root / "features" / "virchow2" / f"{slide_id}.pt").write_bytes(b"pt")
+    (root / "labels.csv").write_text(
+        "slide_id,label\n"
+        "LUAD__slide_001,0\n"
+        "LUAD__slide_002,0\n"
+        "LUSC__slide_003,1\n"
+        "LUSC__slide_004,1\n",
+        encoding="utf-8",
+    )
+    (root / "splits.json").write_text(json.dumps({
+        "train": ["LUAD__slide_001", "LUSC__slide_003"],
+        "val": ["LUAD__slide_002"],
+        "test": ["LUSC__slide_004"],
+        "labels": {
+            "LUAD__slide_001": 0,
+            "LUAD__slide_002": 0,
+            "LUSC__slide_003": 1,
+            "LUSC__slide_004": 1,
+        },
+    }))
+
+
+def test_multi_mil_uses_existing_tcga_nsclc_feature_cache_without_download(tmp_path):
+    cache_root = tmp_path / "uploads"
+    nsclc_root = cache_root / "TCGA-NSCLC"
+    _write_tcga_nsclc_feature_cache(nsclc_root)
+    reg = _registry_with([
+        _tcga_record("TCGA-LUAD", "LUAD"),
+        _tcga_record("TCGA-LUSC", "LUSC"),
+    ], tmp_path)
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": _FailingProvider()},
+        normalizers=[],
+        cache_root=cache_root,
+        policy=AcquisitionPolicy(download_policy="all"),
+        download_only=False,
+    )
+    profile = TaskProfile(
+        task_type="mil_classification",
+        asset_level="slide",
+        input_modality="wsi",
+        label_granularity="slide",
+        organ="lung",
+        prediction_target="nsclc_subtype",
+    )
+
+    result = service.acquire(profile, workspace_root=tmp_path / "workspace")
+
+    assert result.status == "prepared"
+    assert result.reason == "multi_mil_feature_cache_hit"
+    contract = result.manifest.prepared_contract
+    assert contract["features_dir"] == "/data/raw/features/virchow2"
+    assert contract["splits_file"] == "/data/raw/splits.json"
+    assert contract["requires_feature_extraction"] is False
+    assert Path(result.manifest.prepared_root).is_dir()
+    assert result.manifest.data_mounts[str(nsclc_root)] == "/data/raw"
+
+
 def test_acquisition_failed_when_no_normalizer_supports_task(tmp_path):
     reg = _registry_with([
         DatasetRecord(

@@ -37,7 +37,7 @@ from .normalizers.base import DatasetNormalizer, NormalizerError
 from .policy import AcquisitionPolicy
 from .providers.base import DatasetProvider, DownloadResult
 from .registry import DatasetRegistry
-from .scout import DatasetCandidate, DatasetScout
+from .scout import DatasetCandidate, DatasetScout, DatasetSemanticMatcher
 from .types import DatasetManifest, TaskProfile
 
 logger = logging.getLogger(__name__)
@@ -343,14 +343,14 @@ def _dataset_root_for_record(cache_root: Path, record) -> Path:
 def _raw_root_for_record(cache_root: Path, record) -> Path:
     """Return the raw-asset directory for ``record``.
 
-    WSI datasets get ``<dataset_root>/WSIs/``; patch / tile / image
+    WSI datasets get ``<dataset_root>/wsi_files/``; patch / tile / image
     datasets get ``<dataset_root>/images/``. Anything else falls back
     to ``<dataset_root>/raw/`` so we still have a deterministic path.
     """
     root = _dataset_root_for_record(cache_root, record)
     asset_types = {a.lower() for a in (record.asset_types or [])}
     if asset_types & _WSI_ASSET_TOKENS:
-        return root / "WSIs"
+        return root / "wsi_files"
     if any("patch" in a or "image" in a or "tile" in a for a in asset_types):
         return root / "images"
     return root / "raw"
@@ -1015,6 +1015,116 @@ class DatasetAcquisitionService:
             reason=reason,
         )
 
+    def _multi_mil_feature_cache_hit(
+        self,
+        *,
+        profile: TaskProfile,
+        workspace_root: Path,
+        manifest_path: Path,
+        candidates: list[DatasetCandidate],
+        selected: list[DatasetCandidate],
+        multi_id: str,
+        multi_root: Path,
+        prepared_root: Path,
+        data_mounts: dict[str, str],
+    ) -> AcquisitionResult | None:
+        """Use an existing merged NSCLC feature cache before downloading."""
+        try:
+            from .readiness import assess_data_readiness
+        except Exception as e:
+            logger.debug("multi-MIL feature cache readiness unavailable: %s", e)
+            return None
+        readiness = assess_data_readiness(
+            profile,
+            data_mounts={str(multi_root): "/data/raw"},
+        )
+        if readiness.status != "features_ready":
+            return None
+
+        prepared_root.mkdir(parents=True, exist_ok=True)
+        datasets = [
+            {
+                "dataset_id": choice.record.dataset_id,
+                "name": choice.record.name,
+                "provider": choice.record.provider,
+                "remote_id": choice.record.download.remote_id,
+                "raw_root": str(_raw_root_for_record(self._cache_root, choice.record)),
+                "label": _tcga_nsclc_label(choice.record),
+                "status": "prepared",
+                "download_status": "cache_hit",
+                "reason": "merged_feature_cache_hit",
+            }
+            for choice in selected
+        ]
+        contract: dict[str, Any] = {
+            "mode": "multi_mil_classification",
+            "task_type": "mil_classification",
+            "features_dir": readiness.features_dir,
+            "splits_file": readiness.splits_file,
+            "wsi_dir": readiness.wsi_dir,
+            "labels_file": readiness.labels_file,
+            "features_dir_host": readiness.features_dir_host,
+            "splits_file_host": readiness.splits_file_host,
+            "wsi_dir_host": readiness.wsi_dir_host,
+            "labels_file_host": readiness.labels_file_host,
+            "requires_feature_extraction": False,
+            "data_mounts": data_mounts,
+            "datasets": datasets,
+            "label_semantics": "tcga_project_subtype",
+            "label_resolution_skill": "tcga_label_resolution",
+            "split_group": "case_submitter_id",
+        }
+        manifest = DatasetManifest(
+            dataset_id=multi_id,
+            provider="multi",
+            selected_for_task=profile.task_type,
+            raw_root=str(multi_root),
+            prepared_root=str(prepared_root),
+            data_mounts=data_mounts,
+            prepared_contract={
+                k: str(v) if not isinstance(v, (dict, list, bool)) else v
+                for k, v in contract.items()
+            },
+            access="mixed",
+            status="prepared",
+        )
+        save_manifest(manifest_path, manifest)
+        ev = write_acquisition_record(
+            workspace_root,
+            {
+                "status": "prepared",
+                "reason": "multi_mil_feature_cache_hit",
+                "candidate": {
+                    "dataset_id": multi_id,
+                    "score": max((c.score for c in selected), default=0.0),
+                    "reasons": ["multi_mil_classification"],
+                },
+                "download": {
+                    "status": "cache_hit",
+                    "datasets": datasets,
+                },
+                "prepared_contract": manifest.prepared_contract,
+                "data_readiness": readiness.to_dict(),
+                "task_profile": profile.to_dict(),
+            },
+        )
+        self._write_plan(
+            workspace_root,
+            candidates,
+            status="prepared",
+            selected_dataset_id=multi_id,
+            reason="multi_mil_feature_cache_hit",
+            profile=profile,
+        )
+        return AcquisitionResult(
+            status="prepared",
+            manifest=manifest,
+            manifest_path=manifest_path,
+            candidate=selected[0] if selected else None,
+            evidence_path=ev,
+            reason="multi_mil_feature_cache_hit",
+        )
+
     def _multi_mil_training_result(
         self,
         *,
@@ -1037,6 +1147,20 @@ class DatasetAcquisitionService:
             str(prepared_root): "/data",
             str(multi_root): "/data/raw",
         }
+
+        cache_hit = self._multi_mil_feature_cache_hit(
+            profile=profile,
+            workspace_root=workspace_root,
+            manifest_path=manifest_path,
+            candidates=candidates,
+            selected=selected,
+            multi_id=multi_id,
+            multi_root=multi_root,
+            prepared_root=prepared_root,
+            data_mounts=data_mounts,
+        )
+        if cache_hit is not None:
+            return cache_hit
 
         self._write_plan(
             workspace_root,
@@ -2090,7 +2214,12 @@ class DatasetAcquisitionService:
         # tags so downstream evidence reflects what was checked.
         all_records = self._probe_records(self._registry.load())
 
-        scout = DatasetScout(self._registry, policy=self._policy)
+        semantic_matcher = DatasetSemanticMatcher(self._local_identity_llm_parser)
+        scout = DatasetScout(
+            self._registry,
+            policy=self._policy,
+            semantic_matcher=semantic_matcher,
+        )
         candidates = scout.find_candidates(profile, top_k=10, records=all_records)
 
         # 1. No candidates at all

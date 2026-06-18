@@ -391,7 +391,6 @@ class KaggleProvider:
                 cli, "competitions", "download",
                 "-c", remote_id,
                 "-p", str(target_dir),
-                "--force",
             ]
         elif kind == "kaggle_dataset":
             cli = self._cli_path()
@@ -409,7 +408,6 @@ class KaggleProvider:
                 cli, "datasets", "download",
                 "-d", remote_id,
                 "-p", str(target_dir),
-                "--force",
             ]
         else:
             if progress is not None:

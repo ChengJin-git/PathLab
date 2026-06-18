@@ -28,6 +28,13 @@ def _record(kind="kaggle_competition", remote_id="prostate-cancer-grade-assessme
     )
 
 
+def _download_command(calls: list[list[str]], group: str) -> list[str]:
+    for cmd in calls:
+        if len(cmd) >= 3 and Path(cmd[0]).name == "kaggle" and cmd[1:3] == [group, "download"]:
+            return cmd
+    return []
+
+
 # ---------------------------------------------------------------- probe
 
 
@@ -91,8 +98,10 @@ def test_kaggle_competition_download_invokes_competition_cli(tmp_path, monkeypat
 
     result = KaggleProvider(runner=runner).download(_record(), tmp_path)
     assert result.status == "downloaded"
-    assert calls[0][:3] == ["kaggle", "competitions", "download"]
-    assert "prostate-cancer-grade-assessment" in calls[0]
+    download_cmd = _download_command(calls, "competitions")
+    assert download_cmd
+    assert "prostate-cancer-grade-assessment" in download_cmd
+    assert "--force" not in download_cmd
     assert any(p.name == "train_images.zip" for p in result.files)
 
 
@@ -112,8 +121,10 @@ def test_kaggle_dataset_download_invokes_dataset_cli(tmp_path, monkeypatch):
         _record(kind="kaggle_dataset", remote_id="owner/name"), tmp_path,
     )
     assert result.status == "downloaded"
-    assert calls[0][:3] == ["kaggle", "datasets", "download"]
-    assert "owner/name" in calls[0]
+    download_cmd = _download_command(calls, "datasets")
+    assert download_cmd
+    assert "owner/name" in download_cmd
+    assert "--force" not in download_cmd
 
 
 def test_kaggle_download_returns_failed_on_nonzero_exit(tmp_path, monkeypatch):

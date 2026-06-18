@@ -161,6 +161,87 @@ def test_scout_keyword_match_adds_score(tmp_path: Path):
     assert any("keyword:msi" in r for r in cand.reasons)
 
 
+def test_scout_treats_panda_isup_and_gleason_label_aliases_as_relevant(tmp_path: Path):
+    rec = DatasetRecord(
+        dataset_id="kaggle:prostate-cancer-grade-assessment",
+        name="PANDA — Prostate cANcer graDe Assessment",
+        provider="kaggle",
+        access="manual",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["prostate"],
+        tags=["WSI", "HE", "ISUP", "gleason", "kaggle"],
+        estimated_size_gb=400.0,
+        download=DownloadSpec(
+            kind="kaggle_competition",
+            remote_id="prostate-cancer-grade-assessment",
+        ),
+    )
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save([rec])
+    scout = DatasetScout(registry=reg)
+    profile = TaskProfile(
+        task_type="mil_classification",
+        asset_level="slide",
+        input_modality="wsi",
+        label_granularity="slide",
+        organ="prostate",
+        dataset_keywords=["PANDA", "isup_grade", "gleason_score"],
+        prediction_target="isup_grade",
+        required_label_keywords=["isup_grade", "gleason_score"],
+    )
+
+    cand = scout.find_candidates(profile, top_k=1)[0]
+
+    assert cand.relevant is True
+    assert "not_relevant" not in cand.reasons
+
+
+def test_scout_can_use_injected_llm_semantic_matcher_for_label_relevance(tmp_path: Path):
+    rec = DatasetRecord(
+        dataset_id="example:semantic",
+        name="Example Dataset",
+        provider="manual",
+        access="manual",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["stomach"],
+        tags=["histology", "risk category"],
+        estimated_size_gb=1.0,
+        download=DownloadSpec(kind="manual"),
+    )
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save([rec])
+    calls = []
+
+    def semantic_matcher(profile, record, *, needed, record_text, match_type):
+        calls.append({
+            "needed": needed,
+            "record_text": record_text,
+            "match_type": match_type,
+            "dataset_id": record.dataset_id,
+        })
+        return match_type == "label" and needed == ["mucosal_risk_score"]
+
+    scout = DatasetScout(registry=reg, semantic_matcher=semantic_matcher)
+    profile = TaskProfile(
+        task_type="mil_classification",
+        asset_level="slide",
+        input_modality="wsi",
+        label_granularity="slide",
+        organ="stomach",
+        dataset_keywords=[],
+        prediction_target="mucosal_risk_score",
+        required_label_keywords=["mucosal_risk_score"],
+    )
+
+    cand = scout.find_candidates(profile, top_k=1)[0]
+
+    assert cand.relevant is True
+    assert calls
+    assert calls[0]["match_type"] == "label"
+
+
 def test_scout_empty_registry_returns_empty(tmp_path: Path):
     reg = DatasetRegistry(tmp_path / "empty.json")
     scout = DatasetScout(registry=reg)

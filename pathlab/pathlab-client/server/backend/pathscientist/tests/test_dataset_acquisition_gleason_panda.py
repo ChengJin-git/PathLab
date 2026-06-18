@@ -120,8 +120,14 @@ def test_panda_reaches_kaggle_provider_when_manual_large_allowed(tmp_path, monke
 
     # Policy + provider both passed → the Kaggle CLI was invoked.
     assert captured_cmd, "Kaggle runner must be called"
-    assert captured_cmd[0][:3] == ["kaggle", "competitions", "download"]
-    assert "prostate-cancer-grade-assessment" in captured_cmd[0]
+    download_cmds = [
+        cmd for cmd in captured_cmd
+        if len(cmd) >= 3
+        and Path(cmd[0]).name == "kaggle"
+        and cmd[1:3] == ["competitions", "download"]
+    ]
+    assert download_cmds, "Kaggle competition download must be invoked"
+    assert "prostate-cancer-grade-assessment" in download_cmds[0]
     # Selected was PANDA.
     assert result.candidate.record.dataset_id == _PANDA_ID
     # No normalizer is registered (we passed normalizers=[]), so this lands

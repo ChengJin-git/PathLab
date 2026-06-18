@@ -75,8 +75,8 @@ class DatasetRepository(BaseRepository[Dataset]):
             async with db.begin_nested():
                 return await DatasetRepository.create(
                     db,
-                    dataset_id,
-                    name,
+                    dataset_id=dataset_id,
+                    name=name,
                     group_id=group_id,
                     user_id=user_id,
                     source_organ=source_organ,
