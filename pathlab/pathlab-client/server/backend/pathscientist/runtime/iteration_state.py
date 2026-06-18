@@ -122,7 +122,13 @@ class IterationState:
             "Re-run validate_script first."
         )
 
-    def check_can_quick_check(self, file_hash: str, script_path: str = "") -> None:
+    def check_can_quick_check(
+        self,
+        file_hash: str,
+        script_path: str = "",
+        *,
+        ignore_budget: bool = False,
+    ) -> None:
         """Raise PolicyViolation if quick check is not allowed.
 
         Requires: file has been validated.
@@ -131,7 +137,7 @@ class IterationState:
         is about to execute. ``script_path`` is carried through into the
         refusal text so the agent sees exactly which file mismatched.
         """
-        if self.remaining_budget <= 0:
+        if self.remaining_budget <= 0 and not ignore_budget:
             raise PolicyViolation(
                 f"Iteration budget exhausted ({self.max_iterations} iterations used). "
                 "Call finish to complete the session."
@@ -143,7 +149,13 @@ class IterationState:
                 )
             )
 
-    def check_can_full_run(self, file_hash: str, script_path: str = "") -> None:
+    def check_can_full_run(
+        self,
+        file_hash: str,
+        script_path: str = "",
+        *,
+        ignore_budget: bool = False,
+    ) -> None:
         """Raise PolicyViolation if full run is not allowed.
 
         Requires: file has been validated AND passed quick check.
@@ -151,7 +163,7 @@ class IterationState:
         See ``check_can_quick_check`` for the ``file_hash`` / ``script_path``
         contract.
         """
-        if self.remaining_budget <= 0:
+        if self.remaining_budget <= 0 and not ignore_budget:
             raise PolicyViolation(
                 f"Iteration budget exhausted ({self.max_iterations} iterations used). "
                 "Call finish to complete the session."

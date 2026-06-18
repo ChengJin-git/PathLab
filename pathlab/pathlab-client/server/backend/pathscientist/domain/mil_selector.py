@@ -53,6 +53,22 @@ _ALIASES: dict[str, str] = {
     "trans-mil": "transmil",
 }
 
+_MENTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(pattern, re.IGNORECASE), name)
+    for pattern, name in (
+        (r"(?<![A-Za-z0-9])ab[\s_-]*mil(?![A-Za-z0-9])", "abmil"),
+        (r"(?<![A-Za-z0-9])attention[\s_-]*(?:based[\s_-]*)?mil(?![A-Za-z0-9])", "abmil"),
+        (r"(?<![A-Za-z0-9])mean[\s_-]*mil(?![A-Za-z0-9])", "meanmil"),
+        (r"(?<![A-Za-z0-9])max[\s_-]*mil(?![A-Za-z0-9])", "maxmil"),
+        (r"(?<![A-Za-z0-9])dsmil(?![A-Za-z0-9])|(?<![A-Za-z0-9])ds[\s_-]*mil(?![A-Za-z0-9])", "dsmil"),
+        (r"(?<![A-Za-z0-9])dtfd[\s_-]*mil(?![A-Za-z0-9])|(?<![A-Za-z0-9])dtfdmil(?![A-Za-z0-9])", "dtfdmil"),
+        (r"(?<![A-Za-z0-9])clam[\s_-]*mb(?![A-Za-z0-9])", "clam_mb"),
+        (r"(?<![A-Za-z0-9])clam[\s_-]*sb(?![A-Za-z0-9])", "clam_sb"),
+        (r"(?<![A-Za-z0-9])clam(?![A-Za-z0-9])", "clam_sb"),
+        (r"(?<![A-Za-z0-9])trans[\s_-]*mil(?![A-Za-z0-9])|(?<![A-Za-z0-9])transmil(?![A-Za-z0-9])", "transmil"),
+    )
+)
+
 
 @dataclass(frozen=True)
 class MILModelSelection:
@@ -88,6 +104,32 @@ def normalize_mil_model_name(value: str = "") -> str:
 def canonical_mil_model_name(value: str = "") -> str:
     key = normalize_mil_model_name(value)
     return _MODEL_CANONICAL.get(key, value or _MODEL_CANONICAL[DEFAULT_MIL_MODEL])
+
+
+def detect_explicit_mil_model(task_profile: dict[str, Any] | None = None) -> str:
+    """Return a user-mentioned MIL model only when exactly one is named."""
+    profile = task_profile or {}
+    text_parts = [
+        profile.get("question", ""),
+        profile.get("objective", ""),
+        profile.get("user_question", ""),
+        profile.get("raw_question", ""),
+    ]
+    constraints = profile.get("constraints")
+    if isinstance(constraints, list):
+        text_parts.extend(str(item) for item in constraints)
+    text = " ".join(str(part or "") for part in text_parts)
+    if not text.strip():
+        return ""
+
+    mentioned: list[tuple[int, str]] = []
+    for pattern, name in _MENTION_PATTERNS:
+        for match in pattern.finditer(text):
+            mentioned.append((match.start(), name))
+    unique = {name for _, name in mentioned}
+    if len(unique) != 1:
+        return ""
+    return sorted(mentioned, key=lambda item: item[0])[0][1]
 
 
 _LLM_PROMPT = """Choose ONE MIL aggregator for this WSI classification task.
@@ -150,6 +192,15 @@ class MILModelSelector:
         organ = str((task_profile or {}).get("organ") or "").strip()
         target = str((task_profile or {}).get("prediction_target") or "").strip()
         task_type = str((task_profile or {}).get("task_type") or "").strip()
+        explicit_model = detect_explicit_mil_model(task_profile)
+        if explicit_model:
+            return self._build_selection(
+                explicit_model,
+                source="user",
+                reason=f"user explicitly requested {canonical_mil_model_name(explicit_model)}",
+                confidence="high",
+            )
+
         cache_key = self._cache_key(organ, target, task_type)
         cached = self._lookup_cache(cache_key)
         if cached is not None:

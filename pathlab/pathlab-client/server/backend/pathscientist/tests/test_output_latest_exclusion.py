@@ -53,7 +53,14 @@ class _StubWorkspace:
         self.root = real_workspace.root
         self._metrics = metrics
 
-    def run_script(self, script_path, env_vars=None, timeout=600.0, data_mounts=None):
+    def run_script(
+        self,
+        script_path,
+        env_vars=None,
+        timeout=600.0,
+        data_mounts=None,
+        **kwargs,
+    ):
         env = env_vars or {}
         out_dir = env.get("OUTPUT_DIR")
         if out_dir:
@@ -91,11 +98,7 @@ def _register(tmp_path: Path, metrics: dict) -> tuple[str, SessionDeps, _StubWor
     # doesn't refuse the call. In a real session the agent would have run
     # validate_script right before run_experiment; we inline that hash write
     # so these tests stay focused on the output/latest/ copy behavior.
-    import hashlib
-    # run_experiment/validate_script both use md5 truncated to 12 hex chars.
-    h12 = hashlib.md5(
-        (ws_dir / "train.py").read_text().encode()
-    ).hexdigest()[:12]
+    h12 = iteration_state.compute_file_hash(ws_dir, script_path="train.py")
     iteration_state.last_validated_hash = h12
     iteration_state.last_validated_path = "train.py"
     iteration_state.current_file_hash = h12
@@ -161,6 +164,23 @@ def test_quick_check_run_does_not_overwrite_output_latest(tmp_path):
             "run — quick-check results cannot be promoted to 'latest'. "
             f"Found: {latest.read_text() if latest.exists() else '(absent)'}"
         )
+    finally:
+        cleanup()
+
+
+def test_run_experiment_writes_run_metadata_at_start(tmp_path):
+    sid, deps, stub, cleanup = _register(tmp_path, {"auc": 0.86, "epochs": 2})
+    try:
+        _run(sid, stub, deps.config, quick_check=True)
+        run_dirs = sorted((Path(deps.config.output_dir) / "runs").glob("run_*"))
+        assert len(run_dirs) == 1
+        metadata_path = run_dirs[0] / "run_metadata.json"
+        assert metadata_path.exists()
+        metadata = json.loads(metadata_path.read_text())
+        assert metadata["run_id"] == run_dirs[0].name
+        assert metadata["quick_check"] is True
+        assert metadata["run_kind"] == "training"
+        assert metadata["script_path"] == "train.py"
     finally:
         cleanup()
 

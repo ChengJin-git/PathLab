@@ -82,6 +82,8 @@ evaluation:
   secondary_metrics: [f1, precision, recall, auc]
 
 constraints:
+  - "PathLab patch layout: in full PathLab service runs, patch classification uses DB-selected patch images/WSI records, labels, and split assignments from the training task; the trainer extracts frozen patch embeddings on-the-fly before the classifier head."
+  - "When running outside the PathLab DB context, filesystem fallback may use DATA_DIR/images/<class>/* or DATA_DIR/features/<class>/*.pt plus splits.json/labels.csv."
   - "Classifier class must have forward(self, x) method"
   - "x shape: (batch_size, D) — batch of feature vectors"
   - "Return: logits of shape (batch_size, num_classes)"

@@ -84,11 +84,11 @@ upstream_skill: feature_extraction
 
 readiness_guidance:
   feature_ready_contract:
-    features_dir: /data/features
+    features_dir: /data/features/{extractor}/{params_hash}
     splits_file: /data/splits.json
     splits_required_keys: [train, val, test, survival_times, event_status]
   raw_wsi_contract:
-    wsi_dir: /data/WSIs
+    wsi_dir: /data/wsi_files
     labels_file: /data/labels.csv
   policy: >
     If feature tensors and a survival splits file are already provided, train

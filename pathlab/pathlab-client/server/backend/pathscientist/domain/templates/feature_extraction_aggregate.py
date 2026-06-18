@@ -27,8 +27,6 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     data_output = Path(args.data_output_dir)
     meta_dir = output_dir / "worker_meta"
-    features_dir = data_output / "pt_files" / args.extractor
-    coords_dir = data_output / "patches"
 
     workers = []
     for rank in range(args.world_size):
@@ -48,6 +46,24 @@ def main() -> None:
         patches += int(worker.get("patches_extracted", 0))
         total_time = max(total_time, float(worker.get("duration", 0.0)))
         results.update(worker.get("results") or {})
+    features_dirs = [
+        str(worker.get("features_dir") or "").strip()
+        for worker in workers
+        if str(worker.get("features_dir") or "").strip()
+    ]
+    coords_dirs = [
+        str(worker.get("coords_dir") or "").strip()
+        for worker in workers
+        if str(worker.get("coords_dir") or "").strip()
+    ]
+    task_features_dirs = [
+        str(worker.get("task_features_dir") or "").strip()
+        for worker in workers
+        if str(worker.get("task_features_dir") or "").strip()
+    ]
+    features_dir = Path(features_dirs[0]) if features_dirs else data_output / "pt_files" / args.extractor
+    coords_dir = Path(coords_dirs[0]) if coords_dirs else data_output / "patches"
+    task_features_dir = Path(task_features_dirs[0]) if task_features_dirs else None
 
     min_success_rate = float(os.getenv("PATHSCIENTIST_FEATURE_MIN_SUCCESS_RATE", "0.95"))
     success_rate = (successful / total_wsi) if total_wsi > 0 else 0.0
@@ -69,6 +85,7 @@ def main() -> None:
         "patches_extracted": patches,
         "features_dir": str(features_dir),
         "coords_dir": str(coords_dir),
+        "task_features_dir": str(task_features_dir) if task_features_dir else "",
         "worker_count": args.world_size,
         "workers": workers,
         "results": results,

@@ -175,10 +175,15 @@ class ResearchDirector:
                 return state
 
             pending_external_test = _current_execution_skill(state) == "external_test"
-            if state.stop_reason or (
-                state.iteration_index >= state.max_iterations
-                and not pending_external_test
-            ):
+            user_stop = state.stop_reason in {"user_cancelled", "approval_rejected"}
+            should_stop_before_execution = user_stop or (
+                not pending_external_test
+                and (
+                    bool(state.stop_reason)
+                    or state.iteration_index >= state.max_iterations
+                )
+            )
+            if should_stop_before_execution:
                 # Preserve any explicit stop_reason already on the state
                 # (e.g. "user_cancelled", "stall_limit", "approval_rejected");
                 # only fall back to "budget_exhausted" when nothing is set and

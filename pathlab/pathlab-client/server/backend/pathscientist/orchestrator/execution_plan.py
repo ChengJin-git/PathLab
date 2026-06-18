@@ -103,6 +103,12 @@ _FEATURE_EXTRACTOR_ALIASES = {
 }
 
 
+def _truthy_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "ready"}
+
+
 def normalize_feature_extractor_name(value: str = "") -> str:
     """Return the runtime registry key for a requested feature extractor."""
     name = str(value or "").strip()
@@ -309,17 +315,25 @@ def _external_feature_extraction_step(
 ) -> tuple[ExecutionStep | None, dict[str, Any], list[str]]:
     """Build a role-tagged feature_extraction step for external raw WSIs."""
     inputs_contract = normalize_external_test_contract(contract or {})
-    if inputs_contract.get("external_features_dir") or not inputs_contract.get("external_wsi_dir"):
+    features_ready = _truthy_flag(inputs_contract.get("external_features_ready"))
+    if inputs_contract.get("external_features_dir") and features_ready:
+        return None, inputs_contract, []
+    if not inputs_contract.get("external_wsi_dir"):
         return None, inputs_contract, []
 
     extractor_name = normalize_feature_extractor_name(
         str(inputs_contract.get("external_extractor_name") or extractor_name)
     )
     output_root = str(inputs_contract.get("external_data_output_dir") or "").strip()
+    pathlab_root = str(inputs_contract.get("external_pathlab_uploads_dir") or "").strip()
+    if not output_root and pathlab_root:
+        output_root = pathlab_root
     if not output_root and data_output_dir:
         output_root = f"{str(data_output_dir).rstrip('/')}/external_validation"
     generated_dir = str(inputs_contract.get("external_generated_features_dir") or "").strip()
-    if not generated_dir and output_root:
+    if not generated_dir and pathlab_root:
+        generated_dir = f"{pathlab_root.rstrip('/')}/features/{extractor_name}"
+    elif not generated_dir and output_root:
         generated_dir = f"{output_root.rstrip('/')}/pt_files/{extractor_name}"
     if not output_root or not generated_dir:
         return None, inputs_contract, [

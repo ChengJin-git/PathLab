@@ -126,6 +126,12 @@ class FeatureExtractorSelector:
                 name = entry.get("name") if isinstance(entry, dict) else str(entry)
                 if name:
                     self._name_to_tier[name.lower()] = tier
+        self._canonical_by_mention: dict[str, str] = {}
+        for tier_entries in self._catalog.values():
+            for entry in tier_entries or []:
+                name = entry.get("name") if isinstance(entry, dict) else str(entry)
+                if name:
+                    self._canonical_by_mention[_mention_key(name)] = name
         self._cache_path = Path(cache_path) if cache_path else None
         self._cache: dict[str, dict] = {}
         self._loaded = False
@@ -150,6 +156,17 @@ class FeatureExtractorSelector:
         organ = str((task_profile or {}).get("organ") or "").strip()
         target = str((task_profile or {}).get("prediction_target") or "").strip()
         task_type = str((task_profile or {}).get("task_type") or "").strip()
+        explicit_extractor = detect_explicit_feature_extractor(
+            task_profile,
+            canonical_by_mention=self._canonical_by_mention,
+        )
+        if explicit_extractor:
+            return self._build_selection(
+                explicit_extractor,
+                source="user",
+                reason=f"user explicitly requested {explicit_extractor}",
+                confidence="high",
+            )
 
         # 2. Cache lookup. Cache entries are created from validated LLM picks.
         cache_key = self._cache_key(organ, target, task_type)
@@ -362,6 +379,73 @@ class FeatureExtractorSelector:
 
 
 # ---- helpers ---------------------------------------------------------
+
+
+def _mention_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def _profile_text(task_profile: dict[str, Any] | None = None) -> str:
+    profile = task_profile or {}
+    text_parts = [
+        profile.get("question", ""),
+        profile.get("objective", ""),
+        profile.get("user_question", ""),
+        profile.get("raw_question", ""),
+    ]
+    constraints = profile.get("constraints")
+    if isinstance(constraints, list):
+        text_parts.extend(str(item) for item in constraints)
+    return " ".join(str(part or "") for part in text_parts)
+
+
+def detect_explicit_feature_extractor(
+    task_profile: dict[str, Any] | None = None,
+    *,
+    canonical_by_mention: dict[str, str] | None = None,
+) -> str:
+    """Return a user-mentioned extractor only when exactly one is named."""
+    catalog = canonical_by_mention or {
+        "uni": "UNI",
+        "uni2": "UNI2",
+        "conch": "CONCH",
+        "conch15": "CONCH15",
+        "virchow": "Virchow",
+        "virchow2": "Virchow2",
+        "resnet50": "ResNet50",
+    }
+    text = _profile_text(task_profile)
+    if not text.strip():
+        return ""
+
+    mentioned: list[tuple[int, str]] = []
+    for key, canonical in catalog.items():
+        if not key:
+            continue
+        for pattern in _extractor_mention_patterns(key):
+            for match in pattern.finditer(text):
+                mentioned.append((match.start(), canonical))
+
+    unique = {canonical for _, canonical in mentioned}
+    if len(unique) != 1:
+        return ""
+    return sorted(mentioned, key=lambda item: item[0])[0][1]
+
+
+def _extractor_mention_patterns(key: str) -> tuple[re.Pattern[str], ...]:
+    escaped = re.escape(key)
+    variants = [escaped]
+    if key.endswith("2") and len(key) > 1:
+        variants.append(re.escape(key[:-1]) + r"[\s_.-]*2")
+    if key.endswith("15") and len(key) > 2:
+        variants.append(re.escape(key[:-2]) + r"[\s_.-]*1[\s_.-]*5")
+    return tuple(
+        re.compile(
+            rf"(?<![A-Za-z0-9]){variant}(?![A-Za-z0-9])",
+            re.IGNORECASE,
+        )
+        for variant in variants
+    )
 
 
 def _format_evidence(

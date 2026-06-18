@@ -44,7 +44,7 @@ def test_feature_extraction_skill_renders_tiers():
     out = skill.get_extractor_guidance_prompt()
 
     assert out, "feature_extraction skill must produce a non-empty guidance block"
-    assert "Default extractor: **UNI2**" in out
+    assert "Default extractor: **Virchow2**" in out
 
     # ImageNet baselines must be called out as ablation-only. The exact tier
     # name lives in extractors_available (imagenet_baseline) — the rendered

@@ -121,6 +121,16 @@ def resolve_llm_base_url(explicit: str = "") -> str:
     )
 
 
+def resolve_huggingface_token(explicit: str = "") -> str:
+    """Resolve the Hugging Face token from PathScientist or standard HF env."""
+    return _first_non_empty(
+        explicit,
+        os.environ.get("PATHSCIENTIST_HUGGINGFACE_TOKEN", ""),
+        os.environ.get("HF_TOKEN", ""),
+        os.environ.get("HUGGING_FACE_HUB_TOKEN", ""),
+    )
+
+
 def resolve_required_llm_model(explicit: str = "", component: str = "this operation") -> str:
     """Resolve a required LLM model or raise a clear configuration error."""
     model = resolve_llm_model(explicit, default="")
@@ -167,6 +177,7 @@ class PathScientistConfig:
     planned_mil_model: str = ""
     external_test_enabled: bool = False
     external_test_contract: dict[str, Any] = field(default_factory=dict)
+    run_history: list[dict[str, Any]] = field(default_factory=list)
 
     # LLM
     llm_model: str = ""
@@ -177,6 +188,7 @@ class PathScientistConfig:
     llm_wire_api: str = ""                  # "" | "responses" | "completion"
     codex_config_path: str = ""             # override for ~/.codex/config.toml
     codex_auth_path: str = ""               # override for ~/.codex/auth.json
+    huggingface_token: str = ""
 
     # Sandbox
     sandbox_mode: str = "auto"          # "local" | "apptainer" | "auto"
@@ -217,6 +229,7 @@ class PathScientistConfig:
     max_download_size_gb: float = 20.0
     allow_large_downloads: bool = False
     dataset_cache_dir: str = ""
+    pathlab_user_id: str = ""
 
     # Logging
     log_dir: str = ""
@@ -263,6 +276,7 @@ class PathScientistConfig:
             llm_wire_api=os.environ.get("PATHSCIENTIST_LLM_WIRE_API", ""),
             codex_config_path=os.environ.get("PATHSCIENTIST_CODEX_CONFIG", ""),
             codex_auth_path=os.environ.get("PATHSCIENTIST_CODEX_AUTH", ""),
+            huggingface_token=resolve_huggingface_token(),
             sandbox_mode=os.environ.get("PATHSCIENTIST_SANDBOX", "auto"),
             sandbox_image=os.environ.get("PATHSCIENTIST_SANDBOX_IMAGE", ""),
             skill_name=os.environ.get("PATHSCIENTIST_SKILL", ""),
@@ -294,6 +308,7 @@ class PathScientistConfig:
             max_download_size_gb=float(os.environ.get("PATHSCIENTIST_MAX_DOWNLOAD_SIZE_GB", "20.0")),
             allow_large_downloads=env_truthy("PATHSCIENTIST_ALLOW_LARGE_DOWNLOADS"),
             dataset_cache_dir=os.environ.get("PATHSCIENTIST_DATASET_CACHE_DIR", ""),
+            pathlab_user_id=os.environ.get("PATHSCIENTIST_PATHLAB_USER_ID", ""),
             log_dir=os.environ.get("PATHSCIENTIST_LOG_DIR", ""),
         )
 

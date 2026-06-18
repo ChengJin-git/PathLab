@@ -195,7 +195,33 @@ def load_splits(splits_file="/data/splits.json"):
     """Load train/val/test splits and labels."""
     with open(splits_file) as f:
         data = json.load(f)
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return _splits_from_pathlab_manifest(data["items"])
     return data
+
+
+def _splits_from_pathlab_manifest(items):
+    """Convert PathLab DB/training-task export records to splits.json shape."""
+    classes = sorted(
+        {
+            str(item.get("label") or "").strip()
+            for item in items
+            if str(item.get("label") or "").strip()
+        }
+    )
+    class_to_idx = {label: idx for idx, label in enumerate(classes)}
+    splits = {"train": [], "val": [], "test": [], "labels": {}}
+    for item in items:
+        wsi_id = str(item.get("wsi_id") or item.get("id") or "").strip()
+        label = str(item.get("label") or "").strip()
+        split = str(item.get("split") or "train").strip().lower()
+        if split in {"valid", "validation"}:
+            split = "val"
+        if not wsi_id or not label or split not in {"train", "val", "test"}:
+            continue
+        splits[split].append(wsi_id)
+        splits["labels"][wsi_id] = class_to_idx[label]
+    return splits
 
 
 def load_features(wsi_id, features_dir="/data/features", device="cpu"):

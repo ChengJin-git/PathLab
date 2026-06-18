@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 from typing import Any, Dict, Type, List, Callable, Tuple
 
 from .base import BaseExtractor
@@ -200,6 +201,14 @@ def get_extractor(name: str, pretrained: bool = True, **kwargs) -> BaseExtractor
     Raises:
         ValueError: If extractor name is not registered
     """
+    if "hf_token" not in kwargs:
+        token = (
+            os.environ.get("PATHSCIENTIST_HUGGINGFACE_TOKEN", "")
+            or os.environ.get("HF_TOKEN", "")
+            or os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
+        )
+        if token:
+            kwargs["hf_token"] = token
     extractor_class = _resolve_extractor_class(name)
     return extractor_class.build(pretrained=pretrained, **kwargs)
 

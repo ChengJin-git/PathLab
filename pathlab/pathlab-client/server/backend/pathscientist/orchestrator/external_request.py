@@ -83,7 +83,12 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _normalize_task_type(value: Any, *, selected_skill: str = "", task_profile: dict | None = None) -> str:
+def _normalize_task_type(
+    value: Any,
+    *,
+    selected_skill: str = "",
+    task_profile: dict | None = None,
+) -> str:
     task = _norm_lower(value)
     aliases = {
         "classification": "mil_classification",
@@ -107,7 +112,7 @@ def _normalize_task_type(value: Any, *, selected_skill: str = "", task_profile: 
     profile_task = _norm_lower((task_profile or {}).get("task_type"))
     if profile_task in aliases:
         return aliases[profile_task]
-    return "mil_classification"
+    return ""
 
 
 def _build_prompt(
@@ -156,12 +161,14 @@ Known existing local paths from the request/config: {known_paths}
 """
 
 
-def _parse_response(raw_text: str) -> dict[str, Any]:
+def _parse_response(raw_text: str) -> dict[str, Any] | None:
+    if not (raw_text or "").strip():
+        return None
     try:
         data = extract_json(raw_text or "")
     except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _first_dataset_by_role(data: dict[str, Any], role: str) -> dict[str, Any]:
@@ -268,11 +275,125 @@ def _maybe_set_path(
         contract[key] = _containerize_path(path, data_mounts)
 
 
+def _mark_external_features_ready(contract: dict[str, str]) -> None:
+    contract["external_features_ready"] = "true"
+
+
+def _feature_leaf_dirs(root: Path) -> list[Path]:
+    """Return feature directories that contain tensors directly.
+
+    PathLab uploads keep global cache tensors under
+    ``features/<extractor>/<params_hash>/*.pt`` while older prepared datasets
+    may use flat ``features/*.pt`` or ``pt_files/<extractor>/*.pt``.
+    """
+    if not root.is_dir():
+        return []
+    leaves: list[Path] = []
+    if _contains_ext(root, _FEATURE_EXTS):
+        try:
+            if any(p.is_file() and p.suffix.lower() in _FEATURE_EXTS for p in root.iterdir()):
+                leaves.append(root)
+        except OSError:
+            return leaves
+    try:
+        for candidate in sorted(root.rglob("*")):
+            if not candidate.is_dir() or ".locks" in candidate.parts:
+                continue
+            if any(
+                p.is_file() and p.suffix.lower() in _FEATURE_EXTS
+                for p in candidate.iterdir()
+            ):
+                leaves.append(candidate)
+    except OSError:
+        pass
+    return leaves
+
+
+def _choose_feature_leaf(root: Path, *, preferred_extractor: str = "") -> Path | None:
+    leaves = _feature_leaf_dirs(root)
+    preferred = _norm_lower(preferred_extractor)
+    if preferred:
+        preferred_leaves = [
+            leaf
+            for leaf in leaves
+            if any(parent.name.lower() == preferred for parent in leaf.parents)
+        ]
+        if preferred_leaves:
+            return preferred_leaves[0]
+    return leaves[0] if leaves else None
+
+
+def _discover_pathlab_uploads_layout(
+    root: Path,
+    contract: dict[str, str],
+    data_mounts: dict[str, str] | None,
+    *,
+    preferred_extractor: str = "",
+) -> None:
+    """Populate contract paths for a PathLab uploads repository root."""
+    markers = (
+        root / "wsi_files",
+        root / "features",
+        root / "coordinates",
+        root / "training",
+        root / "metadata",
+        root / "ai_results",
+        root / "models",
+    )
+    if not root.is_dir() or not any(path.exists() for path in markers):
+        return
+
+    contract.setdefault("external_data_layout", "pathlab_uploads")
+    _maybe_set_path(contract, "external_pathlab_uploads_dir", root, data_mounts)
+
+    wsi_files = root / "wsi_files"
+    if wsi_files.is_dir():
+        _maybe_set_path(contract, "external_pathlab_wsi_files_dir", wsi_files, data_mounts)
+        if _contains_ext(wsi_files, _WSI_EXTS):
+            _maybe_set_path(contract, "external_wsi_dir", wsi_files, data_mounts)
+
+    features_root = root / "features"
+    if features_root.is_dir():
+        _maybe_set_path(
+            contract,
+            "external_pathlab_global_features_dir",
+            features_root,
+            data_mounts,
+        )
+        if leaf := _choose_feature_leaf(features_root, preferred_extractor=preferred_extractor):
+            _maybe_set_path(contract, "external_features_dir", leaf, data_mounts)
+            _mark_external_features_ready(contract)
+
+    training = root / "training"
+    if training.is_dir():
+        _maybe_set_path(contract, "external_pathlab_training_dir", training, data_mounts)
+        if "external_features_dir" not in contract:
+            for candidate in sorted(training.glob("*/features")):
+                if candidate.is_dir() and (leaf := _choose_feature_leaf(candidate, preferred_extractor=preferred_extractor)):
+                    _maybe_set_path(contract, "external_features_dir", leaf, data_mounts)
+                    _mark_external_features_ready(contract)
+                    break
+
+    for key, dirname in (
+        ("external_pathlab_coordinates_dir", "coordinates"),
+        ("external_pathlab_metadata_dir", "metadata"),
+        ("external_pathlab_ai_results_dir", "ai_results"),
+        ("external_pathlab_models_dir", "models"),
+        ("external_pathlab_masks_dir", "masks"),
+        ("external_pathlab_progress_dir", "progress"),
+        ("external_pathlab_logs_dir", "logs"),
+    ):
+        path = root / dirname
+        if path.is_dir():
+            _maybe_set_path(contract, key, path, data_mounts)
+
+
 def _discover_contract_paths(
     external_paths: list[str],
     *,
     task_type: str,
     data_mounts: dict[str, str] | None,
+    preferred_extractor: str = "",
 ) -> tuple[dict[str, str], list[str]]:
     contract: dict[str, str] = {}
     existing_roots: list[Path] = []
@@ -301,17 +422,41 @@ def _discover_contract_paths(
         if labels.exists():
             _maybe_set_path(contract, "external_labels_file", labels, data_mounts)
 
+        _discover_pathlab_uploads_layout(
+            root,
+            contract,
+            data_mounts,
+            preferred_extractor=preferred_extractor,
+        )
+
         features = root / "features"
         images = root / "images"
         wsis = root / "WSIs"
         slides = root / "slides"
+        wsi_files = root / "wsi_files"
         masks = root / "masks"
         predictions = root / "predictions"
 
         if features.is_dir():
-            _maybe_set_path(contract, "external_features_dir", features, data_mounts)
+            feature_leaf = (
+                _choose_feature_leaf(features, preferred_extractor=preferred_extractor)
+                if task_type in {"mil_classification", "survival"}
+                else None
+            )
+            feature_leaf = feature_leaf or features
+            _maybe_set_path(contract, "external_features_dir", feature_leaf, data_mounts)
+            if _contains_ext(feature_leaf, _FEATURE_EXTS):
+                _mark_external_features_ready(contract)
         elif root.name.lower() in {"features", "pt_files"} or _contains_ext(root, _FEATURE_EXTS):
-            _maybe_set_path(contract, "external_features_dir", root, data_mounts)
+            feature_leaf = (
+                _choose_feature_leaf(root, preferred_extractor=preferred_extractor)
+                if task_type in {"mil_classification", "survival"}
+                else None
+            )
+            feature_leaf = feature_leaf or root
+            _maybe_set_path(contract, "external_features_dir", feature_leaf, data_mounts)
+            if _contains_ext(feature_leaf, _FEATURE_EXTS):
+                _mark_external_features_ready(contract)
 
         if images.is_dir() and _contains_ext(images, _IMAGE_EXTS):
             _maybe_set_path(contract, "external_images_dir", images, data_mounts)
@@ -320,9 +465,11 @@ def _discover_contract_paths(
 
         if wsis.is_dir() and _contains_ext(wsis, _WSI_EXTS):
             _maybe_set_path(contract, "external_wsi_dir", wsis, data_mounts)
+        elif wsi_files.is_dir() and _contains_ext(wsi_files, _WSI_EXTS):
+            _maybe_set_path(contract, "external_wsi_dir", wsi_files, data_mounts)
         elif slides.is_dir() and _contains_ext(slides, _WSI_EXTS):
             _maybe_set_path(contract, "external_wsi_dir", slides, data_mounts)
-        elif root.name.lower() in {"wsis", "wsi", "slides"} and _contains_ext(root, _WSI_EXTS):
+        elif root.name.lower() in {"wsis", "wsi", "slides", "wsi_files"} and _contains_ext(root, _WSI_EXTS):
             _maybe_set_path(contract, "external_wsi_dir", root, data_mounts)
 
         if masks.is_dir() and _contains_ext(masks, _MASK_EXTS):
@@ -386,6 +533,15 @@ def infer_external_request(
         return ExternalRequestInference(status="llm_error", reason=str(exc), source="llm")
 
     data = _parse_response(raw_text)
+    if data is None:
+        return ExternalRequestInference(
+            requested=False,
+            enabled=False,
+            status="parse_error",
+            reason="unparseable_llm_response",
+            raw={},
+            source="llm",
+        )
     requested = _as_bool(data.get("external_validation_requested"))
     confidence = _confidence(data.get("confidence"))
     training_data = _as_dict(data.get("training_data")) or _first_dataset_by_role(data, "internal")
@@ -426,15 +582,38 @@ def infer_external_request(
         selected_skill=selected_skill,
         task_profile=task_profile,
     )
+    if not task_type:
+        missing = _as_list(data.get("missing"))
+        if "external_task_type" not in missing:
+            missing.append("external_task_type")
+        return ExternalRequestInference(
+            requested=True,
+            enabled=False,
+            confidence=confidence,
+            status="unknown_task_type",
+            reason=reason,
+            contract={},
+            missing=missing,
+            training_data=training_data,
+            external_data=external_data,
+            raw=data,
+            source="llm",
+        )
     contract: dict[str, Any] = {
         "model_source": "best_run",
         "external_task_type": task_type,
     }
     external_paths = _as_list(external_data.get("paths"))
+    preferred_extractor = _norm(
+        getattr(config, "planned_feature_extractor", "")
+        or getattr(config, "feature_extractor", "")
+        or getattr(config, "pathlab_extractor", "")
+    )
     discovered, missing = _discover_contract_paths(
         external_paths,
         task_type=task_type,
         data_mounts=data_mounts,
+        preferred_extractor=preferred_extractor,
     )
     contract.update(discovered)
     contract = normalize_external_test_contract(

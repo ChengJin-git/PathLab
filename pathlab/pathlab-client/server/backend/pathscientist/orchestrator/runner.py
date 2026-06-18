@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
+import asyncio
+import concurrent.futures
+import contextlib
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,6 +48,100 @@ logger = logging.getLogger(__name__)
 
 
 ProgressCallback = Callable[[ResearchSessionState], None]
+
+
+def _pathscientist_persistence_module():
+    try:
+        from gateway import pathscientist_persistence
+    except Exception:
+        return None
+    return pathscientist_persistence
+
+
+def _run_async_best_effort(coro, description: str) -> Any:
+    """Run a short async DB task from the synchronous runner."""
+    persistence = _pathscientist_persistence_module()
+    gateway_loop = getattr(persistence, "_gateway_loop", None)
+    if gateway_loop is not None and not gateway_loop.is_closed():
+        current_loop = None
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        if current_loop is gateway_loop:
+            task = gateway_loop.create_task(coro)
+
+            def _log_failure(done: asyncio.Task[Any]) -> None:
+                try:
+                    done.result()
+                except Exception as exc:
+                    logger.warning("Failed to %s: %s", description, exc)
+
+            task.add_done_callback(_log_failure)
+            return {"status": "scheduled"}
+
+        future = asyncio.run_coroutine_threadsafe(coro, gateway_loop)
+        try:
+            lock = getattr(persistence, "_persist_lock", None)
+            if lock is None:
+                return future.result(timeout=5)
+            with lock:
+                return future.result(timeout=5)
+        except concurrent.futures.TimeoutError:
+            logger.warning("Timed out while trying to %s", description)
+            return {"status": "failed", "reason": "timeout"}
+        except Exception as exc:
+            logger.warning("Failed to %s: %s", description, exc)
+            return {"status": "failed", "reason": str(exc)}
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    with contextlib.suppress(Exception):
+        coro.close()
+    logger.warning(
+        "Skipped %s because Gateway event loop is not configured",
+        description,
+    )
+    return {"status": "skipped", "reason": "gateway_loop_not_configured"}
+
+
+def _register_acquired_dataset_with_pathlab(
+    state: ResearchSessionState,
+    session,
+    result,
+    config=None,
+) -> dict[str, Any]:
+    """Best-effort PathLab DB registration for a prepared acquisition result."""
+    if getattr(result, "status", "") != "prepared":
+        return {"status": "skipped", "reason": f"acquisition_status:{getattr(result, 'status', '')}"}
+    try:
+        from backend.database.database import safe_session
+        from ..dataset.pathlab_registration import register_manifest_with_pathlab
+    except Exception as exc:
+        logger.warning("PathLab dataset registration unavailable: %s", exc)
+        return {"status": "failed", "reason": f"import_error:{exc}"}
+
+    async def _run() -> dict[str, Any]:
+        owner_id = str(getattr(config, "pathlab_user_id", "") or "") or None
+        async with safe_session() as db:
+            payload = await register_manifest_with_pathlab(
+                db=db,
+                manifest=result.manifest,
+                session_id=str(state.session_id),
+                user_id=owner_id,
+            )
+            await db.commit()
+            return payload
+
+    try:
+        return _run_async_best_effort(_run(), "PathLab dataset registration")
+    except Exception as exc:
+        logger.warning("PathLab dataset registration failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)}
 
 
 def _notify_progress(
@@ -443,6 +540,9 @@ def _apply_external_request_inference(
         llm_caller=llm_caller,
         config=None if llm_caller is not None else config,
     )
+    if result.status in {"parse_error", "llm_error"}:
+        grounding["external_test_request_last_error"] = result.to_dict()
+        return result
     grounding["external_test_request"] = result.to_dict()
     if result.enabled:
         config.external_test_enabled = True
@@ -503,9 +603,11 @@ def _prepare_data_readiness_and_execution_plan(
     # Plan-2026-05-17: select the feature extractor before data readiness so
     # existing feature caches are checked against the same model the execution
     # contract will freeze.
+    extractor_task_profile = dict(profile.to_dict())
+    extractor_task_profile["question"] = state.objective.question or ""
     extractor_selection = _select_feature_extractor(
         config=config,
-        task_profile=profile.to_dict(),
+        task_profile=extractor_task_profile,
         grounding=state.grounding or {},
         session=session,
     )
@@ -516,11 +618,17 @@ def _prepare_data_readiness_and_execution_plan(
     data_mounts: dict[str, str] = {}
     data_mounts.update(manifest_mounts)
     data_mounts.update(getattr(config, "data_mounts", {}) or {})
+    internal_readiness_mounts = _internal_readiness_data_mounts(
+        state,
+        config,
+        manifest_mounts=manifest_mounts,
+        data_mounts=data_mounts,
+    )
 
     readiness = assess_data_readiness(
         profile,
         prepared_contract=prepared_contract,
-        data_mounts=data_mounts,
+        data_mounts=internal_readiness_mounts,
         question=state.objective.question,
         generated_contract_root=workspace_root / ".dataset" / "readiness",
         preferred_feature_extractor=extractor_name,
@@ -528,9 +636,11 @@ def _prepare_data_readiness_and_execution_plan(
     selected_skill = (state.grounding or {}).get("selected_skill", "") or profile.preferred_skill
     mil_selection = None
     if selected_skill == "mil_classification" or profile.task_type == "mil_classification":
+        mil_task_profile = dict(profile.to_dict())
+        mil_task_profile["question"] = state.objective.question or ""
         mil_selection = _select_mil_model(
             config=config,
-            task_profile=profile.to_dict(),
+            task_profile=mil_task_profile,
             grounding=state.grounding or {},
             session=session,
         )
@@ -584,7 +694,7 @@ def _prepare_data_readiness_and_execution_plan(
         acquisition_status=state.acquisition_status,
         data_output_dir=str(feature_output_root),
         generated_features_dir=str(
-            feature_output_root / "pt_files" / extractor_name
+            _feature_leaf_for_output_root(feature_output_root, extractor_name)
         ),
         extractor_name=extractor_name,
         mil_model_name=mil_model_name,
@@ -642,6 +752,63 @@ def _current_execution_step(state) -> dict:
     if 0 <= current < len(steps) and isinstance(steps[current], dict):
         return steps[current]
     return {}
+
+
+def _has_resumable_execution_step(state: ResearchSessionState) -> bool:
+    """Whether persisted state already points at an executable plan step."""
+    plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
+    if not isinstance(plan, dict):
+        return False
+    if str(plan.get("status") or "") != "ready":
+        return False
+    steps = plan.get("steps") or []
+    current = int(plan.get("current_step", 0) or 0)
+    if not (0 <= current < len(steps)):
+        return False
+    return isinstance(steps[current], dict) and bool(steps[current].get("skill"))
+
+
+def _sync_external_test_config_from_state(
+    state: ResearchSessionState,
+    config,
+) -> None:
+    """Restore external_test runtime config from persisted orchestrator state."""
+    plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
+    if not isinstance(plan, dict):
+        plan = {}
+    plan_has_external_test = any(
+        isinstance(step, dict) and str(step.get("skill") or "") == "external_test"
+        for step in (plan.get("steps") or [])
+    )
+    contract: dict[str, Any] = {}
+    request = (state.grounding or {}).get("external_test_request")
+    if isinstance(request, dict):
+        raw_contract = request.get("contract") or {}
+        if isinstance(raw_contract, dict):
+            contract = normalize_external_test_contract(raw_contract)
+
+    request_enabled = isinstance(request, dict) and bool(request.get("enabled"))
+    if contract and not (request_enabled or plan_has_external_test):
+        return
+
+    step = _current_execution_step(state)
+    if step.get("skill") == "external_test":
+        raw_inputs = step.get("inputs") or {}
+        if isinstance(raw_inputs, dict):
+            step_contract = normalize_external_test_contract(raw_inputs)
+            if step_contract:
+                contract.update(step_contract)
+
+    if not contract:
+        return
+
+    config.external_test_enabled = True
+    config.external_test_contract = dict(contract)
+    if isinstance(request, dict):
+        request["enabled"] = True
+        request["requested"] = True
+        request["contract"] = dict(contract)
+        state.grounding["external_test_request"] = request
 
 
 def _sync_planned_feature_extraction_env_from_current_step(state, config) -> None:
@@ -796,7 +963,10 @@ def _advance_execution_plan_after_metric_step(
                 str(inputs.get("model_source") or "").lower() == "best_run"
                 and not inputs.get("model_path")
             ):
-                model_path = str((last_experiment or {}).get("model_path") or "")
+                model_path = _best_run_model_path_from_state(
+                    state,
+                    last_experiment=last_experiment,
+                )
                 if model_path:
                     inputs["model_path"] = model_path
         plan["current_step"] = current + 1
@@ -818,6 +988,69 @@ def _advance_execution_plan_after_metric_step(
             state.stop_reason = state.stop_reason or "external_test_completed"
         return True
     return False
+
+
+def _best_run_model_path_from_state(
+    state: ResearchSessionState,
+    *,
+    last_experiment: dict | None = None,
+) -> str:
+    """Resolve a checkpoint for external_test model_source=best_run."""
+    exp = last_experiment or {}
+    for value in (
+        exp.get("model_path"),
+        (exp.get("pathlab") or {}).get("model_path")
+        if isinstance(exp.get("pathlab"), dict)
+        else "",
+    ):
+        text = str(value or "").strip()
+        if text and Path(text).expanduser().exists():
+            return text
+
+    candidates: list[tuple[float, str]] = []
+    for record in getattr(state, "run_history", []) or []:
+        if not getattr(record, "committed", False):
+            continue
+        for value in (
+            getattr(record, "model_path", ""),
+            (getattr(record, "pathlab", {}) or {}).get("model_path")
+            if isinstance(getattr(record, "pathlab", {}), dict)
+            else "",
+        ):
+            text = str(value or "").strip()
+            if text and Path(text).expanduser().exists():
+                candidates.append((float(getattr(record, "metric_value", 0.0) or 0.0), text))
+                break
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _run_record_from_tracker_entry(
+    *,
+    entry: dict,
+    iteration: int,
+    metric_name: str,
+    metric_value: float,
+    committed: bool,
+    run_id: str,
+) -> RunRecord:
+    return RunRecord(
+        run_id=run_id,
+        iteration=iteration,
+        metric_name=metric_name,
+        metric_value=metric_value,
+        committed=committed,
+        metrics=dict(entry.get("metrics") or {}),
+        run_dir=str(entry.get("run_dir") or ""),
+        data_output_dir=str(entry.get("data_output_dir") or ""),
+        data_output_artifacts=list(entry.get("data_output_artifacts") or []),
+        model_path=str(entry.get("model_path") or ""),
+        pathlab=dict(entry.get("pathlab") or {}),
+        quick_check=bool(entry.get("quick_check", False)),
+        run_kind=str(entry.get("run_kind") or ""),
+        error_type=str(entry.get("error_type") or ""),
+    )
 
 
 def _maybe_run_acquisition_for_missing_data(
@@ -867,7 +1100,7 @@ def _maybe_run_acquisition_for_missing_data(
 # ``images`` covers patch datasets / kaggle-style ``train_images``.
 _DATASET_ASSET_SUBDIRS = frozenset({
     "wsis", "wsi", "images", "image", "tiles", "raw",
-    "slides",
+    "slides", "wsi_files",
 })
 
 _NESTED_DATASET_ASSET_SUBDIRS = frozenset({
@@ -983,6 +1216,13 @@ def _resolve_features_data_output_dir(
             return symlink_root
         return dataset_root
     return fallback
+
+
+def _feature_leaf_for_output_root(output_root: Path, extractor_name: str) -> Path:
+    output_root = Path(output_root)
+    if (output_root / "wsi_files").is_dir():
+        return output_root / "features" / extractor_name
+    return output_root / "pt_files" / extractor_name
 
 
 def _inject_data_mounts_from_question(state, config) -> None:
@@ -1111,6 +1351,101 @@ def _host_path_from_mounts(path_text: str, data_mounts: dict[str, str]) -> Path 
             host = Path(host_root).expanduser()
             return host / suffix if suffix else host
     return None
+
+
+def _internal_readiness_data_mounts(
+    state,
+    config,
+    *,
+    manifest_mounts: dict[str, str],
+    data_mounts: dict[str, str],
+) -> dict[str, str]:
+    contracts: list[dict[str, Any]] = []
+    request = (state.grounding or {}).get("external_test_request")
+    if isinstance(request, dict):
+        contract = request.get("contract")
+        if isinstance(contract, dict):
+            contracts.append(contract)
+    explicit_contract = getattr(config, "external_test_contract", {}) or {}
+    if isinstance(explicit_contract, dict):
+        contracts.append(explicit_contract)
+    if not contracts:
+        return dict(data_mounts or {})
+
+    def _resolve(path: Path) -> Path:
+        try:
+            return path.expanduser().resolve()
+        except OSError:
+            return path.expanduser()
+
+    def _contains(parent: Path, child: Path) -> bool:
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            return False
+
+    fields = (
+        "paths",
+        "wsi_dir",
+        "features_dir",
+        "images_dir",
+        "masks_dir",
+        "predictions_dir",
+        "splits_file",
+        "labels_file",
+        "pathlab_uploads_dir",
+        "pathlab_wsi_files_dir",
+        "pathlab_global_features_dir",
+        "pathlab_training_dir",
+        "pathlab_coordinates_dir",
+        "pathlab_metadata_dir",
+        "pathlab_ai_results_dir",
+        "pathlab_models_dir",
+        "pathlab_masks_dir",
+        "pathlab_progress_dir",
+        "pathlab_logs_dir",
+        "data_output_dir",
+        "generated_features_dir",
+    )
+
+    def _role_paths(role: str) -> set[Path]:
+        out: set[Path] = set()
+        for contract in contracts:
+            normalized = normalize_external_test_contract(contract or {})
+            for item in normalized.get("datasets") or []:
+                if not isinstance(item, dict) or item.get("role") != role:
+                    continue
+                for field in fields:
+                    raw_value = item.get(field)
+                    values = raw_value if isinstance(raw_value, list) else [raw_value]
+                    for value in values:
+                        host = _host_path_from_mounts(str(value or ""), data_mounts)
+                        if host is not None:
+                            out.add(_resolve(host))
+        return out
+
+    external_paths = _role_paths("external")
+    if not external_paths:
+        return dict(data_mounts or {})
+    internal_paths = _role_paths("internal")
+    manifest_paths = {_resolve(Path(path)) for path in (manifest_mounts or {})}
+
+    filtered: dict[str, str] = {}
+    for host, container in (data_mounts or {}).items():
+        mount_host = _resolve(Path(host))
+        is_external = any(
+            _contains(mount_host, path) or _contains(path, mount_host)
+            for path in external_paths
+        )
+        is_internal = any(
+            _contains(mount_host, path) or _contains(path, mount_host)
+            for path in internal_paths | manifest_paths
+        )
+        if is_external and not is_internal:
+            continue
+        filtered[host] = container
+    return filtered
 
 
 def _slug_dataset_name(value: str) -> str:
@@ -1359,7 +1694,13 @@ def _run_acquisition_stage(
             state, session, config,
         )
         local_status = (local_state.data_readiness or {}).get("status")
-        if local_status in {"features_ready", "raw_wsi_ready", "not_applicable"}:
+        if local_status in {
+            "features_ready",
+            "raw_wsi_ready",
+            "patch_features_ready",
+            "patch_images_ready",
+            "not_applicable",
+        }:
             state.data_readiness = local_state.data_readiness
             state.execution_plan = local_state.execution_plan
             state.acquisition_status = "skipped"
@@ -1550,6 +1891,16 @@ def _run_acquisition_stage(
             "access": record.access,
             "license": record.license,
         }
+
+    if result.status == "prepared":
+        registration = _register_acquired_dataset_with_pathlab(
+            state,
+            session,
+            result,
+            config,
+        )
+        if registration:
+            state.selected_dataset.setdefault("pathlab_registration", registration)
 
     manifest_mounts = getattr(result.manifest, "data_mounts", None) or {}
     if manifest_mounts:
@@ -2168,12 +2519,13 @@ def run_research_session(
                 if not run_id:
                     run_id = f"run_{state.iteration_index}"
 
-                state.record_run(RunRecord(
-                    run_id=run_id,
+                state.record_run(_run_record_from_tracker_entry(
+                    entry=entry,
                     iteration=state.iteration_index,
                     metric_name=state.objective.success_metric,
                     metric_value=metric_value,
                     committed=committed,
+                    run_id=run_id,
                 ))
                 state.iteration_index += 1
                 processed += 1
@@ -2382,22 +2734,27 @@ def continue_research_session(
 
     # Plan-2026-04-30 data-readiness review P0-1: mirror of run_research_session.
     if state.stage == STAGE_EXECUTION:
-        state.advance(STAGE_PRE_EXECUTION_READY)
-        persist_research_session_state(conversation, state)
-        state = _prepare_data_readiness_and_execution_plan(state, session, config)
-        state = _maybe_run_acquisition_for_missing_data(state, session, config)
-        persist_research_session_state(conversation, state)
-        plan_status = (state.execution_plan or {}).get("status")
-        if plan_status == "stopped_after_acquisition":
-            state.stop_reason = "stop_after_acquisition"
-            _persist_execution_brief(state, session)
+        if _has_resumable_execution_step(state):
+            _sync_external_test_config_from_state(state, config)
+            _sync_planned_feature_extraction_env_from_current_step(state, config)
             persist_research_session_state(conversation, state)
-            return state, session, conversation
-        if plan_status in {"blocked", "needs_acquisition"}:
-            state.stop_reason = "data_missing"
-            _persist_execution_brief(state, session)
+        else:
+            state.advance(STAGE_PRE_EXECUTION_READY)
             persist_research_session_state(conversation, state)
-            return state, session, conversation
+            state = _prepare_data_readiness_and_execution_plan(state, session, config)
+            state = _maybe_run_acquisition_for_missing_data(state, session, config)
+            persist_research_session_state(conversation, state)
+            plan_status = (state.execution_plan or {}).get("status")
+            if plan_status == "stopped_after_acquisition":
+                state.stop_reason = "stop_after_acquisition"
+                _persist_execution_brief(state, session)
+                persist_research_session_state(conversation, state)
+                return state, session, conversation
+            if plan_status in {"blocked", "needs_acquisition"}:
+                state.stop_reason = "data_missing"
+                _persist_execution_brief(state, session)
+                persist_research_session_state(conversation, state)
+                return state, session, conversation
 
     if state.stage == STAGE_PRE_EXECUTION_READY and _stop_before_execution_enabled(config):
         state = _stop_before_execution(state, session, conversation)
@@ -2478,12 +2835,13 @@ def continue_research_session(
                 run_id = entry.get("run_id", "") if isinstance(entry, dict) else ""
                 if not run_id:
                     run_id = f"run_{state.iteration_index}"
-                state.record_run(RunRecord(
-                    run_id=run_id,
+                state.record_run(_run_record_from_tracker_entry(
+                    entry=entry,
                     iteration=state.iteration_index,
                     metric_name=state.objective.success_metric,
                     metric_value=metric_value,
                     committed=committed,
+                    run_id=run_id,
                 ))
                 state.iteration_index += 1
                 processed += 1

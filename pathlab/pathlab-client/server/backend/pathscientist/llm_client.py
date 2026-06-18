@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import json
 import os
-import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
 
 from pydantic import SecretStr
+
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10
+    import tomli as tomllib
 
 from .config import (
     PathScientistConfig,

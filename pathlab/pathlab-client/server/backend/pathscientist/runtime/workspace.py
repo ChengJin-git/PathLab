@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shlex
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from openhands.sdk.workspace.local import LocalWorkspace
-from openhands.sdk.workspace.models import CommandResult
+try:
+    from openhands.sdk.workspace.local import LocalWorkspace
+    from openhands.sdk.workspace.models import CommandResult
+except ModuleNotFoundError:
+    LocalWorkspace = None
 
 if TYPE_CHECKING:
     from .sandbox import ApptainerSandbox
@@ -80,6 +85,60 @@ class CommitInfo:
     timestamp: str
 
 
+@dataclass
+class _FallbackCommandResult:
+    command: str
+    exit_code: int
+    stdout: str = ""
+    stderr: str = ""
+    timeout_occurred: bool = False
+
+
+if "CommandResult" not in globals():
+    CommandResult = _FallbackCommandResult
+
+
+def _allow_subprocess_workspace_fallback() -> bool:
+    return os.getenv("PATHSCIENTIST_ALLOW_SUBPROCESS_WORKSPACE_FALLBACK", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+class _SubprocessWorkspace:
+    """Small local executor used when OpenHands SDK is unavailable."""
+
+    def __init__(self, working_dir: Path):
+        self.working_dir = Path(working_dir)
+
+    def execute_command(self, command: str, timeout: float = 60.0) -> CommandResult:
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self.working_dir,
+                shell=True,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+            )
+            return CommandResult(
+                command=command,
+                exit_code=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                timeout_occurred=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return CommandResult(
+                command=command,
+                exit_code=-1,
+                stdout=exc.stdout or "",
+                stderr=exc.stderr or "",
+                timeout_occurred=True,
+            )
+
+
 class CommitFailed(RuntimeError):
     """Raised when a git subprocess invoked by the workspace exits non-zero.
 
@@ -110,7 +169,14 @@ class Workspace:
     def __init__(self, root: Path, sandbox: ApptainerSandbox | None = None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
-        self._ws = LocalWorkspace(working_dir=self.root)
+        if LocalWorkspace is None and not _allow_subprocess_workspace_fallback():
+            raise RuntimeError(
+                "OpenHands SDK LocalWorkspace is required. Set "
+                "PATHSCIENTIST_ALLOW_SUBPROCESS_WORKSPACE_FALLBACK=1 only for "
+                "lightweight tests that deliberately run without the SDK."
+            )
+        workspace_cls = LocalWorkspace or _SubprocessWorkspace
+        self._ws = workspace_cls(working_dir=self.root)
         self._sandbox = sandbox
 
         if not (self.root / ".git").exists():
@@ -119,8 +185,10 @@ class Workspace:
             self._git("config user.name 'PathScientist Code Agent'")
 
     @property
-    def sdk_workspace(self) -> LocalWorkspace:
+    def sdk_workspace(self) -> Any:
         """Expose the underlying SDK workspace for tools that need it."""
+        if LocalWorkspace is None or not isinstance(self._ws, LocalWorkspace):
+            raise RuntimeError("OpenHands SDK LocalWorkspace is not available")
         return self._ws
 
     # --- Command execution (delegated to SDK) ---
@@ -172,12 +240,36 @@ class Workspace:
                 timeout_occurred=result.timed_out,
             )
 
-        env_prefix = ""
-        if env_vars:
-            env_prefix = " ".join(f"{k}={v}" for k, v in env_vars.items()) + " "
         runner = "bash" if script_type == "bash" else "python"
-        cmd = f"{env_prefix}{runner} {script_path}"
-        return self._ws.execute_command(cmd, timeout=timeout)
+        cmd = [runner, str(script_path)]
+        env = os.environ.copy()
+        if env_vars:
+            env.update({str(k): str(v) for k, v in env_vars.items()})
+        command_text = " ".join(shlex.quote(part) for part in cmd)
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=self.root,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=timeout,
+            )
+            return CommandResult(
+                command=command_text,
+                exit_code=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                timeout_occurred=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            return CommandResult(
+                command=command_text,
+                exit_code=-1,
+                stdout=exc.stdout or "",
+                stderr=exc.stderr or "",
+                timeout_occurred=True,
+            )
 
     # --- File operations ---
 

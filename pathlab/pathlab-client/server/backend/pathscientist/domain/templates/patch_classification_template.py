@@ -17,6 +17,10 @@ Contracts (do NOT change without updating the skill yaml):
   - Best model checkpoint: ``OUTPUT_DIR/best_model.pth``.
 
 Two input shapes are supported:
+  0. PathLab DB export manifest: ``PATHLAB_TRAINING_MANIFEST`` or
+     ``DATA_DIR/pathlab_training_manifest.json`` with records containing
+     ``wsi_id``, ``wsi_path``, ``label``, and ``split``. This mirrors the
+     PathLab TrainingTaskWSI + WSISlide tables for sandbox/offline runs.
   1. Pre-extracted features: ``DATA_DIR/features/<class>/<patch_id>.pt``
      and ``DATA_DIR/splits.json``. Tensor must be 1D ``(D,)``.
   2. Raw images: ``DATA_DIR/images/<class>/<patch_id>.{png,jpg,tif}``.
@@ -349,6 +353,64 @@ def _load_splits_json(splits_file: Path, items_root: Path) -> dict[str, list[tup
     return out
 
 
+def _load_pathlab_training_manifest(
+    manifest_path: Path,
+) -> tuple[dict[str, list[tuple[Path, int]]], list[str]] | None:
+    """Load a PathLab DB/training-task export for sandbox/offline patch runs.
+
+    Expected records mirror TrainingTaskWSI + WSISlide:
+    ``wsi_id``, ``wsi_path`` or ``path``, ``label``, and ``split``.
+    """
+    if not manifest_path.is_file():
+        return None
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("PathLab manifest %s unparseable: %s", manifest_path, e)
+        return None
+    records = raw.get("items") if isinstance(raw, dict) else raw
+    if not isinstance(records, list):
+        return None
+
+    labels = sorted(
+        {
+            str(item.get("label") or "").strip()
+            for item in records
+            if isinstance(item, dict) and str(item.get("label") or "").strip()
+        }
+    )
+    if not labels:
+        return None
+    class_to_idx = {label: idx for idx, label in enumerate(labels)}
+    splits: dict[str, list[tuple[Path, int]]] = {"train": [], "val": [], "test": []}
+
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        path_text = str(
+            item.get("wsi_path")
+            or item.get("image_path")
+            or item.get("path")
+            or ""
+        ).strip()
+        if not label or not path_text:
+            continue
+        image_path = Path(path_text)
+        if not image_path.exists():
+            continue
+        split = str(item.get("split") or "train").strip().lower()
+        if split in {"valid", "validation"}:
+            split = "val"
+        if split not in splits:
+            split = "train"
+        splits[split].append((image_path, class_to_idx[label]))
+
+    if not any(splits.values()):
+        return None
+    return splits, labels
+
+
 # ── Feature extractor wiring ───────────────────────────────────────────────
 def _resolve_extractor(name: str):
     """Load the pathology foundation model. Hard-fail if it can't load —
@@ -463,7 +525,22 @@ def main() -> None:
     use_features_directly = False
     feature_dim: int | None = None
 
-    if feature_root.is_dir():
+    pathlab_manifest = Path(
+        os.getenv("PATHLAB_TRAINING_MANIFEST", str(DATA_DIR / "pathlab_training_manifest.json"))
+    )
+    pathlab_loaded = _load_pathlab_training_manifest(pathlab_manifest)
+    if pathlab_loaded is not None:
+        splits, classes = pathlab_loaded
+        items = splits["train"] + splits["val"] + splits["test"]
+        logger.info(
+            "Using PathLab training manifest %s: train=%d val=%d test=%d classes=%d",
+            pathlab_manifest,
+            len(splits["train"]),
+            len(splits["val"]),
+            len(splits["test"]),
+            len(classes),
+        )
+    elif feature_root.is_dir():
         items, classes = _build_class_index(feature_root, _FEATURE_EXTS)
         if items:
             use_features_directly = True
@@ -477,15 +554,17 @@ def main() -> None:
 
     if not items:
         raise RuntimeError(
-            f"No data found. Expected DATA_DIR/features/<class>/*.pt or "
-            f"DATA_DIR/images/<class>/*.{{png,jpg,...}}; got DATA_DIR={DATA_DIR}"
+            "No data found. Expected PATHLAB_TRAINING_MANIFEST / "
+            "DATA_DIR/pathlab_training_manifest.json, DATA_DIR/features/<class>/*.pt, "
+            f"or DATA_DIR/images/<class>/*.{{png,jpg,...}}; got DATA_DIR={DATA_DIR}"
         )
 
     n_classes = max(len({i[1] for i in items}), 2)
 
-    # 2. Splits. Plan-2026-04-28 P1 #4: try label.csv first (common
+    # 2. Splits. PathLab manifest wins when present; otherwise try label.csv
+    # first (common
     # patch-dataset shape), then splits.json, then deterministic fallback.
-    splits = None
+    splits = locals().get("splits")
     images_root_for_csv = image_root if not use_features_directly else feature_root
     for csv_name in ("label.csv", "labels.csv"):
         csv_path = DATA_DIR / csv_name

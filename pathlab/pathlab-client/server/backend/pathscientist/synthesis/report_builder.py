@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..orchestrator.metrics_utils import resolve_primary_metric
 from .claims import build_claims
 from .types import ClaimRecord, ReportSection, ResearchReport
 
@@ -120,6 +121,15 @@ def _build_sections(
         claim_ids=[c.claim_id for c in result_claims],
     ))
 
+    external_content = _build_external_validation_content(context, metric)
+    if external_content:
+        sections.append(ReportSection(
+            name="external_validation",
+            title="External Validation",
+            content=external_content,
+            claim_ids=[],
+        ))
+
     # Dataset (T8a: surface acquisition in synthesis). Only emitted when
     # the acquisition stage successfully prepared a dataset; skipped/failed
     # acquisitions are surfaced in the limitations / status path elsewhere.
@@ -200,6 +210,124 @@ def _build_results_content(context: dict[str, Any], metric: str) -> str:
             lines.append(f"| {i} | {run_id} | {value:.4f} | {committed} | {error} |")
         lines.append("")
 
+    return "\n".join(lines)
+
+
+def _format_metric_value(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.4f}"
+    return str(value or "")
+
+
+def _escape_markdown_table_cell(value: Any) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def _metric_variants(metric: str) -> list[str]:
+    raw = str(metric or "").strip().lower()
+    out: list[str] = []
+    for candidate in {
+        raw,
+        raw.replace("-", "_"),
+        raw.replace(" ", "_"),
+        raw.replace("-", "").replace(" ", ""),
+    }:
+        if candidate:
+            out.append(candidate)
+    return out
+
+
+def _numeric_metric_value(value: Any) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _external_metric_value(metrics: dict[str, Any], metric: str) -> float | None:
+    if not isinstance(metrics, dict):
+        return None
+
+    variants = _metric_variants(metric)
+    for key in variants:
+        value = _numeric_metric_value(metrics.get(key))
+        if value is not None:
+            return value
+
+    for prefix in ("external_", "test_", "val_", "best_val_", "best_"):
+        for key in variants:
+            value = _numeric_metric_value(metrics.get(f"{prefix}{key}"))
+            if value is not None:
+                return value
+
+    for nested_key in ("external", "test"):
+        nested = metrics.get(nested_key)
+        if isinstance(nested, dict):
+            value = resolve_primary_metric(nested, metric)
+            if value != 0.0 or any(key in nested for key in variants):
+                return value
+
+    value = resolve_primary_metric(metrics, metric)
+    if value != 0.0:
+        return value
+    return None
+
+
+def _external_dataset_name(entry: dict[str, Any]) -> str:
+    for key in ("dataset_name", "external_dataset_name", "cohort_name"):
+        value = str(entry.get(key) or "").strip()
+        if value:
+            return value
+    contract = entry.get("contract") if isinstance(entry.get("contract"), dict) else {}
+    external_data = (
+        contract.get("external_data")
+        if isinstance(contract.get("external_data"), dict)
+        else {}
+    )
+    value = str(external_data.get("dataset_name") or "").strip()
+    if value:
+        return value
+    datasets = contract.get("datasets") if isinstance(contract.get("datasets"), list) else []
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            continue
+        if str(dataset.get("role") or "").strip().lower() == "external":
+            value = str(dataset.get("dataset_name") or dataset.get("name") or "").strip()
+            if value:
+                return value
+    return "external"
+
+
+def _build_external_validation_content(context: dict[str, Any], metric: str) -> str:
+    history = context.get("external_test_history", []) or []
+    rows = [entry for entry in history if isinstance(entry, dict)]
+    if not rows:
+        return ""
+
+    lines = [
+        "External validation metrics are reported separately from internal training/validation results.",
+        "",
+        f"| Run ID | External Dataset | Task | {metric} | Status |",
+        "|--------|------------------|------|-------|--------|",
+    ]
+    for entry in rows:
+        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+        run_id = str(entry.get("run_id") or "?")
+        dataset = _external_dataset_name(entry)
+        task = str(
+            entry.get("external_task_type")
+            or metrics.get("external_task_type")
+            or "external_test"
+        )
+        value = _external_metric_value(metrics, metric)
+        status = str(entry.get("status") or ("committed" if entry.get("committed") else "completed"))
+        lines.append(
+            "| "
+            f"{_escape_markdown_table_cell(run_id)} | "
+            f"{_escape_markdown_table_cell(dataset)} | "
+            f"{_escape_markdown_table_cell(task)} | "
+            f"{_format_metric_value(value)} | "
+            f"{_escape_markdown_table_cell(status)} |"
+        )
     return "\n".join(lines)
 
 

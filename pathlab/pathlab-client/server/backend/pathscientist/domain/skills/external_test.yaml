@@ -33,6 +33,17 @@ inputs:
   external_predictions_dir: $EXTERNAL_PREDICTIONS_DIR
   external_splits_file: $EXTERNAL_SPLITS_FILE
   external_labels_file: $EXTERNAL_LABELS_FILE
+  external_pathlab_uploads_dir: $EXTERNAL_PATHLAB_UPLOADS_DIR
+  external_pathlab_wsi_files_dir: $EXTERNAL_PATHLAB_WSI_FILES_DIR
+  external_pathlab_global_features_dir: $EXTERNAL_PATHLAB_GLOBAL_FEATURES_DIR
+  external_pathlab_training_dir: $EXTERNAL_PATHLAB_TRAINING_DIR
+  external_pathlab_coordinates_dir: $EXTERNAL_PATHLAB_COORDINATES_DIR
+  external_pathlab_metadata_dir: $EXTERNAL_PATHLAB_METADATA_DIR
+  external_pathlab_ai_results_dir: $EXTERNAL_PATHLAB_AI_RESULTS_DIR
+  external_pathlab_models_dir: $EXTERNAL_PATHLAB_MODELS_DIR
+  external_pathlab_masks_dir: $EXTERNAL_PATHLAB_MASKS_DIR
+  external_pathlab_progress_dir: $EXTERNAL_PATHLAB_PROGRESS_DIR
+  external_pathlab_logs_dir: $EXTERNAL_PATHLAB_LOGS_DIR
 
 outputs:
   metrics: $OUTPUT_DIR/metrics.json
@@ -55,6 +66,7 @@ constraints:
   - "For survival analysis, report c_index and survival coverage without updating model weights."
   - "For segmentation, report dice and IoU; use EXTERNAL_PREDICTIONS_DIR unless the agent implements a model inference adapter."
   - "Use run_experiment with run_kind=external_test; run quick_check=true before the full external test."
+  - "PathLab uploads layout: when EXTERNAL_PATHLAB_UPLOADS_DIR is set, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/<params_hash>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/<params_hash>/{wsi_id}_coords.h5, slide metadata in metadata/{wsi_id}.json, masks in masks/, progress in progress/, and logs in logs/."
 
 dataset:
   format: task_specific_external_validation

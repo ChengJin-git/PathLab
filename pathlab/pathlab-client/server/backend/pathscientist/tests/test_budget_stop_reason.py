@@ -8,6 +8,7 @@ was logged but never assigned to ``state.stop_reason``.
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,13 +18,158 @@ import os
 
 os.environ["OPENHANDS_SUPPRESS_BANNER"] = "1"
 
+import types
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+def _install_openhands_stubs() -> None:
+    """Provide the tiny SDK surface imported by lightweight tool modules."""
+
+    try:
+        import openhands.sdk.tool.schema  # noqa: F401
+        import openhands.sdk.tool.tool  # noqa: F401
+        import openhands.sdk.llm  # noqa: F401
+        return
+    except ModuleNotFoundError:
+        pass
+
+    if "openhands.sdk.tool.schema" in sys.modules:
+        return
+
+    openhands_mod = types.ModuleType("openhands")
+    sdk_mod = types.ModuleType("openhands.sdk")
+    llm_mod = types.ModuleType("openhands.sdk.llm")
+    tool_pkg = types.ModuleType("openhands.sdk.tool")
+    schema_mod = types.ModuleType("openhands.sdk.tool.schema")
+    tool_mod = types.ModuleType("openhands.sdk.tool.tool")
+
+    class TextContent(BaseModel):
+        text: str = ""
+
+    class Action(BaseModel):
+        pass
+
+    class Observation(BaseModel):
+        content: list[Any] = Field(default_factory=list)
+        is_error: bool = False
+
+    class ToolExecutor:
+        pass
+
+    class ToolAnnotations(BaseModel):
+        title: str = ""
+        destructiveHint: bool = False
+        openWorldHint: bool = False
+
+    class ToolDefinition:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+        def __class_getitem__(cls, _item):
+            return cls
+
+    llm_mod.TextContent = TextContent
+    schema_mod.Action = Action
+    schema_mod.Observation = Observation
+    tool_mod.ToolExecutor = ToolExecutor
+    tool_mod.ToolAnnotations = ToolAnnotations
+    tool_mod.ToolDefinition = ToolDefinition
+    tool_pkg.schema = schema_mod
+    tool_pkg.tool = tool_mod
+    sdk_mod.llm = llm_mod
+    sdk_mod.tool = tool_pkg
+    openhands_mod.sdk = sdk_mod
+
+    sys.modules.setdefault("openhands", openhands_mod)
+    sys.modules.setdefault("openhands.sdk", sdk_mod)
+    sys.modules.setdefault("openhands.sdk.llm", llm_mod)
+    sys.modules.setdefault("openhands.sdk.tool", tool_pkg)
+    sys.modules.setdefault("openhands.sdk.tool.schema", schema_mod)
+    sys.modules.setdefault("openhands.sdk.tool.tool", tool_mod)
+
+
+_install_openhands_stubs()
+
 from pathscientist.orchestrator.director import ResearchDirector
 from pathscientist.orchestrator.types import (
+    STAGE_EXECUTION,
     STAGE_REVIEW,
     STAGE_SYNTHESIS,
     ResearchObjective,
     ResearchSessionState,
 )
+from pathscientist.config import PathScientistConfig
+from pathscientist.runtime.iteration_state import IterationState
+from pathscientist.runtime.session_registry import (
+    SessionDeps,
+    register_session,
+    remove_session,
+)
+from pathscientist.tools.metrics import MetricsTracker
+
+
+@dataclass
+class _FakeSession:
+    session_id: str
+    conversation_id: object
+    workspace_dir: str
+    persistence_root: Path
+
+
+@dataclass
+class _FakeConversationState:
+    events: list = field(default_factory=list)
+
+
+class _FakeConversation:
+    def __init__(self):
+        self.state = _FakeConversationState()
+        self.sent_messages: list[str] = []
+
+    def send_message(self, text: str) -> None:
+        self.sent_messages.append(text)
+
+    def run(self) -> None:
+        pass
+
+
+@dataclass
+class _FakeWorkspace:
+    root: Path
+
+
+def _make_runner_test_context(tmp_path: Path):
+    session_id = f"test_budget_{uuid4().hex[:8]}"
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    session = _FakeSession(
+        session_id=session_id,
+        conversation_id=uuid4(),
+        workspace_dir=str(workspace_dir),
+        persistence_root=tmp_path,
+    )
+    conversation = _FakeConversation()
+    config = PathScientistConfig(
+        workspace_dir=str(workspace_dir),
+        output_dir=str(tmp_path / "output"),
+        gpu_ids=[],
+        sandbox_mode="local",
+        max_iterations=5,
+        primary_metric="auc",
+        conversation_persistence_dir=str(tmp_path),
+        auto_acquire_data=False,
+    )
+    deps = SessionDeps(
+        workspace=_FakeWorkspace(workspace_dir),
+        tracker=MetricsTracker(primary_metric="auc"),
+        config=config,
+        iteration_state=IterationState(max_iterations=5),
+        conversation=conversation,
+    )
+    register_session(session_id, deps)
+    return config, session, conversation, deps, lambda: remove_session(session_id)
 
 
 def _make_review_state(**overrides) -> ResearchSessionState:
@@ -62,14 +208,10 @@ def test_overrun_forces_stop_reason_in_runner(tmp_path, monkeypatch):
     safety net must force stop_reason='budget_exhausted' before entering
     the synthesis stage.
     """
-    sys.path.insert(0, str(Path(__file__).parent))
-    from persistence_helpers import build_test_conversation, make_test_config
-
     from pathscientist.orchestrator import runner as runner_module
     from pathscientist.orchestrator.runner import continue_research_session
 
-    conversation, session = build_test_conversation(tmp_path)
-    config = make_test_config(tmp_path)
+    config, session, conversation, _deps, cleanup = _make_runner_test_context(tmp_path)
 
     state = ResearchSessionState.create(
         session_id=session.session_id,
@@ -96,14 +238,23 @@ def test_overrun_forces_stop_reason_in_runner(tmp_path, monkeypatch):
         "pathscientist.orchestrator.runner.build_session_summary",
         lambda *args, **kwargs: "",
     )
-
-    continue_research_session(
-        config,
-        state,
-        session,
-        conversation,
-        auto_approve=True,
+    monkeypatch.setattr(
+        "pathscientist.orchestrator.runner.build_ui_run_summary",
+        lambda *args, **kwargs: {},
     )
+    monkeypatch.setattr(runner_module, "persist_research_session_state", lambda *a, **kw: None)
+    monkeypatch.setattr(runner_module, "_run_integrity_check", lambda *a, **kw: None)
+
+    try:
+        continue_research_session(
+            config,
+            state,
+            session,
+            conversation,
+            auto_approve=True,
+        )
+    finally:
+        cleanup()
 
     # The runner's safety net must have force-set budget_exhausted BEFORE
     # calling _run_synthesis_stage.
@@ -142,16 +293,11 @@ def test_over_budget_skips_next_execution(tmp_path, monkeypatch):
     - the next ``while state.stage == STAGE_EXECUTION:`` iteration does NOT
       start another execution turn (director routes REVIEW → SYNTHESIS)
     """
-    sys.path.insert(0, str(Path(__file__).parent))
-    from persistence_helpers import build_test_conversation, make_test_config
-
     from pathscientist.orchestrator import runner as runner_module
     from pathscientist.orchestrator.runner import continue_research_session
     from pathscientist.orchestrator.types import STAGE_EXECUTION
-    from pathscientist.runtime.session_registry import get_session
 
-    conversation, session = build_test_conversation(tmp_path)
-    config = make_test_config(tmp_path)
+    config, session, conversation, deps, cleanup = _make_runner_test_context(tmp_path)
 
     state = ResearchSessionState.create(
         session_id=session.session_id,
@@ -162,16 +308,11 @@ def test_over_budget_skips_next_execution(tmp_path, monkeypatch):
     state.max_iterations = 5
     state.iteration_index = 0
 
-    deps = get_session(session.session_id)
-
     # Fake agent turn: one ``conversation.run()`` appends MANY new tracker
     # entries, mimicking a buggy / greedy agent that calls ratchet_commit
     # 17 times in a single turn. Count how many turns the runner launches.
     AGENT_RATCHETS_PER_TURN = 17
     turn_counter = {"turns": 0}
-
-    def fake_send_message(msg):
-        return None
 
     def fake_run():
         turn_counter["turns"] += 1
@@ -182,7 +323,6 @@ def test_over_budget_skips_next_execution(tmp_path, monkeypatch):
                 "committed": True,
             })
 
-    monkeypatch.setattr(conversation, "send_message", fake_send_message)
     monkeypatch.setattr(conversation, "run", fake_run)
 
     # Short-circuit synthesis so the test focuses on the execution loop.
@@ -195,14 +335,22 @@ def test_over_budget_skips_next_execution(tmp_path, monkeypatch):
         "pathscientist.orchestrator.runner.build_session_summary",
         lambda *args, **kwargs: "",
     )
-
-    final_state, _, _ = continue_research_session(
-        config,
-        state,
-        session,
-        conversation,
-        auto_approve=True,
+    monkeypatch.setattr(
+        "pathscientist.orchestrator.runner.build_ui_run_summary",
+        lambda *args, **kwargs: {},
     )
+    monkeypatch.setattr(runner_module, "persist_research_session_state", lambda *a, **kw: None)
+
+    try:
+        final_state, _, _ = continue_research_session(
+            config,
+            state,
+            session,
+            conversation,
+            auto_approve=True,
+        )
+    finally:
+        cleanup()
 
     # Runner must have pumped EXACTLY one execution turn — the single turn
     # that overshot budget. No second execution turn is allowed because the
@@ -219,6 +367,54 @@ def test_over_budget_skips_next_execution(tmp_path, monkeypatch):
     )
     assert final_state.stop_reason == "budget_exhausted"
     assert final_state.stage != STAGE_EXECUTION
+
+
+def test_budget_stop_does_not_skip_pending_external_test():
+    """A queued external_test must still run after training exhausts budget."""
+    director = ResearchDirector(auto_approve=True)
+    state = _make_review_state()
+    state.stop_reason = "budget_exhausted"
+    state.execution_plan = {
+        "current_step": 0,
+        "steps": [{"id": "external", "skill": "external_test"}],
+    }
+
+    updated = director.advance(state)
+
+    assert updated.stage == STAGE_EXECUTION
+    assert updated.stop_reason == "budget_exhausted"
+
+
+def test_stall_stop_does_not_skip_pending_external_test():
+    """Stall limit should not silently drop a user-requested external_test."""
+    director = ResearchDirector(auto_approve=True)
+    state = _make_review_state()
+    state.stop_reason = "stall_limit"
+    state.execution_plan = {
+        "current_step": 0,
+        "steps": [{"id": "external", "skill": "external_test"}],
+    }
+
+    updated = director.advance(state)
+
+    assert updated.stage == STAGE_EXECUTION
+    assert updated.stop_reason == "stall_limit"
+
+
+def test_user_stop_still_skips_pending_external_test():
+    """Explicit user stops must still route directly to synthesis."""
+    director = ResearchDirector(auto_approve=True)
+    state = _make_review_state()
+    state.stop_reason = "user_cancelled"
+    state.execution_plan = {
+        "current_step": 0,
+        "steps": [{"id": "external", "skill": "external_test"}],
+    }
+
+    updated = director.advance(state)
+
+    assert updated.stage == STAGE_SYNTHESIS
+    assert updated.stop_reason == "user_cancelled"
 
 
 if __name__ == "__main__":

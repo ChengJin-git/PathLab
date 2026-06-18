@@ -103,7 +103,7 @@ def _render_execution_plan(state: ResearchSessionState) -> list[str]:
           - missing: features_dir, wsi_dir
         Execution plan: <status>
           - Step 1/2: feature_extraction (CURRENT)
-            input wsi_dir: /data/WSIs
+            input wsi_dir: /data/wsi_files
             ...
           - note: ...
         Do not run training yet: ... (when needs_acquisition)
@@ -179,6 +179,36 @@ def _render_execution_plan(state: ResearchSessionState) -> list[str]:
                 "Do not run training: acquisition is disabled or exhausted; "
                 "supply paths or enable acquisition with a working provider.",
             )
+    return lines
+
+
+def _render_pathlab_uploads_contract(contract: dict) -> list[str]:
+    if not isinstance(contract, dict):
+        return []
+    layout = str(contract.get("external_data_layout") or "").strip()
+    if layout != "pathlab_uploads" and not contract.get("external_pathlab_uploads_dir"):
+        return []
+    lines = ["PathLab uploads layout:"]
+    for label, key in (
+        ("root", "external_pathlab_uploads_dir"),
+        ("wsi_files", "external_wsi_dir"),
+        ("features", "external_features_dir"),
+        ("training", "external_pathlab_training_dir"),
+        ("coordinates", "external_pathlab_coordinates_dir"),
+        ("metadata", "external_pathlab_metadata_dir"),
+        ("ai_results", "external_pathlab_ai_results_dir"),
+        ("models", "external_pathlab_models_dir"),
+        ("masks", "external_pathlab_masks_dir"),
+        ("progress", "external_pathlab_progress_dir"),
+        ("logs", "external_pathlab_logs_dir"),
+    ):
+        value = contract.get(key)
+        if value:
+            lines.append(f"  - {label}: {value}")
+    lines.append(
+        "  - Use this PathLab uploads repository layout directly; do not "
+        "invent DATA_DIR/images/WSIs paths when these paths are provided."
+    )
     return lines
 
 
@@ -285,6 +315,7 @@ def build_execution_brief(state: ResearchSessionState) -> str:
         contract = external_request.get("contract") or {}
         if isinstance(contract, dict) and contract:
             lines.append(f"External test contract: {contract}")
+            lines.extend(_render_pathlab_uploads_contract(contract))
         external_data = external_request.get("external_data") or {}
         if isinstance(external_data, dict) and external_data.get("dataset_name"):
             lines.append(f"External dataset: {external_data.get('dataset_name')}")

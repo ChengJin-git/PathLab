@@ -27,6 +27,9 @@ def build_synthesis_context(
         "failures": [],
         "references": [],
         "run_history": [],
+        "external_test_history": list(
+            getattr(state, "external_test_history", []) or []
+        ),
         "grounding": dict(state.grounding) if state.grounding else {},
         "objective_target": {
             "metric_value": state.objective.target_metric_value,
@@ -61,6 +64,15 @@ def build_synthesis_context(
             "metric_value": r.metric_value,
             "committed": r.committed,
             "notes": r.notes,
+            "metrics": dict(getattr(r, "metrics", {}) or {}),
+            "run_dir": getattr(r, "run_dir", ""),
+            "data_output_dir": getattr(r, "data_output_dir", ""),
+            "data_output_artifacts": list(getattr(r, "data_output_artifacts", []) or []),
+            "model_path": getattr(r, "model_path", ""),
+            "pathlab": dict(getattr(r, "pathlab", {}) or {}),
+            "quick_check": bool(getattr(r, "quick_check", False)),
+            "run_kind": getattr(r, "run_kind", ""),
+            "error_type": getattr(r, "error_type", ""),
         }
         context["run_history"].append(entry)
 
@@ -81,10 +93,18 @@ def build_synthesis_context(
             "metric_name": entry["metric_name"],
             "metric_value": entry["metric_value"],
             "committed": entry["committed"],
-            "error_type": "",
+            "metrics": entry["metrics"],
+            "error_type": entry["error_type"],
             "duration": 0.0,
             "code_diff_summary": "",
             "agent_notes": entry["notes"],
+            "run_dir": entry["run_dir"],
+            "data_output_dir": entry["data_output_dir"],
+            "data_output_artifacts": entry["data_output_artifacts"],
+            "model_path": entry["model_path"],
+            "pathlab": entry["pathlab"],
+            "quick_check": entry["quick_check"],
+            "run_kind": entry["run_kind"],
         }
         for entry in context["run_history"]
     ]
@@ -119,6 +139,10 @@ def build_synthesis_context(
                     "git_commit": best.git_commit,
                     "duration": best.duration,
                     "code_diff_summary": best.git_diff[:200] if best.git_diff else "",
+                    "run_dir": best.run_dir,
+                    "data_output_dir": best.data_output_dir,
+                    "model_path": best.model_path,
+                    "pathlab": dict(best.pathlab or {}),
                     "evidence_status": "present",
                 }
             else:
@@ -137,6 +161,10 @@ def build_synthesis_context(
                     "git_commit": best.git_commit,
                     "duration": best.duration,
                     "code_diff_summary": best.git_diff[:200] if best.git_diff else "",
+                    "run_dir": best.run_dir,
+                    "data_output_dir": best.data_output_dir,
+                    "model_path": best.model_path,
+                    "pathlab": dict(best.pathlab or {}),
                     "evidence_status": "present",
                 }
 

@@ -35,15 +35,6 @@ MAX_EXTERNAL_SAMPLES = int(os.getenv("PATHLAB_MAX_EXTERNAL_SAMPLES", "0") or "0"
 QUICK_CHECK = os.getenv("PATHLAB_QUICK_CHECK", "").lower() in {"1", "true", "yes"}
 
 
-class _FallbackLinearHead(nn.Module):
-    def __init__(self, in_dim: int, n_classes: int):
-        super().__init__()
-        self.fc = nn.Linear(in_dim, n_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.fc(x)
-
-
 def _path_is_configured(path: Path) -> bool:
     return str(path).strip() not in {"", "."}
 
@@ -294,7 +285,12 @@ def build_patch_classification_model(num_classes: int, feature_dim: int):
             return _call_builder(getattr(train, name), num_classes=num_classes, feature_dim=feature_dim)
     if hasattr(train, "LinearHead"):
         return _call_builder(train.LinearHead, num_classes=num_classes, feature_dim=feature_dim)
-    return _FallbackLinearHead(feature_dim, num_classes)
+    raise RuntimeError(
+        "Patch external_test refused to use fallback linear head. "
+        "Expose build_patch_classification_model(), build_patch_model(), "
+        "build_model(), or LinearHead in train.py so the external evaluation "
+        "loads the same architecture used during training."
+    )
 
 
 def _load_checkpoint_state(device: str) -> dict[str, Any]:

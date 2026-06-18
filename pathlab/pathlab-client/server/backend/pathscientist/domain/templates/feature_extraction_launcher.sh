@@ -11,9 +11,19 @@ set -euo pipefail
 if [ ! -d "$WSI_DIR" ] && [ "$WSI_DIR" = "/data/raw/WSIs" ] && [ -d /data/WSIs ]; then
   WSI_DIR=/data/WSIs
 fi
+if [ ! -d "$WSI_DIR" ] && [ "$WSI_DIR" = "/data/raw/WSIs" ] && [ -d /data/wsi_files ]; then
+  WSI_DIR=/data/wsi_files
+fi
+if [ -d "$DATA_OUTPUT_DIR/wsi_files" ]; then
+  export PATHSCIENTIST_PATHLAB_UPLOADS_LAYOUT=1
+fi
 
 mkdir -p "$OUTPUT_DIR/logs" "$OUTPUT_DIR/worker_meta"
-mkdir -p "$DATA_OUTPUT_DIR/patches" "$DATA_OUTPUT_DIR/pt_files/$PATHSCIENTIST_FEATURE_EXTRACTOR"
+if [ "${PATHSCIENTIST_PATHLAB_UPLOADS_LAYOUT:-}" = "1" ]; then
+  mkdir -p "$DATA_OUTPUT_DIR/coordinates" "$DATA_OUTPUT_DIR/features/$PATHSCIENTIST_FEATURE_EXTRACTOR"
+else
+  mkdir -p "$DATA_OUTPUT_DIR/patches" "$DATA_OUTPUT_DIR/pt_files/$PATHSCIENTIST_FEATURE_EXTRACTOR"
+fi
 
 # Default to a single worker. Multi-GPU extraction is opt-in via
 # PATHSCIENTIST_FEATURE_GPUS=all or a comma/space separated GPU list.

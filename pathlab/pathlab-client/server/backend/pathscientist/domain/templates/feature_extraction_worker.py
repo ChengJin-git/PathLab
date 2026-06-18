@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -43,6 +44,87 @@ PATCH_SIZE = 256
 CONTOUR_FN = "four_pt"
 USE_PADDING = True
 MIN_PATCHES = 10
+
+
+def compute_pathlab_params_hash(
+    *,
+    level: int = 0,
+    seg_params: dict | None = None,
+    filter_params: dict | None = None,
+    contour_fn: str = CONTOUR_FN,
+    use_padding: bool = USE_PADDING,
+    seg_level: int = SEG_PARAMS["seg_level"],
+) -> str:
+    """Match PathLab's feature_cache.compute_params_hash convention."""
+    seg_params = seg_params or SEG_PARAMS
+    filter_params = filter_params or FILTER_PARAMS
+    params = {
+        "level": level,
+        "contour_fn": contour_fn,
+        "use_padding": use_padding,
+        "seg_level": seg_level,
+        "sthresh": seg_params.get("sthresh", 8),
+        "mthresh": seg_params.get("mthresh", 7),
+        "close": seg_params.get("close", 4),
+        "use_otsu": seg_params.get("use_otsu", True),
+        "a_t": filter_params.get("a_t", 16),
+        "a_h": filter_params.get("a_h", 4),
+        "max_n_holes": filter_params.get("max_n_holes", 8),
+    }
+    params_str = json.dumps(params, sort_keys=True)
+    return hashlib.md5(params_str.encode()).hexdigest()[:8]
+
+
+def _uses_pathlab_uploads_layout(data_output: Path, wsi_dir: Path) -> bool:
+    if os.getenv("PATHSCIENTIST_PATHLAB_UPLOADS_LAYOUT", "").lower() in {"1", "true", "yes"}:
+        return True
+    if (data_output / "wsi_files").is_dir():
+        return True
+    return wsi_dir.name == "wsi_files" and wsi_dir.parent == data_output
+
+
+def _artifact_dirs(data_output: Path, wsi_dir: Path, extractor_name: str) -> tuple[Path, Path]:
+    if _uses_pathlab_uploads_layout(data_output, wsi_dir):
+        params_hash = compute_pathlab_params_hash()
+        return (
+            data_output / "features" / extractor_name / params_hash,
+            data_output / "coordinates" / params_hash,
+        )
+    return data_output / "pt_files" / extractor_name, data_output / "patches"
+
+
+def _pathlab_task_features_dir(data_output: Path, wsi_dir: Path) -> Path | None:
+    if not _uses_pathlab_uploads_layout(data_output, wsi_dir):
+        return None
+    task_id = (
+        os.getenv("PATHSCIENTIST_PATHLAB_TRAINING_TASK_ID", "").strip()
+        or os.getenv("PATHSCIENTIST_TRAINING_TASK_ID", "").strip()
+        or os.getenv("PATHLAB_TRAINING_TASK_ID", "").strip()
+    )
+    if not task_id or "/" in task_id or "\\" in task_id or task_id in {".", ".."}:
+        return None
+    return data_output / "training" / task_id / "features"
+
+
+def _link_task_feature(
+    task_features_dir: Path | None,
+    wsi_id: str,
+    cached_features_path: Path,
+) -> Path | None:
+    if task_features_dir is None:
+        return None
+    if not cached_features_path.exists():
+        return None
+    task_features_dir.mkdir(parents=True, exist_ok=True)
+    link_path = task_features_dir / f"{wsi_id}.pt"
+    if link_path.exists() or link_path.is_symlink():
+        link_path.unlink()
+    try:
+        rel_path = os.path.relpath(cached_features_path, task_features_dir)
+        link_path.symlink_to(rel_path)
+    except OSError:
+        link_path.symlink_to(cached_features_path)
+    return link_path
 
 
 def _is_quick_check() -> bool:
@@ -311,6 +393,7 @@ def _write_worker_payload(
     assigned: list[Path],
     features_dir: Path,
     coords_dir: Path,
+    task_features_dir: Path | None,
     meta_dir: Path,
     results: dict,
     total_patches: int,
@@ -329,6 +412,8 @@ def _write_worker_payload(
         "coords_dir": str(coords_dir),
         "results": results,
     }
+    if task_features_dir is not None:
+        payload["task_features_dir"] = str(task_features_dir)
     atomic_json_dump(payload, meta_dir / f"worker_{args.rank}.json")
 
 
@@ -339,13 +424,15 @@ def main() -> None:
     data_output = Path(args.data_output_dir)
     output_dir = Path(args.output_dir)
     extractor_name = _normalize_extractor_name(args.extractor)
-    features_dir = data_output / "pt_files" / extractor_name
-    coords_dir = data_output / "patches"
+    features_dir, coords_dir = _artifact_dirs(data_output, wsi_dir, extractor_name)
+    task_features_dir = _pathlab_task_features_dir(data_output, wsi_dir)
     meta_dir = output_dir / "worker_meta"
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     features_dir.mkdir(parents=True, exist_ok=True)
     coords_dir.mkdir(parents=True, exist_ok=True)
+    if task_features_dir is not None:
+        task_features_dir.mkdir(parents=True, exist_ok=True)
     meta_dir.mkdir(parents=True, exist_ok=True)
 
     wsi_files = sorted(p for p in wsi_dir.iterdir() if p.suffix.lower() in WSI_EXTS)
@@ -362,7 +449,9 @@ def main() -> None:
             coords_path = coords_dir / f"{wsi_id}_coords.h5"
             atomic_bytes_write(b"fake h5", coords_path)
             feature = torch.zeros((3, 8), dtype=torch.float32)
-            atomic_torch_save(feature, features_dir / f"{wsi_id}.pt")
+            out_path = features_dir / f"{wsi_id}.pt"
+            atomic_torch_save(feature, out_path)
+            _link_task_feature(task_features_dir, wsi_id, out_path)
             total_patches += 3
             results[wsi_id] = {"status": "success", "n_patches": 3, "feature_dim": 8}
         _write_worker_payload(
@@ -372,6 +461,7 @@ def main() -> None:
             assigned=assigned,
             features_dir=features_dir,
             coords_dir=coords_dir,
+            task_features_dir=task_features_dir,
             meta_dir=meta_dir,
             results=results,
             total_patches=total_patches,
@@ -387,6 +477,7 @@ def main() -> None:
             assigned=assigned,
             features_dir=features_dir,
             coords_dir=coords_dir,
+            task_features_dir=task_features_dir,
             meta_dir=meta_dir,
             results=results,
             total_patches=total_patches,
@@ -400,6 +491,7 @@ def main() -> None:
         wsi_id = wsi_path.stem
         out_path = features_dir / f"{wsi_id}.pt"
         if out_path.exists():
+            _link_task_feature(task_features_dir, wsi_id, out_path)
             try:
                 feat = torch.load(out_path, map_location="cpu", weights_only=True)
                 total_patches += int(feat.shape[0])
@@ -447,6 +539,7 @@ def main() -> None:
             continue
 
         atomic_torch_save(features, out_path)
+        _link_task_feature(task_features_dir, wsi_id, out_path)
         total_patches += int(features.shape[0])
         results[wsi_id] = {
             "status": "success",
@@ -461,6 +554,7 @@ def main() -> None:
         assigned=assigned,
         features_dir=features_dir,
         coords_dir=coords_dir,
+        task_features_dir=task_features_dir,
         meta_dir=meta_dir,
         results=results,
         total_patches=total_patches,

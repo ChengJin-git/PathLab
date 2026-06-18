@@ -10,8 +10,8 @@ Extracts patch-level features from WSIs using PathLab's real pipeline:
 
 Code Agent can modify ANY part of this script.
 Constraints (from skill definition):
-  - Output convention: {output_dir}/pt_files/{extractor_name}/{wsi_id}.pt
-  - Coordinates: {output_dir}/patches/{wsi_id}_coords.h5
+  - PathLab output: {output_dir}/features/{extractor_name}/{params_hash}/{wsi_id}.pt
+  - PathLab coordinates: {output_dir}/coordinates/{params_hash}/{wsi_id}_coords.h5
   - Each feature tensor shape: (N_patches, D)
   - Save extraction_meta.json and metrics.json in output_dir
 
@@ -21,6 +21,7 @@ Reference:
   - common/dataset.py (WSIPatchDataset + build_dataloader)
   - common/extractors/ (20 pretrained extractors)
 """
+import hashlib
 import json
 import logging
 import os
@@ -144,6 +145,23 @@ BATCH_SIZE = 64            # Patches per GPU batch
 NUM_WORKERS = 0            # DataLoader workers (0 = main process, avoids CUDA fork issues)
 MIN_PATCHES = 10           # Skip WSIs with fewer patches
 LEGACY_COORDS_SUBDIR = "h5_files"
+
+
+def compute_pathlab_params_hash() -> str:
+    params = {
+        "level": 0,
+        "contour_fn": CONTOUR_FN,
+        "use_padding": USE_PADDING,
+        "seg_level": SEG_PARAMS.get("seg_level", -1),
+        "sthresh": SEG_PARAMS.get("sthresh", 8),
+        "mthresh": SEG_PARAMS.get("mthresh", 7),
+        "close": SEG_PARAMS.get("close", 4),
+        "use_otsu": SEG_PARAMS.get("use_otsu", True),
+        "a_t": FILTER_PARAMS.get("a_t", 16),
+        "a_h": FILTER_PARAMS.get("a_h", 4),
+        "max_n_holes": FILTER_PARAMS.get("max_n_holes", 8),
+    }
+    return hashlib.md5(json.dumps(params, sort_keys=True).encode()).hexdigest()[:8]
 
 
 def _coords_file(coords_dir: Path, wsi_id: str) -> Path:
@@ -348,24 +366,30 @@ def extract():
     Full extraction pipeline matching PathLab's real flow:
       WSI → TissueSegmenter → WSITiler → coords.h5 → WSIPatchDataset → Extractor → features.pt
 
-    Output directory convention:
-      {data_output}/pt_files/{extractor_name}/{wsi_id}.pt
-      {data_output}/patches/{wsi_id}_coords.h5
+    Output directory convention for PathLab uploads repositories:
+      {data_output}/features/{extractor_name}/{params_hash}/{wsi_id}.pt
+      {data_output}/coordinates/{params_hash}/{wsi_id}_coords.h5
 
     DATA_OUTPUT_DIR: stable user-visible path for feature/coord files.
     OUTPUT_DIR: per-run directory for metrics.json (used by the agent).
     """
-    wsi_dir = os.getenv("WSI_DIR", "/data/WSIs")
+    wsi_dir = os.getenv("WSI_DIR", "/data/wsi_files")
     output_dir = os.getenv("OUTPUT_DIR", "/results")
     # DATA_OUTPUT_DIR is the stable path for actual data artifacts;
     # falls back to OUTPUT_DIR for backward compatibility.
     data_output = os.getenv("DATA_OUTPUT_DIR", output_dir)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # Data artifacts go to DATA_OUTPUT_DIR (stable, user-visible)
-    features_dir = Path(data_output) / "pt_files" / EXTRACTOR_NAME
-    coords_dir = Path(data_output) / "patches"
-    legacy_coords_dir = Path(data_output) / LEGACY_COORDS_SUBDIR
+    # Data artifacts go to DATA_OUTPUT_DIR (stable, user-visible).
+    data_output_path = Path(data_output)
+    if (data_output_path / "wsi_files").is_dir() or Path(wsi_dir).name == "wsi_files":
+        params_hash = compute_pathlab_params_hash()
+        features_dir = data_output_path / "features" / EXTRACTOR_NAME / params_hash
+        coords_dir = data_output_path / "coordinates" / params_hash
+    else:
+        features_dir = data_output_path / "pt_files" / EXTRACTOR_NAME
+        coords_dir = data_output_path / "patches"
+    legacy_coords_dir = data_output_path / LEGACY_COORDS_SUBDIR
 
     features_dir.mkdir(parents=True, exist_ok=True)
     coords_dir.mkdir(parents=True, exist_ok=True)

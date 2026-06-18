@@ -9,10 +9,15 @@ import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from pydantic import Field
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from openhands.sdk.llm import TextContent
 from openhands.sdk.tool.schema import Action, Observation
@@ -40,6 +45,19 @@ _FEATURE_EXTRACTION_SCRIPT_MARKERS = (
     "features.pt",
 )
 _FEATURE_EXTS = {".pt", ".pth"}
+_PATHLAB_UPLOADS_CHILD_DIRS = {
+    "ai_results",
+    "coordinates",
+    "features",
+    "logs",
+    "masks",
+    "metadata",
+    "models",
+    "pathscientist",
+    "progress",
+    "training",
+    "wsi_files",
+}
 _EXTRACTOR_NAME_RE = re.compile(
     r"^\s*EXTRACTOR_NAME\s*=\s*['\"]([^'\"]+)['\"]",
     re.MULTILINE,
@@ -96,8 +114,9 @@ def _expected_feature_output_dirs(
     """Return persistent feature dirs that satisfy the output contract.
 
     Prefer the configured extractor name because it is the orchestrator's
-    selected extractor. Fall back to the script's EXTRACTOR_NAME assignment
-    and finally to ``pt_files`` when neither source is available.
+    selected extractor. For PathLab uploads repositories, feature tensors land
+    under ``features/<extractor>/<params_hash>``; standalone fallback datasets
+    still use ``pt_files/<extractor>``.
     """
     root = Path(data_output_dir)
     env_names: list[str] = []
@@ -109,12 +128,16 @@ def _expected_feature_output_dirs(
         if name and name not in env_names:
             env_names.append(name)
     if env_names:
-        return [root / "pt_files" / name for name in env_names]
+        dirs: list[Path] = []
+        for name in env_names:
+            dirs.append(root / "features" / name)
+            dirs.append(root / "pt_files" / name)
+        return dirs
 
     script_name = _script_extractor_name(script_text)
     if script_name:
-        return [root / "pt_files" / script_name]
-    return [root / "pt_files"]
+        return [root / "features" / script_name, root / "pt_files" / script_name]
+    return [root / "features", root / "pt_files"]
 
 
 def _feature_output_contract_violation(
@@ -152,7 +175,9 @@ def _feature_output_contract_violation(
         "successfully, but no .pt/.pth feature tensors were found in the "
         f"planned persistent feature directory: {expected_text}. "
         "Feature extraction scripts must save tensors under "
-        "DATA_OUTPUT_DIR/pt_files/<extractor>/<slide_id>.pt, not only under "
+        "DATA_OUTPUT_DIR/features/<extractor>/<params_hash>/<slide_id>.pt "
+        "for PathLab uploads or DATA_OUTPUT_DIR/pt_files/<extractor>/<slide_id>.pt "
+        "for standalone fallback datasets, not only under "
         "OUTPUT_DIR/output/runs/<run_id>. This run is marked failed so the "
         "agent cannot commit non-reusable features."
     )
@@ -266,6 +291,14 @@ def _planned_feature_extraction_env(config) -> dict[str, str]:
     return env
 
 
+def _pathlab_feature_task_id(*, session_id: str, run_id: str) -> str:
+    if not session_id or not run_id:
+        return ""
+    raw = f"pathscientist_features_{session_id}_{run_id}"
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._-")
+    return text[:255].rstrip("._-")
+
+
 def _planned_model_selection_env(config) -> dict[str, str]:
     """Return orchestrator-planned training model-selection env vars."""
     env: dict[str, str] = {}
@@ -277,11 +310,276 @@ def _planned_model_selection_env(config) -> dict[str, str]:
     return env
 
 
+def _huggingface_token_env(config) -> dict[str, str]:
+    token = str(getattr(config, "huggingface_token", "") or "").strip()
+    if not token:
+        token = os.environ.get("PATHSCIENTIST_HUGGINGFACE_TOKEN", "").strip()
+    if not token:
+        token = os.environ.get("HF_TOKEN", "").strip()
+    if not token:
+        token = os.environ.get("HUGGING_FACE_HUB_TOKEN", "").strip()
+    if not token:
+        return {}
+    return {
+        "HF_TOKEN": token,
+        "HUGGING_FACE_HUB_TOKEN": token,
+        "PATHSCIENTIST_HUGGINGFACE_TOKEN": token,
+    }
+
+
+def _entry_model_path(entry: dict | None) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    for value in (
+        entry.get("model_path"),
+        (entry.get("pathlab") or {}).get("model_path")
+        if isinstance(entry.get("pathlab"), dict)
+        else "",
+    ):
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _entry_metric_value(entry: dict, primary_metric: str = "auc") -> float:
+    for value in (
+        entry.get("metric_value"),
+        (entry.get("metrics") or {}).get(primary_metric)
+        if isinstance(entry.get("metrics"), dict)
+        else None,
+    ):
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(parsed):
+            return parsed
+    return 0.0
+
+
+def _resolve_best_run_model_path(
+    *,
+    last_experiment: dict | None = None,
+    run_history: list[dict] | None = None,
+    primary_metric: str = "auc",
+) -> str:
+    """Find an existing checkpoint for model_source=best_run external tests."""
+    pending = _entry_model_path(last_experiment)
+    if pending and Path(pending).expanduser().exists():
+        return pending
+
+    candidates: list[tuple[float, str]] = []
+    for entry in run_history or []:
+        if not isinstance(entry, dict) or not entry.get("committed", False):
+            continue
+        model_path = _entry_model_path(entry)
+        if not model_path or not Path(model_path).expanduser().exists():
+            continue
+        candidates.append((_entry_metric_value(entry, primary_metric), model_path))
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+
+def _clean_path(value) -> Path | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return Path(text).expanduser().resolve(strict=False)
+
+
+def _relative_to(path: Path, root: Path):
+    try:
+        return path.relative_to(root)
+    except ValueError:
+        return None
+
+
+def _configured_pathlab_uploads_dir(config) -> Path | None:
+    for attr in ("pathlab_uploads_dir", "uploads_dir"):
+        candidate = _clean_path(getattr(config, attr, ""))
+        if candidate:
+            return candidate
+
+    candidate = _clean_path(os.environ.get("PATHLAB_UPLOADS_DIR", ""))
+    if candidate:
+        return candidate
+
+    try:
+        from backend.common.config import Config
+
+        return Config.get_uploads_dir().expanduser().resolve(strict=False)
+    except Exception:
+        return None
+
+
+def _infer_pathlab_uploads_dir(paths: list[Path]) -> Path | None:
+    for path in paths:
+        parts = path.parts
+        for index, part in enumerate(parts):
+            if part in _PATHLAB_UPLOADS_CHILD_DIRS and index > 0:
+                return Path(*parts[:index]).expanduser().resolve(strict=False)
+    return None
+
+
+def _pathlab_child_path(
+    *,
+    uploads_dir: Path,
+    path: Path | None,
+    child_name: str,
+) -> Path | None:
+    if path is None:
+        return None
+    rel = _relative_to(path, uploads_dir)
+    if rel is None or not rel.parts or rel.parts[0] != child_name:
+        return None
+    return path
+
+
+def _pathlab_training_link(
+    *,
+    uploads_dir: Path,
+    paths: list[Path],
+) -> tuple[str, Path] | tuple[None, None]:
+    for path in paths:
+        rel = _relative_to(path, uploads_dir)
+        if rel is None or len(rel.parts) < 2 or rel.parts[0] != "training":
+            continue
+        task_id = str(rel.parts[1]).strip()
+        if task_id:
+            return task_id, uploads_dir / "training" / task_id
+    return None, None
+
+
+def _pathlab_features_dir(
+    *,
+    uploads_dir: Path,
+    data_output_dir: Path | None,
+    artifact_paths: list[Path],
+) -> Path | None:
+    data_output_features = _pathlab_child_path(
+        uploads_dir=uploads_dir,
+        path=data_output_dir,
+        child_name="features",
+    )
+    if data_output_features:
+        return data_output_features
+
+    for artifact in artifact_paths:
+        rel = _relative_to(artifact, uploads_dir)
+        if rel is None or len(rel.parts) < 2 or rel.parts[0] != "features":
+            continue
+        if artifact.suffix.lower() in _FEATURE_EXTS:
+            return artifact.parent
+        return artifact
+    return None
+
+
+def _pathlab_task_features_link(
+    *,
+    uploads_dir: Path,
+    paths: list[Path],
+) -> tuple[str, Path] | tuple[None, None]:
+    for path in paths:
+        rel = _relative_to(path, uploads_dir)
+        if rel is None or len(rel.parts) < 3 or rel.parts[0] != "training":
+            continue
+        task_id = str(rel.parts[1]).strip()
+        if task_id and rel.parts[2] == "features":
+            return task_id, uploads_dir / "training" / task_id / "features"
+    return None, None
+
+
+def _pathlab_linkage_for_run(
+    *,
+    config,
+    run_kind: str,
+    data_output_dir: str,
+    model_path: str | None,
+    run_dir: Path,
+    data_output_artifacts: list[str],
+) -> dict[str, str]:
+    """Normalize PathScientist run outputs into PathLab artifact links."""
+    data_output_path = _clean_path(data_output_dir)
+    model = _clean_path(model_path)
+    run = _clean_path(run_dir)
+    artifacts = [path for item in data_output_artifacts if (path := _clean_path(item))]
+    known_paths = [path for path in [data_output_path, model, run, *artifacts] if path]
+
+    uploads_dir = _configured_pathlab_uploads_dir(config)
+    if uploads_dir is None:
+        uploads_dir = _infer_pathlab_uploads_dir(known_paths)
+    if uploads_dir is None:
+        return {}
+    if not any(_relative_to(path, uploads_dir) is not None for path in known_paths):
+        return {}
+
+    linkage: dict[str, str] = {"uploads_dir": str(uploads_dir)}
+
+    features_dir = _pathlab_features_dir(
+        uploads_dir=uploads_dir,
+        data_output_dir=data_output_path,
+        artifact_paths=artifacts,
+    )
+    if features_dir:
+        linkage["features_dir"] = str(features_dir)
+
+    task_id, training_dir = _pathlab_training_link(
+        uploads_dir=uploads_dir,
+        paths=[path for path in [model, data_output_path, *artifacts] if path],
+    )
+    if task_id and training_dir:
+        linkage["training_task_id"] = task_id
+        linkage["training_dir"] = str(training_dir)
+
+    feature_task_id, task_features_dir = _pathlab_task_features_link(
+        uploads_dir=uploads_dir,
+        paths=[path for path in [data_output_path, *artifacts] if path],
+    )
+    if feature_task_id and task_features_dir:
+        linkage["feature_training_task_id"] = feature_task_id
+        linkage["task_features_dir"] = str(task_features_dir)
+
+    if model:
+        linkage["model_path"] = str(model)
+
+    if (uploads_dir / "models").exists():
+        linkage["models_dir"] = str(uploads_dir / "models")
+    if (uploads_dir / "logs").exists():
+        linkage["logs_dir"] = str(uploads_dir / "logs")
+    if (uploads_dir / "progress").exists():
+        linkage["progress_dir"] = str(uploads_dir / "progress")
+
+    return linkage
+
+
+def _pathlab_linkage_for_run_for_test(
+    *,
+    config,
+    run_kind: str,
+    data_output_dir: str,
+    model_path: str | None,
+    run_dir: Path,
+    data_output_artifacts: list[str],
+) -> dict[str, str]:
+    return _pathlab_linkage_for_run(
+        config=config,
+        run_kind=run_kind,
+        data_output_dir=data_output_dir,
+        model_path=model_path,
+        run_dir=run_dir,
+        data_output_artifacts=data_output_artifacts,
+    )
+
+
 def _external_test_env(
     config,
     *,
     quick_check: bool = False,
     last_experiment: dict | None = None,
+    run_history: list[dict] | None = None,
 ) -> dict[str, str]:
     """Return orchestrator-provided inputs for external_test scripts."""
     contract = normalize_external_test_contract(
@@ -302,6 +600,17 @@ def _external_test_env(
         "external_predictions_dir": "EXTERNAL_PREDICTIONS_DIR",
         "external_splits_file": "EXTERNAL_SPLITS_FILE",
         "external_labels_file": "EXTERNAL_LABELS_FILE",
+        "external_pathlab_uploads_dir": "EXTERNAL_PATHLAB_UPLOADS_DIR",
+        "external_pathlab_wsi_files_dir": "EXTERNAL_PATHLAB_WSI_FILES_DIR",
+        "external_pathlab_global_features_dir": "EXTERNAL_PATHLAB_GLOBAL_FEATURES_DIR",
+        "external_pathlab_training_dir": "EXTERNAL_PATHLAB_TRAINING_DIR",
+        "external_pathlab_coordinates_dir": "EXTERNAL_PATHLAB_COORDINATES_DIR",
+        "external_pathlab_metadata_dir": "EXTERNAL_PATHLAB_METADATA_DIR",
+        "external_pathlab_ai_results_dir": "EXTERNAL_PATHLAB_AI_RESULTS_DIR",
+        "external_pathlab_models_dir": "EXTERNAL_PATHLAB_MODELS_DIR",
+        "external_pathlab_masks_dir": "EXTERNAL_PATHLAB_MASKS_DIR",
+        "external_pathlab_progress_dir": "EXTERNAL_PATHLAB_PROGRESS_DIR",
+        "external_pathlab_logs_dir": "EXTERNAL_PATHLAB_LOGS_DIR",
     }
     for contract_key, env_key in mapping.items():
         value = str(contract.get(contract_key) or "").strip()
@@ -318,7 +627,13 @@ def _external_test_env(
         not env.get("PATHSCIENTIST_MODEL_PATH")
         and str(contract.get("model_source") or "").strip().lower() == "best_run"
     ):
-        model_path = str((last_experiment or {}).get("model_path") or "").strip()
+        model_path = _resolve_best_run_model_path(
+            last_experiment=last_experiment,
+            primary_metric=str(getattr(config, "primary_metric", "auc") or "auc"),
+            run_history=run_history
+            if run_history is not None
+            else getattr(config, "run_history", None),
+        )
         if model_path:
             env["PATHSCIENTIST_MODEL_PATH"] = model_path
     if quick_check:
@@ -326,6 +641,48 @@ def _external_test_env(
             contract.get("quick_check_max_samples") or 64
         )
     return env
+
+
+def _external_test_model_resolution_error(
+    config,
+    *,
+    env_vars: dict[str, str],
+    last_experiment: dict | None = None,
+) -> str:
+    """Return a fail-fast error when external_test lacks a real checkpoint."""
+    contract = normalize_external_test_contract(
+        getattr(config, "external_test_contract", {}) or {}
+    )
+    model_source = str(contract.get("model_source") or "").strip().lower()
+
+    model_path = str(env_vars.get("PATHSCIENTIST_MODEL_PATH") or "").strip()
+    if not model_path and model_source != "best_run":
+        return ""
+    if not model_path:
+        run_id = str((last_experiment or {}).get("run_id") or "").strip()
+        suffix = f" (last run: {run_id})" if run_id else ""
+        return (
+            "External validation requested model_source='best_run', but the "
+            f"best run did not provide a model_path{suffix}. Refusing to run "
+            "external_test without a saved checkpoint."
+        )
+
+    path = Path(model_path)
+    if not path.exists():
+        source_text = f"model_source='{model_source or 'explicit'}'"
+        return (
+            f"External validation requested {source_text}, but the "
+            f"resolved model_path does not exist on disk: {model_path}. "
+            "Refusing to run external_test without a saved checkpoint."
+        )
+    if not path.is_file():
+        source_text = f"model_source='{model_source or 'explicit'}'"
+        return (
+            f"External validation requested {source_text}, but the "
+            f"resolved model_path is not a file: {model_path}. Refusing to "
+            "run external_test without a saved checkpoint."
+        )
+    return ""
 
 
 def _build_env_vars_for_test(
@@ -344,7 +701,7 @@ def _build_env_vars_for_test(
     can assert path-resolution behavior without instantiating the full
     executor + workspace stack.
     """
-    env_vars: dict[str, str] = {}
+    env_vars: dict[str, str] = _huggingface_token_env(config)
     if quick_check:
         env_vars["PATHLAB_QUICK_CHECK"] = "1"
         env_vars["PATHLAB_RUN_MODE"] = "quick_check"
@@ -363,6 +720,7 @@ def _build_env_vars_for_test(
                 config,
                 quick_check=quick_check,
                 last_experiment=last_experiment,
+                run_history=getattr(config, "run_history", None),
             )
         )
     env_vars.update(_planned_model_selection_env(config))
@@ -537,6 +895,31 @@ def _synthetic_data_violation_text() -> str:
     )
 
 
+def _write_run_metadata(
+    run_dir: Path,
+    *,
+    run_id: str,
+    quick_check: bool,
+    run_kind: str,
+    script_path: str,
+    started_at: str,
+) -> None:
+    metadata = {
+        "run_id": run_id,
+        "quick_check": bool(quick_check),
+        "run_kind": run_kind,
+        "script_path": script_path,
+        "started_at": started_at,
+    }
+    try:
+        (run_dir / "run_metadata.json").write_text(
+            json.dumps(metadata, indent=2, allow_nan=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 class RunExperimentAction(Action):
     script_path: str = Field(
         default="train.py",
@@ -641,50 +1024,6 @@ class RunExperimentExecutor(ToolExecutor):
         # conversation UUID / commit shards out of the run_id namespace.
         run_id = f"run_{uuid4().hex[:8]}"
 
-        # Enforce iteration policy
-        iteration_state = self._get_iteration_state()
-        if iteration_state:
-            iteration_state.last_run_id = run_id
-            file_hash = iteration_state.compute_file_hash(
-                self._workspace.root,
-                script_path=action.script_path,
-                script_inputs=action.script_inputs,
-            )
-
-            try:
-                from ..runtime.iteration_state import PolicyViolation
-                if action.quick_check:
-                    iteration_state.check_can_quick_check(
-                        file_hash, script_path=action.script_path,
-                    )
-                else:
-                    iteration_state.check_can_full_run(
-                        file_hash, script_path=action.script_path,
-                    )
-            except PolicyViolation as e:
-                return RunExperimentObservation(
-                    exit_code=-1, metrics={}, duration=0.0,
-                    content=[TextContent(text=f"\u274c {e}")],
-                    is_error=True,
-                )
-
-        env_vars = {}
-        if self._session_id:
-            env_vars["PATHSCIENTIST_SESSION_ID"] = self._session_id
-            env_vars["PATHSCIENTIST_RUN_ID"] = run_id
-        if action.quick_check:
-            # Plan T6: stronger quick-check env contract. Templates that
-            # honor PATHLAB_QUICK_CHECK should also cap epochs and
-            # subsample. Older templates may only check
-            # PATHLAB_QUICK_CHECK; stricter caps give them an explicit
-            # numeric limit to fall back on.
-            env_vars["PATHLAB_QUICK_CHECK"] = "1"
-            env_vars["PATHLAB_RUN_MODE"] = "quick_check"
-            env_vars["PATHLAB_MAX_EPOCHS"] = "2"
-            env_vars["PATHLAB_MAX_TRAIN_SAMPLES"] = "128"
-            env_vars["PATHLAB_MAX_VAL_SAMPLES"] = "64"
-            env_vars["PATHLAB_MAX_TEST_SAMPLES"] = "64"
-
         action_script_path = self._workspace.root / action.script_path
         try:
             script_text = (
@@ -702,6 +1041,55 @@ class RunExperimentExecutor(ToolExecutor):
                 else (action.run_kind or "training").strip().lower()
             )
         )
+
+        # Enforce iteration policy
+        iteration_state = self._get_iteration_state()
+        if iteration_state:
+            iteration_state.last_run_id = run_id
+            file_hash = iteration_state.compute_file_hash(
+                self._workspace.root,
+                script_path=action.script_path,
+                script_inputs=action.script_inputs,
+            )
+
+            try:
+                from ..runtime.iteration_state import PolicyViolation
+                if action.quick_check:
+                    iteration_state.check_can_quick_check(
+                        file_hash,
+                        script_path=action.script_path,
+                        ignore_budget=semantic_run_kind == "external_test",
+                    )
+                else:
+                    iteration_state.check_can_full_run(
+                        file_hash,
+                        script_path=action.script_path,
+                        ignore_budget=semantic_run_kind == "external_test",
+                    )
+            except PolicyViolation as e:
+                return RunExperimentObservation(
+                    exit_code=-1, metrics={}, duration=0.0,
+                    content=[TextContent(text=f"\u274c {e}")],
+                    is_error=True,
+                )
+
+        env_vars = _huggingface_token_env(self._config)
+        if self._session_id:
+            env_vars["PATHSCIENTIST_SESSION_ID"] = self._session_id
+            env_vars["PATHSCIENTIST_RUN_ID"] = run_id
+        if action.quick_check:
+            # Plan T6: stronger quick-check env contract. Templates that
+            # honor PATHLAB_QUICK_CHECK should also cap epochs and
+            # subsample. Older templates may only check
+            # PATHLAB_QUICK_CHECK; stricter caps give them an explicit
+            # numeric limit to fall back on.
+            env_vars["PATHLAB_QUICK_CHECK"] = "1"
+            env_vars["PATHLAB_RUN_MODE"] = "quick_check"
+            env_vars["PATHLAB_MAX_EPOCHS"] = "2"
+            env_vars["PATHLAB_MAX_TRAIN_SAMPLES"] = "128"
+            env_vars["PATHLAB_MAX_VAL_SAMPLES"] = "64"
+            env_vars["PATHLAB_MAX_TEST_SAMPLES"] = "64"
+
         script_type = _normalize_script_type(action.script_path, action.script_type)
         data_mounts = getattr(self._config, "data_mounts", {}) or {}
         timeout = (
@@ -739,6 +1127,15 @@ class RunExperimentExecutor(ToolExecutor):
         run_dir = output_dir / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         env_vars["OUTPUT_DIR"] = str(run_dir)
+        started_at = datetime.now(timezone.utc).isoformat()
+        _write_run_metadata(
+            run_dir,
+            run_id=run_id,
+            quick_check=action.quick_check,
+            run_kind=semantic_run_kind,
+            script_path=action.script_path,
+            started_at=started_at,
+        )
 
         # DATA_OUTPUT_DIR: stable user-visible output path for actual data
         # (features, model weights, etc). Scripts should write data artifacts
@@ -754,13 +1151,26 @@ class RunExperimentExecutor(ToolExecutor):
         )
         if is_feature_extraction:
             env_vars.update(_planned_feature_extraction_env(self._config))
+            feature_task_id = _pathlab_feature_task_id(
+                session_id=self._session_id,
+                run_id=run_id,
+            )
+            if feature_task_id:
+                env_vars["PATHSCIENTIST_PATHLAB_TRAINING_TASK_ID"] = feature_task_id
+        external_test_last_experiment: dict | None = None
         if semantic_run_kind == "external_test":
             last_experiment = {}
             if self._session_id:
                 try:
                     from ..runtime.session_registry import get_session
 
-                    last_experiment = get_session(self._session_id).last_experiment or {}
+                    deps = get_session(self._session_id)
+                    last_experiment = deps.last_experiment or {}
+                    tracker = getattr(deps, "tracker", None)
+                    if tracker is not None:
+                        self._config.run_history = list(
+                            getattr(tracker, "history", []) or []
+                        )
                 except Exception:
                     last_experiment = {}
             env_vars.update(
@@ -768,11 +1178,38 @@ class RunExperimentExecutor(ToolExecutor):
                     self._config,
                     quick_check=action.quick_check,
                     last_experiment=last_experiment,
+                    run_history=getattr(self._config, "run_history", None),
                 )
             )
+            resolved_model_path = str(
+                env_vars.get("PATHSCIENTIST_MODEL_PATH") or ""
+            ).strip()
+            if resolved_model_path:
+                contract = normalize_external_test_contract(
+                    getattr(self._config, "external_test_contract", {}) or {}
+                )
+                if not contract.get("model_path"):
+                    contract["model_path"] = resolved_model_path
+                    self._config.external_test_contract = contract
+            external_test_last_experiment = last_experiment
         env_vars.update(_planned_model_selection_env(self._config))
 
-        started_at = datetime.now(timezone.utc).isoformat()
+        if semantic_run_kind == "external_test":
+            model_resolution_error = _external_test_model_resolution_error(
+                self._config,
+                env_vars=env_vars,
+                last_experiment=external_test_last_experiment,
+            )
+            if model_resolution_error:
+                return RunExperimentObservation(
+                    exit_code=-1,
+                    metrics={},
+                    duration=0.0,
+                    model_path=None,
+                    content=[TextContent(text=model_resolution_error)],
+                    is_error=True,
+                )
+
         run_dir_abs = self._resolve_path(str(run_dir))
         data_output_dir_abs = self._resolve_path(env_vars["DATA_OUTPUT_DIR"])
         data_output_snapshot = {}
@@ -986,7 +1423,15 @@ class RunExperimentExecutor(ToolExecutor):
                     rel_run_dir = str(run_dir.relative_to(self._workspace.root))
                 except ValueError:
                     rel_run_dir = str(run_dir)
-                deps.last_experiment = {
+                pathlab_linkage = _pathlab_linkage_for_run(
+                    config=self._config,
+                    run_kind=semantic_run_kind,
+                    data_output_dir=env_vars.get("DATA_OUTPUT_DIR", ""),
+                    model_path=model_path,
+                    run_dir=run_dir,
+                    data_output_artifacts=data_output_artifacts,
+                )
+                last_experiment = {
                     "run_id": run_id,
                     "run_dir": rel_run_dir,
                     "exit_code": result_exit_code,
@@ -1002,6 +1447,13 @@ class RunExperimentExecutor(ToolExecutor):
                     "error_type": error_type_str,
                     "run_kind": semantic_run_kind,
                 }
+                if pathlab_linkage:
+                    last_experiment["pathlab"] = pathlab_linkage
+                    if pathlab_linkage.get("training_task_id"):
+                        last_experiment["pathlab_training_task_id"] = pathlab_linkage[
+                            "training_task_id"
+                        ]
+                deps.last_experiment = last_experiment
             except (KeyError, AttributeError):
                 pass
 

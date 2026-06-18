@@ -209,6 +209,62 @@ def test_integrity_section_uses_bulleted_list_format():
     assert "prefer running through run_experiment" not in md
 
 
+def test_external_validation_renders_separate_section():
+    ctx = _make_context(
+        best_run={"run_id": "run_internal", "primary_metric_value": 0.81},
+        comparison_table=[
+            {"run_id": "run_internal", "primary_metric_value": 0.81, "committed": True, "error_type": ""},
+        ],
+        external_test_history=[
+            {
+                "run_id": "run_external",
+                "metrics": {
+                    "auc": 0.76,
+                    "accuracy": 0.7,
+                    "external_task_type": "mil_classification",
+                },
+                "dataset_name": "External cohort A",
+                "committed": True,
+            }
+        ],
+    )
+
+    report = build_report(ctx)
+    md = render_report_markdown(report)
+
+    assert "## External Validation" in md
+    assert "External cohort A" in md
+    assert "run_external" in md
+    assert "0.7600" in md
+    assert "**Best Result:** 0.8100 (run_internal)" in md
+    assert "| 0 | run_external |" not in md
+
+
+def test_external_validation_resolves_prefixed_metric_and_escapes_table_cells():
+    ctx = _make_context(
+        external_test_history=[
+            {
+                "run_id": "run_external|pipe",
+                "metrics": {
+                    "external_auc": 0.765,
+                    "external_task_type": "mil|classification",
+                },
+                "dataset_name": "External | Cohort",
+                "status": "completed|ok",
+            }
+        ],
+    )
+
+    report = build_report(ctx)
+    md = render_report_markdown(report)
+
+    assert "0.7650" in md
+    assert "External \\| Cohort" in md
+    assert "run_external\\|pipe" in md
+    assert "mil\\|classification" in md
+    assert "completed\\|ok" in md
+
+
 # --- Dataset section (T8a: surface acquisition in synthesis) -----------------
 
 

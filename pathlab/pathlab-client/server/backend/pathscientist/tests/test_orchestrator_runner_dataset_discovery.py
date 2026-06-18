@@ -113,15 +113,21 @@ def test_runner_writes_acquisition_plan_artifact(tmp_path):
     assert "considered" in payload
 
 
-def test_runner_skips_discovery_when_data_mounts_provided(tmp_path):
-    """Sanity: if user already provided data_mounts, acquisition is skipped
-    and so is discovery. No discovery.json should appear."""
+def test_runner_skips_discovery_when_data_mounts_are_ready(tmp_path):
+    """Ready user data_mounts skip acquisition and discovery."""
     from pathscientist.orchestrator.runner import _run_acquisition_stage
 
     state = _msi_state(tmp_path)
     state.grounding = {"baselines": [{"dataset": "CRC-MSI", "paper_id": "openalex:W1"}]}
+    dataset_root = tmp_path / "dataset"
+    for class_name in ("MSI", "MSS"):
+        image_root = dataset_root / "images" / class_name
+        image_root.mkdir(parents=True)
+        (image_root / f"{class_name.lower()}-patch.png").write_bytes(b"patch")
+    split_file = dataset_root / "splits.csv"
+    split_file.write_text("slide_id,split\nslide-a,train\n")
     cfg = _Config()
-    cfg.data_mounts = {"/host": "/data"}   # user-supplied → skip path
+    cfg.data_mounts = {str(dataset_root): "/data"}
 
     _run_acquisition_stage(state, _Session(tmp_path), cfg)
     discovery_path = tmp_path / "ws" / ".dataset" / "discovery.json"
@@ -185,3 +191,22 @@ def test_runner_does_not_mutate_seed_registry(tmp_path):
 
     _run_acquisition_stage(state, _Session(tmp_path), cfg)
     assert seed_path.read_text() == seed_before
+
+
+def test_runner_resolves_pathlab_wsi_files_to_dataset_feature_root(tmp_path):
+    from pathscientist.orchestrator.runner import (
+        _feature_leaf_for_output_root,
+        _resolve_features_data_output_dir,
+    )
+
+    dataset_root = tmp_path / "uploads" / "tcga_luad"
+    (dataset_root / "wsi_files").mkdir(parents=True)
+
+    output_root = _resolve_features_data_output_dir(
+        workspace_root=tmp_path / "workspace",
+        wsi_dir=str(dataset_root / "wsi_files"),
+        raw_root=str(dataset_root / "wsi_files"),
+    )
+
+    assert output_root == dataset_root
+    assert _feature_leaf_for_output_root(output_root, "virchow2") == dataset_root / "features" / "virchow2"
