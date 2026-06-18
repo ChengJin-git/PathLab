@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import time
+import types
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -84,8 +85,47 @@ def test_lists_registered_skills():
     assert any(item["id"] == "mil_classification" for item in data["items"])
 
 
-def test_create_session_returns_default_model():
-    client = TestClient(make_app())
+def test_create_session_returns_default_codex_relay_model(monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(
+        route_module.Config,
+        "get_global_settings",
+        staticmethod(
+            lambda: {
+                "local_vllm_enabled": False,
+                "local_vllm_base_url": "http://127.0.0.1:8000/v1",
+                "local_vllm_model": "",
+                "local_vllm_api_key": "",
+                "openrouter_api_key": "openrouter-key",
+                "openrouter_base_url": "https://openrouter.ai/api/v1",
+                "openrouter_model": "qwen/qwen3.5-plus-02-15",
+            }
+        ),
+    )
+    registry_dir = Path(tempfile.mkdtemp(prefix="pathscientist-route-test-"))
+    route_module._gateway_session_registry_path = (
+        lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    )
+    route_module._queue_session_title_generation = lambda record, config: None
+    route_module._scan_persisted_conversations = lambda *, curated_only=False: []
+    manager = route_module.PathScientistSessionManager()
+
+    def fake_runner(config, question, emit):
+        return {
+            "session_id": "session_fake",
+            "conversation_id": "conv_fake",
+            "stage": "completed",
+            "objective": {"question": question, "success_metric": config.primary_metric},
+        }
+
+    manager.create_runner = fake_runner
+    route_module._SESSION_MANAGER = manager
+    disable_persistence(route_module)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
 
     response = client.post(
         "/pathscientist/sessions",
@@ -97,6 +137,525 @@ def test_create_session_returns_default_model():
     assert data["session_id"]
     assert data["model"] == "gpt-5.5"
     assert data["status"] in {"queued", "running", "completed"}
+
+
+def test_manager_marks_completed_workflow_without_committed_run_as_failed(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    route_module._gateway_session_registry_path = (
+        lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    )
+    disable_persistence(route_module)
+    monkeypatch.setattr(
+        route_module,
+        "_sync_pathscientist_manifest_to_pathlab_best_effort",
+        lambda record, state: {"status": "skipped"},
+    )
+
+    manager = route_module.PathScientistSessionManager()
+
+    def fake_runner(config, question, emit):
+        return {
+            "session_id": "session_failed_science",
+            "conversation_id": "conv_failed_science",
+            "stage": "completed",
+            "objective": {"question": question, "success_metric": "auc"},
+            "run_history": [
+                {
+                    "run_id": "run_bad",
+                    "iteration": 0,
+                    "metric_name": "auc",
+                    "metric_value": 0.0,
+                    "committed": False,
+                    "exit_code": 1,
+                    "error_type": "FileNotFound",
+                    "metrics": {"status": "failed", "error": "Required FEATURES_DIR does not exist"},
+                }
+            ],
+            "latest_review": {
+                "status": "failed",
+                "decision": "enter_synthesis",
+                "summary": "Run run_bad did not provide a valid positive AUC metric.",
+            },
+            "review_decision": "enter_synthesis",
+            "stop_reason": "stall_limit",
+        }
+
+    manager.create_runner = fake_runner
+    record = route_module.SessionRecord(
+        session_id="session-ui",
+        conversation_id="",
+        question="train with missing external features",
+        model="gpt-5.5",
+    )
+
+    manager._run(
+        record,
+        route_module.StartPathScientistSessionRequest(question=record.question),
+        SimpleNamespace(primary_metric="auc"),
+    )
+
+    assert record.status == "failed"
+    assert record.stage == "failed"
+    assert "Run run_bad did not provide" in record.error
+    assert record.state["stage"] == "failed"
+    assert record.state["error"] == record.error
+
+
+def test_session_manager_passes_pathlab_user_id_to_runner_config(monkeypatch):
+    route_module = load_route_module()
+
+    class _StubConfig:
+        data_mounts: dict[str, str] = {}
+        llm_model = "gpt-5.5"
+        primary_metric = "auc"
+
+    monkeypatch.setattr(route_module, "_build_config", lambda req: _StubConfig())
+    route_module._queue_session_title_generation = lambda record, config: None
+
+    manager = route_module.PathScientistSessionManager()
+    captured: list[str] = []
+
+    def fake_run(record, req, config):
+        captured.append(getattr(config, "pathlab_user_id", ""))
+
+    monkeypatch.setattr(manager, "_run", fake_run)
+
+    manager.start(
+        route_module.StartPathScientistSessionRequest(question="download PANDA"),
+        user_id="user-test",
+    )
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not captured:
+        time.sleep(0.01)
+
+    assert captured == ["user-test"]
+
+
+def test_session_manager_passes_pathlab_user_id_to_resume_config(monkeypatch):
+    route_module = load_route_module()
+
+    class _StubConfig:
+        data_mounts: dict[str, str] = {}
+        llm_model = "gpt-5.5"
+        primary_metric = "auc"
+
+    monkeypatch.setattr(route_module, "_build_config", lambda req: _StubConfig())
+
+    manager = route_module.PathScientistSessionManager()
+    captured: list[str] = []
+
+    def fake_resume_run(record, req, config):
+        captured.append(getattr(config, "pathlab_user_id", ""))
+
+    monkeypatch.setattr(manager, "_resume_run", fake_resume_run)
+
+    record = route_module.SessionRecord(
+        session_id="session-1",
+        conversation_id="11111111111111111111111111111111",
+        question="resume",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+    )
+    monkeypatch.setattr(
+        route_module,
+        "_conversation_uuid",
+        lambda conversation_id: conversation_id,
+    )
+    monkeypatch.setattr(
+        route_module,
+        "_conversation_base_state_exists",
+        lambda conversation_id, state: True,
+    )
+
+    manager.resume(
+        record,
+        route_module.StartPathScientistSessionRequest(question="resume"),
+    )
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not captured:
+        time.sleep(0.01)
+
+    assert captured == ["user-test"]
+
+
+def test_create_session_resolves_pathlab_dataset_name_from_question_without_client_paths(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    prepared_dir = tmp_path / "pathlab-dataset-view"
+    prepared_dir.mkdir()
+    route_module._gateway_session_registry_path = (
+        lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    )
+    route_module._queue_session_title_generation = lambda record, config: None
+    route_module._scan_persisted_conversations = lambda *, curated_only=False: []
+    resolved_calls: list[tuple[list[str], str]] = []
+    captured_mounts: list[dict[str, str]] = []
+
+    async def fake_resolve_dataset_mounts(dataset_ids, user, question=""):
+        resolved_calls.append((list(dataset_ids), str(user.id), question))
+        return {str(prepared_dir): "/data/pathscientist_tcga_luad"}
+
+    monkeypatch.setattr(
+        route_module,
+        "_resolve_pathlab_dataset_mounts",
+        fake_resolve_dataset_mounts,
+        raising=False,
+    )
+    manager = route_module.PathScientistSessionManager()
+
+    def fake_runner(config, question, emit):
+        captured_mounts.append(dict(config.data_mounts))
+        return {"stage": "completed", "conversation_id": "conv_dataset"}
+
+    manager.create_runner = fake_runner
+    route_module._SESSION_MANAGER = manager
+    disable_persistence(route_module)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module, user_id="user-dataset")
+    client = TestClient(app)
+
+    response = client.post(
+        "/pathscientist/sessions",
+        json={"question": "Train a LUAD model using PathScientist TCGA-LUAD"},
+    )
+
+    assert response.status_code == 200
+    assert resolved_calls == [([], "user-dataset", "Train a LUAD model using PathScientist TCGA-LUAD")]
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not captured_mounts:
+        time.sleep(0.01)
+    assert captured_mounts == [{str(prepared_dir): "/data/pathscientist_tcga_luad"}]
+
+
+def test_match_pathlab_datasets_from_question_prefers_visible_name_matches():
+    route_module = load_route_module()
+
+    matches = route_module._match_pathlab_datasets_from_question(
+        "Please run PathScientist on PathScientist TCGA-LUAD and compare ABMIL.",
+        [
+            {"dataset_id": "dataset-lusc", "dataset_name": "PathScientist TCGA-LUSC"},
+            {"dataset_id": "dataset-luad", "dataset_name": "PathScientist TCGA-LUAD"},
+        ],
+    )
+
+    assert matches == ["dataset-luad"]
+
+
+def test_resolve_pathlab_dataset_mounts_matches_question_dataset_name(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    route_module._resolve_pathscientist_base_dir = lambda: tmp_path / "pathscientist-base"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    slides = []
+    for idx, split in enumerate(["train", "train", "val", "test"], start=1):
+        source = source_dir / f"slide-{idx}.svs"
+        source.write_text(f"slide {idx}", encoding="utf-8")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=f"slide-{idx}",
+                wsi_path=str(source),
+                original_filename=source.name,
+                label="luad",
+                split=split,
+            )
+        )
+    dataset = SimpleNamespace(
+        id=1,
+        dataset_id="dataset-luad",
+        name="PathScientist TCGA-LUAD",
+        user_id="user-dataset",
+        is_public=False,
+        parent_dataset_id=None,
+        source_organ="lung",
+    )
+
+    class FakeSession:
+        pass
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return FakeSession()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return []
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        assert dataset_id == "dataset-luad"
+        return dataset
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_datasets(db, **kwargs):
+            return [{"dataset_id": "dataset-luad", "dataset_name": "PathScientist TCGA-LUAD"}]
+
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            assert dataset_id == "dataset-luad"
+            return slides
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.auth.dependencies":
+            return SimpleNamespace(
+                get_dataset_with_access=fake_get_dataset_with_access,
+                get_permitted_dataset_ids=fake_get_permitted_dataset_ids,
+            )
+        if name == "backend.database.repositories":
+            return SimpleNamespace(WSIRepository=FakeWSIRepository)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    mounts = route_module.asyncio.run(
+        route_module._resolve_pathlab_dataset_mounts(
+            [],
+            SimpleNamespace(id="user-dataset", is_admin=lambda: False),
+            question="Use PathScientist TCGA-LUAD for feature extraction",
+        )
+    )
+
+    assert len(mounts) == 1
+    [(host, container)] = mounts.items()
+    assert Path(host).name.startswith("pathscientist_tcga_luad")
+    assert container.startswith("/data/pathscientist_tcga_luad")
+    assert (Path(host) / "wsi_files").is_dir()
+    assert (Path(host) / "labels.csv").is_file()
+
+
+def test_prepare_pathlab_dataset_view_uses_symlinks_and_generates_contract(tmp_path):
+    route_module = load_route_module()
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    slides = []
+    for idx, label in enumerate(["luad", "luad", "lusc", "lusc"], start=1):
+        source = source_dir / f"slide-{idx}.svs"
+        source.write_text(f"slide {idx}", encoding="utf-8")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=f"slide-{idx}",
+                wsi_path=str(source),
+                original_filename=source.name,
+                label=label,
+                split="train" if idx <= 2 else ("val" if idx == 3 else "test"),
+            )
+        )
+    dataset = SimpleNamespace(
+        dataset_id="dataset-123",
+        name="PathScientist TCGA-LUAD",
+        source_organ="lung",
+    )
+
+    view_dir = route_module._prepare_pathlab_dataset_view(
+        dataset=dataset,
+        slides=slides,
+        view_dir=tmp_path / "view",
+    )
+
+    assert (view_dir / "wsi_files").is_dir()
+    assert (view_dir / "labels.csv").is_file()
+    assert (view_dir / "splits.json").is_file()
+    assert (view_dir / "dataset_manifest.json").is_file()
+    links = sorted((view_dir / "wsi_files").iterdir())
+    assert len(links) == 4
+    assert all(link.is_symlink() for link in links)
+    manifest = json.loads((view_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["dataset_id"] == "dataset-123"
+    assert manifest["layout"] == "pathlab_dataset_view"
+    assert manifest["num_wsi"] == 4
+    splits = json.loads((view_dir / "splits.json").read_text(encoding="utf-8"))
+    assert set(splits) >= {"train", "val", "test", "labels"}
+    assert all(splits[key] for key in ("train", "val", "test"))
+
+
+def test_sync_pathscientist_download_manifest_registers_pathlab_dataset(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    uploads = tmp_path / "uploads"
+    wsi_dir = uploads / "DemoWSI" / "wsi_files"
+    wsi_dir.mkdir(parents=True)
+    first = wsi_dir / "slide_001.svs"
+    second = wsi_dir / "slide_002.svs"
+    first.write_bytes(b"wsi-1")
+    second.write_bytes(b"wsi-2")
+    labels = tmp_path / "labels.csv"
+    labels.write_text("slide_id,label\nslide_001,tumor\nslide_002,normal\n", encoding="utf-8")
+    splits = tmp_path / "splits.json"
+    splits.write_text(
+        json.dumps({"train": ["slide_001"], "test": ["slide_002"], "labels": {}}),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "dataset_id": "hf:demo/wsi",
+                "provider": "huggingface",
+                "selected_for_task": "mil_classification",
+                "raw_root": str(wsi_dir),
+                "prepared_root": str(tmp_path / "prepared"),
+                "data_mounts": {},
+                "prepared_contract": {
+                    "labels_file": str(labels),
+                    "splits_file": str(splits),
+                },
+                "status": "prepared",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(route_module.Config, "get_uploads_dir", staticmethod(lambda: uploads))
+
+    class FakeDb:
+        def __init__(self):
+            self.commits = 0
+            self.rollbacks = 0
+
+        async def commit(self):
+            self.commits += 1
+
+        async def rollback(self):
+            self.rollbacks += 1
+
+    fake_db = FakeDb()
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return fake_db
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+
+    from backend.database.repositories import (
+        DataGroupRepository,
+        DatasetRepository,
+        DatasetStatsRepository,
+        WSIRepository,
+    )
+
+    calls = {"groups": [], "datasets": [], "wsis": [], "stats": []}
+
+    async def fake_group_get_or_create(db, **kwargs):
+        calls["groups"].append(kwargs)
+        return SimpleNamespace(group_id="group-1", **kwargs)
+
+    async def fake_dataset_get_or_create(db, name, **kwargs):
+        calls["datasets"].append({"name": name, **kwargs})
+        return SimpleNamespace(dataset_id="dataset-1", name=name, **kwargs)
+
+    async def fake_dataset_get_by_name(db, name, user_id=None):
+        return None
+
+    async def fake_get_by_id(db, wsi_id):
+        return None
+
+    async def fake_wsi_create(db, **kwargs):
+        calls["wsis"].append(kwargs)
+        return SimpleNamespace(**kwargs)
+
+    async def fake_recompute(db, dataset_id):
+        calls["stats"].append(dataset_id)
+
+    monkeypatch.setattr(DataGroupRepository, "get_or_create", staticmethod(fake_group_get_or_create))
+    monkeypatch.setattr(DatasetRepository, "get_by_name", staticmethod(fake_dataset_get_by_name))
+    monkeypatch.setattr(DatasetRepository, "get_or_create", staticmethod(fake_dataset_get_or_create))
+    monkeypatch.setattr(WSIRepository, "get_by_id", staticmethod(fake_get_by_id))
+    monkeypatch.setattr(WSIRepository, "create", staticmethod(fake_wsi_create))
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", staticmethod(fake_recompute))
+
+    record = route_module.SessionRecord(
+        session_id="session-download",
+        conversation_id="",
+        question="download demo wsi",
+        model="gpt-5.5",
+        user_id="user-test",
+    )
+    result = route_module.asyncio.run(
+        route_module._sync_pathscientist_manifest_to_pathlab(
+            record,
+            {
+                "dataset_manifest_path": str(manifest_path),
+                "selected_dataset": {"name": "Demo WSI"},
+                "task_profile": {"organ": "lung"},
+            },
+        )
+    )
+
+    assert result["status"] == "registered"
+    assert result["dataset_id"] == "dataset-1"
+    assert result["created_wsi_count"] == 2
+    assert calls["groups"] == [
+        {
+            "data_type": "wsi",
+            "aggregation_level": "file",
+            "task_type": "classification",
+            "name": "WSI File-level Classification",
+        }
+    ]
+    assert calls["datasets"][0]["name"] == "hf - demo - wsi"
+    assert calls["datasets"][0]["user_id"] == "user-test"
+    assert {item["original_filename"] for item in calls["wsis"]} == {"slide_001.svs", "slide_002.svs"}
+    assert {item["label"] for item in calls["wsis"]} == {"tumor", "normal"}
+    assert {item["split"] for item in calls["wsis"]} == {"train", "test"}
+    assert calls["stats"] == ["dataset-1"]
+    assert fake_db.commits == 1
+
+
+def test_sync_pathscientist_manifest_registers_uploads_root(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    uploads = tmp_path / "uploads"
+    wsi_dir = uploads / "existing_dataset" / "wsi_files"
+    wsi_dir.mkdir(parents=True)
+    (wsi_dir / "slide_001.svs").write_bytes(b"wsi")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "dataset_id": "multi:all",
+                "provider": "multi",
+                "selected_for_task": "mil_classification",
+                "raw_root": str(uploads),
+                "prepared_root": "",
+                "data_mounts": {},
+                "prepared_contract": {},
+                "status": "prepared",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(route_module.Config, "get_uploads_dir", staticmethod(lambda: uploads))
+    record = route_module.SessionRecord(
+        session_id="session-download",
+        conversation_id="",
+        question="download demo wsi",
+        model="gpt-5.5",
+        user_id="user-test",
+    )
+
+    result = route_module.asyncio.run(
+        route_module._sync_pathscientist_manifest_to_pathlab(
+            record,
+            {"dataset_manifest_path": str(manifest_path)},
+        )
+    )
+
+    assert result["status"] == "registered"
+    assert result["dataset_name"] == "multi - all"
+    assert result["created_wsi_count"] == 1
 
 
 def test_create_session_returns_pending_title_without_waiting_for_llm_title():
@@ -597,6 +1156,145 @@ def test_session_summary_includes_workspace_disk_usage(tmp_path):
             break
         time.sleep(0.02)
     assert summary["workspace_size_bytes"] >= 11
+
+
+def test_session_summary_includes_training_progress_from_latest_run_log(tmp_path):
+    route_module = load_route_module()
+    workspace = tmp_path / "workspace"
+    old_run = workspace / "output" / "runs" / "run_old"
+    latest_run = workspace / "output" / "runs" / "run_latest"
+    old_run.mkdir(parents=True)
+    latest_run.mkdir(parents=True)
+    old_log = old_run / "training.log"
+    latest_log = latest_run / "training.log"
+    old_log.write_text(
+        "2026-06-17 20:00:00 | INFO | Epoch 1/10 | loss=0.50 | val_auc=0.700\n",
+        encoding="utf-8",
+    )
+    latest_log.write_text(
+        "\n".join(
+            [
+                "2026-06-17 22:27:20 | INFO | Epoch 4/30 | loss=0.1038 | val_loss=0.2353 | val_acc=0.9241 | val_auc=0.9683 | lr=0.000096",
+                "2026-06-17 22:45:11 | INFO | Epoch 5/30 | loss=0.0868 | val_loss=0.2632 | val_acc=0.9310 | val_auc=0.9622 | lr=0.000093",
+                "2026-06-17 23:18:23 | INFO | Epoch 7/30 | loss=0.0522 | val_loss=0.2950 | val_acc=0.9379 | val_auc=0.9636 | lr=0.000087",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.utime(old_log, (1000, 1000))
+    os.utime(latest_log, (2000, 2000))
+    record = route_module.SessionRecord(
+        session_id="s-training-progress",
+        conversation_id="",
+        question="train with epoch progress",
+        model="gpt-5.5",
+        status="running",
+        stage="execution",
+        state={"workspace_dir": str(workspace)},
+    )
+
+    summary = record.summary()
+
+    progress = summary["training_progress"]
+    assert progress["run_id"] == "run_latest"
+    assert progress["current_epoch"] == 7
+    assert progress["total_epochs"] == 30
+    assert progress["current_val_auc"] == 0.9636
+    assert progress["best_val_auc"] == 0.9683
+    assert progress["best_epoch"] == 4
+    assert progress["current_metrics"]["val_acc"] == 0.9379
+    assert progress["log_path"] == str(latest_log.resolve())
+    assert progress["updated_at"] == 2000
+
+
+def test_session_summary_marks_quick_check_training_progress(tmp_path):
+    route_module = load_route_module()
+    workspace = tmp_path / "workspace"
+    run_dir = workspace / "output" / "runs" / "run_quick"
+    run_dir.mkdir(parents=True)
+    log_path = run_dir / "training.log"
+    log_path.write_text(
+        "2026-06-17 22:27:20 | INFO | Epoch 1/2 | loss=0.1038 | val_auc=0.9683\n",
+        encoding="utf-8",
+    )
+    os.utime(log_path, (2000, 2000))
+    record = route_module.SessionRecord(
+        session_id="s-training-progress-quick",
+        conversation_id="",
+        question="quick check training progress",
+        model="gpt-5.5",
+        status="running",
+        stage="execution",
+        state={
+            "workspace_dir": str(workspace),
+            "run_history": [
+                {
+                    "run_id": "run_quick",
+                    "quick_check": True,
+                    "run_kind": "quick_check",
+                }
+            ],
+        },
+    )
+
+    progress = record.summary()["training_progress"]
+
+    assert progress["run_id"] == "run_quick"
+    assert progress["current_epoch"] == 1
+    assert progress["total_epochs"] == 2
+    assert progress["quick_check"] is True
+    assert progress["run_kind"] == "quick_check"
+
+
+def test_session_summary_marks_quick_check_from_run_metadata_without_history(tmp_path):
+    route_module = load_route_module()
+    workspace = tmp_path / "workspace"
+    run_dir = workspace / "output" / "runs" / "run_quick_live"
+    run_dir.mkdir(parents=True)
+    log_path = run_dir / "training.log"
+    log_path.write_text(
+        "2026-06-17 22:27:20 | INFO | Epoch 1/2 | loss=0.1038 | val_auc=0.9683\n",
+        encoding="utf-8",
+    )
+    (run_dir / "run_metadata.json").write_text(
+        json.dumps({"quick_check": True, "run_kind": "training"}),
+        encoding="utf-8",
+    )
+    os.utime(log_path, (2000, 2000))
+    record = route_module.SessionRecord(
+        session_id="s-training-progress-quick-live",
+        conversation_id="",
+        question="quick check training progress before run history",
+        model="gpt-5.5",
+        status="running",
+        stage="execution",
+        state={"workspace_dir": str(workspace), "run_history": []},
+    )
+
+    progress = record.summary()["training_progress"]
+
+    assert progress["run_id"] == "run_quick_live"
+    assert progress["quick_check"] is True
+    assert progress["run_kind"] == "training"
+
+
+def test_session_summary_includes_live_iteration_progress():
+    route_module = load_route_module()
+    record = route_module.SessionRecord(
+        session_id="s-live-iteration",
+        conversation_id="",
+        question="train with iteration progress",
+        model="gpt-5.5",
+        status="running",
+        stage="execution",
+        state={"iteration_index": 0, "max_iterations": 3},
+    )
+
+    summary = record.summary()
+
+    assert summary["current_iteration"] == 0
+    assert summary["max_iterations"] == 3
 
 
 def test_session_summary_does_not_block_on_uncached_workspace_size(tmp_path, monkeypatch):
@@ -1290,6 +1988,43 @@ def test_title_generation_forces_chat_completion_for_codex_relay(monkeypatch):
     assert title == "TCGA NSCLC GDC WSI Acquisition"
 
 
+def test_codex_relay_chat_llm_uses_xhigh_reasoning(monkeypatch):
+    from backend.pathscientist.config import PathScientistConfig
+    from backend.pathscientist.llm_client import build_chat_llm
+
+    captured: dict[str, object] = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.stream = bool(kwargs.get("stream", False))
+
+    openhands_module = types.ModuleType("openhands")
+    sdk_module = types.ModuleType("openhands.sdk")
+    llm_module = types.ModuleType("openhands.sdk.llm")
+    llm_module.LLM = FakeLLM
+    monkeypatch.setitem(sys.modules, "openhands", openhands_module)
+    monkeypatch.setitem(sys.modules, "openhands.sdk", sdk_module)
+    monkeypatch.setitem(sys.modules, "openhands.sdk.llm", llm_module)
+
+    build_chat_llm(
+        PathScientistConfig(
+            llm_model="gpt-5.5",
+            llm_api_key="relay-key",
+            llm_base_url="https://relay.1hui.wang/v1",
+            llm_profile="codex-relay",
+            llm_wire_api="completion",
+        ),
+        component="PathScientist test",
+        usage_id="pathscientist_test",
+        temperature=0.0,
+    )
+
+    assert captured["model"] == "openai/gpt-5.5"
+    assert captured["stream"] is True
+    assert captured["reasoning_effort"] == "xhigh"
+
+
 def test_fallback_title_keeps_tcga_nsclc_data_acquisition_terms():
     route_module = load_route_module()
 
@@ -1503,9 +2238,13 @@ def test_gateway_events_are_normalized_for_execution_ui():
 
 def test_build_config_uses_frontend_backend_defaults_without_forcing_extractor(monkeypatch, tmp_path):
     route_module = load_route_module()
+    from backend.common.config import Config
+
     for name in (
         "PATHSCIENTIST_ENV_FILE",
         "PATHSCIENTIST_LLM_MODEL",
+        "PATHSCIENTIST_LLM_API_KEY",
+        "PATHSCIENTIST_LLM_BASE_URL",
         "PATHSCIENTIST_LLM_PROFILE",
         "PATHSCIENTIST_LLM_WIRE_API",
         "PATHSCIENTIST_SANDBOX",
@@ -1522,7 +2261,23 @@ def test_build_config_uses_frontend_backend_defaults_without_forcing_extractor(m
         "PATHSCIENTIST_MIL_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(Config, "get_uploads_dir", staticmethod(lambda: tmp_path / "uploads"))
     monkeypatch.setenv("PATHSCIENTIST_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(
+        Config,
+        "get_global_settings",
+        staticmethod(
+            lambda: {
+                "local_vllm_enabled": False,
+                "local_vllm_base_url": "http://127.0.0.1:8000/v1",
+                "local_vllm_model": "",
+                "local_vllm_api_key": "",
+                "openrouter_api_key": "",
+                "openrouter_base_url": "https://openrouter.ai/api/v1",
+                "openrouter_model": "qwen/qwen3.5-plus-02-15",
+            }
+        ),
+    )
 
     config = route_module._build_config(
         route_module.StartPathScientistSessionRequest(question="align defaults")
@@ -1530,7 +2285,11 @@ def test_build_config_uses_frontend_backend_defaults_without_forcing_extractor(m
 
     assert config.llm_model == "gpt-5.5"
     assert config.llm_profile == "codex-relay"
-    assert config.llm_wire_api == "responses"
+    assert config.llm_wire_api == "completion"
+    assert config.llm_base_url == "https://openrouter.ai/api/v1"
+    assert os.environ["PATHSCIENTIST_LLM_MODEL"] == "gpt-5.5"
+    assert os.environ["PATHSCIENTIST_LLM_PROFILE"] == "codex-relay"
+    assert os.environ["PATHSCIENTIST_LLM_WIRE_API"] == "completion"
     assert config.sandbox_mode == "auto"
     assert config.max_iterations == 5
     assert config.literature_online_enabled is True
@@ -1539,11 +2298,198 @@ def test_build_config_uses_frontend_backend_defaults_without_forcing_extractor(m
     assert config.download_policy == "all"
     assert config.max_download_size_gb == 500
     assert config.allow_large_downloads is True
-    assert config.dataset_cache_dir == "/project/llmponco/wangyihui/original_data/pathlab_test_data"
+    assert config.dataset_cache_dir == str(tmp_path / "uploads")
     assert os.environ["PATHSCIENTIST_GENERATE_PAPER_DRAFT"] == "0"
     assert os.environ["PATHSCIENTIST_FEATURE_EXTRACTOR_MODE"] == "auto"
     assert os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTOR", "") == ""
     assert os.environ.get("PATHSCIENTIST_MIL_MODEL", "") == ""
+
+
+def test_build_config_ignores_pathlab_local_vllm_model(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    from backend.common.config import Config
+
+    for name in (
+        "PATHSCIENTIST_ENV_FILE",
+        "PATHSCIENTIST_LLM_MODEL",
+        "PATHSCIENTIST_LLM_API_KEY",
+        "PATHSCIENTIST_LLM_BASE_URL",
+        "PATHSCIENTIST_LLM_PROFILE",
+        "PATHSCIENTIST_LLM_WIRE_API",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PATHSCIENTIST_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(
+        Config,
+        "get_global_settings",
+        staticmethod(
+            lambda: {
+                "local_vllm_enabled": True,
+                "local_vllm_base_url": "http://local-vllm:8000/v1",
+                "local_vllm_model": "local-model",
+                "local_vllm_api_key": "local-key",
+                "openrouter_api_key": "openrouter-key",
+                "openrouter_base_url": "https://openrouter.ai/api/v1",
+                "openrouter_model": "qwen/qwen3.5-plus-02-15",
+            }
+        ),
+    )
+
+    config = route_module._build_config(
+        route_module.StartPathScientistSessionRequest(
+            question="use default pathscientist llm",
+            model="gpt-5.5",
+        )
+    )
+
+    assert config.llm_profile == "codex-relay"
+    assert config.llm_wire_api == "completion"
+    assert config.llm_model == "gpt-5.5"
+    assert config.llm_base_url == "https://openrouter.ai/api/v1"
+    assert config.llm_api_key == "openrouter-key"
+
+
+def test_build_config_reuses_pathlab_openrouter_credentials_not_model(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    from backend.common.config import Config
+
+    for name in (
+        "PATHSCIENTIST_ENV_FILE",
+        "PATHSCIENTIST_LLM_MODEL",
+        "PATHSCIENTIST_LLM_API_KEY",
+        "PATHSCIENTIST_LLM_BASE_URL",
+        "PATHSCIENTIST_LLM_PROFILE",
+        "PATHSCIENTIST_LLM_WIRE_API",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PATHSCIENTIST_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setattr(
+        Config,
+        "get_global_settings",
+        staticmethod(
+            lambda: {
+                "local_vllm_enabled": False,
+                "local_vllm_base_url": "http://local-vllm:8000/v1",
+                "local_vllm_model": "local-model",
+                "local_vllm_api_key": "local-key",
+                "openrouter_api_key": "openrouter-key",
+                "openrouter_base_url": "https://openrouter.ai/api/v1",
+                "openrouter_model": "qwen/qwen3.5-plus-02-15",
+            }
+        ),
+    )
+
+    config = route_module._build_config(
+        route_module.StartPathScientistSessionRequest(
+            question="reuse pathlab relay credentials",
+            model="gpt-5.5",
+        )
+    )
+
+    assert config.llm_profile == "codex-relay"
+    assert config.llm_wire_api == "completion"
+    assert config.llm_model == "gpt-5.5"
+    assert config.llm_base_url == "https://openrouter.ai/api/v1"
+    assert config.llm_api_key == "openrouter-key"
+
+
+def test_build_config_codex_relay_default_overrides_stale_model_env(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    from backend.common.config import Config
+    from backend.pathscientist.llm_client import resolve_llm_runtime_config
+
+    monkeypatch.setenv("PATHSCIENTIST_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setenv("PATHSCIENTIST_LLM_MODEL", "gpt-5.5")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_API_KEY", "stale-key")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_BASE_URL", "https://relay.example/openai/v1")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_PROFILE", "codex-relay")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_WIRE_API", "responses")
+    monkeypatch.setattr(
+        Config,
+        "get_global_settings",
+        staticmethod(
+            lambda: {
+                "local_vllm_enabled": False,
+                "local_vllm_base_url": "http://local-vllm:8000/v1",
+                "local_vllm_model": "local-model",
+                "local_vllm_api_key": "local-key",
+                "openrouter_api_key": "openrouter-key",
+                "openrouter_base_url": "https://openrouter.ai/api/v1",
+                "openrouter_model": "qwen/qwen3.5-plus-02-15",
+            }
+        ),
+    )
+
+    config = route_module._build_config(
+        route_module.StartPathScientistSessionRequest(
+            question="keep relay default model",
+            model="gpt-5.5",
+        )
+    )
+    runtime = resolve_llm_runtime_config(config, component="PathScientist test")
+
+    assert runtime.profile == "codex-relay"
+    assert runtime.wire_api == "completion"
+    assert runtime.model == "openai/gpt-5.5"
+    assert runtime.base_url == "https://openrouter.ai/api/v1"
+    assert runtime.api_key == "openrouter-key"
+
+
+def test_build_config_inherits_pathlab_huggingface_token(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    from backend.common.config import Config
+
+    monkeypatch.setenv("PATHSCIENTIST_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setenv("PATHSCIENTIST_HUGGINGFACE_TOKEN", "stale-pathscientist-token")
+    monkeypatch.setenv("HF_TOKEN", "stale-hf-token")
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "stale-hub-token")
+    monkeypatch.setattr(
+        Config,
+        "get_global_settings",
+        staticmethod(
+            lambda: {
+                "local_vllm_enabled": False,
+                "openrouter_base_url": "https://openrouter.ai/api/v1",
+                "openrouter_model": "qwen/qwen3.5-plus-02-15",
+                "openrouter_api_key": "openrouter-key",
+                "huggingface_token": "pathlab-hf-token",
+            }
+        ),
+    )
+
+    config = route_module._build_config(
+        route_module.StartPathScientistSessionRequest(question="inherit pathlab hf token")
+    )
+
+    assert config.huggingface_token == "pathlab-hf-token"
+    assert os.environ["PATHSCIENTIST_HUGGINGFACE_TOKEN"] == "pathlab-hf-token"
+    assert os.environ["HF_TOKEN"] == "pathlab-hf-token"
+    assert os.environ["HUGGING_FACE_HUB_TOKEN"] == "pathlab-hf-token"
+
+
+def test_build_config_fallback_keeps_codex_relay_profile(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    from backend.common.config import Config
+    from backend.pathscientist.llm_client import resolve_llm_runtime_config
+
+    monkeypatch.setenv("PATHSCIENTIST_ENV_FILE", str(tmp_path / "missing.env"))
+    monkeypatch.setenv("PATHSCIENTIST_LLM_MODEL", "stale-model")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_API_KEY", "stale-key")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_BASE_URL", "https://relay.example/openai/v1")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_PROFILE", "codex-relay")
+    monkeypatch.setenv("PATHSCIENTIST_LLM_WIRE_API", "responses")
+    monkeypatch.setattr(Config, "get_global_settings", staticmethod(lambda: {}))
+
+    config = route_module._build_config(
+        route_module.StartPathScientistSessionRequest(question="fallback no relay")
+    )
+    runtime = resolve_llm_runtime_config(config, component="PathScientist test")
+
+    assert runtime.profile == "codex-relay"
+    assert runtime.wire_api == "completion"
+    assert runtime.model == "openai/gpt-5.5"
+    assert runtime.api_key == "stale-key"
+    assert runtime.base_url == "https://relay.example/openai/v1"
 
 
 def test_build_config_fixed_extractor_mode_keeps_virchow2_compatibility(monkeypatch, tmp_path):
@@ -2161,6 +3107,185 @@ def test_get_session_falls_back_to_db_record(monkeypatch):
     assert data["question"] == "from db"
     assert data["resume_available"] is True
     assert data["events"][0]["text"] == "hello"
+
+
+def test_db_running_session_without_recent_updates_is_marked_interrupted(monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
+    monkeypatch.setattr(route_module.time, "time", lambda: 2_000.0)
+    session = SimpleNamespace(
+        session_id="stale-db-running",
+        conversation_id="conv-stale",
+        research_question="old running session",
+        status="running",
+        phase="execution",
+        current_iteration=0,
+        max_iterations=1,
+        user_id="user-test",
+        experiment_plan={},
+        comparison_results={},
+        recovery_metadata={},
+        best_metric=None,
+        best_metric_name="auc",
+        best_experiment=None,
+        final_report=None,
+        resume_available=False,
+        event_source_version="gateway-v1",
+        created_at=100.0,
+        updated_at=1_000.0,
+    )
+
+    record = route_module._db_session_to_record(session, events=[])
+
+    assert record.status == "interrupted"
+    assert record.stage == "interrupted"
+    assert record.error
+    assert record.state["interrupted_reason"] == record.error
+
+
+def test_db_running_session_with_recent_training_log_stays_running(tmp_path, monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
+    monkeypatch.setattr(route_module.time, "time", lambda: 2_000.0)
+    workspace = tmp_path / "workspace"
+    run_dir = workspace / "output" / "runs" / "run_live"
+    run_dir.mkdir(parents=True)
+    log_path = run_dir / "training.log"
+    log_path.write_text(
+        "2026-06-17 23:33:50 | INFO | Epoch 8/30 | loss=0.0462 | val_auc=0.9619\n",
+        encoding="utf-8",
+    )
+    os.utime(log_path, (1_950.0, 1_950.0))
+    session = SimpleNamespace(
+        session_id="live-db-running",
+        conversation_id="conv-live",
+        research_question="live running session",
+        status="running",
+        phase="execution",
+        current_iteration=0,
+        max_iterations=1,
+        user_id="user-test",
+        experiment_plan={},
+        comparison_results={},
+        recovery_metadata={"workspace_path": str(workspace)},
+        best_metric=None,
+        best_metric_name="auc",
+        best_experiment=None,
+        final_report=None,
+        resume_available=False,
+        event_source_version="gateway-v1",
+        created_at=100.0,
+        updated_at=1_000.0,
+        persistence_dir=None,
+        workspace_path=str(workspace),
+    )
+
+    record = route_module._db_session_to_record(session, events=[])
+    summary = record.summary()
+
+    assert record.status == "running"
+    assert record.stage == "execution"
+    assert not record.error
+    assert summary["training_progress"]["current_epoch"] == 8
+    assert summary["training_progress"]["total_epochs"] == 30
+
+
+def test_gateway_running_session_with_recent_training_log_stays_running(tmp_path, monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
+    monkeypatch.setattr(route_module.time, "time", lambda: 2_000.0)
+    registry_dir = tmp_path / "registry"
+    workspace = tmp_path / "workspace"
+    run_dir = workspace / "output" / "runs" / "run_live"
+    run_dir.mkdir(parents=True)
+    registry_dir.mkdir()
+    log_path = run_dir / "training.log"
+    log_path.write_text(
+        "2026-06-17 23:44:55 | INFO | Epoch 9/30 | loss=0.0355 | val_auc=0.9603\n",
+        encoding="utf-8",
+    )
+    os.utime(log_path, (1_950.0, 1_950.0))
+    registry_path = registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    registry_path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "session_id": "gateway-live-training",
+                        "conversation_id": "conv-live-training",
+                        "question": "train",
+                        "model": "gpt-5.5",
+                        "status": "running",
+                        "stage": "grounding",
+                        "created_at": 100.0,
+                        "updated_at": 1_000.0,
+                        "workspace_path": str(workspace),
+                        "state": {"workspace_path": str(workspace), "stage": "execution"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(route_module, "_gateway_session_registry_path", lambda: registry_path)
+
+    records = route_module._load_gateway_session_records()
+
+    assert len(records) == 1
+    record = records[0]
+    summary = record.summary()
+    assert record.status == "running"
+    assert record.stage == "execution"
+    assert record.error == ""
+    assert summary["training_progress"]["current_epoch"] == 9
+    assert summary["training_progress"]["total_epochs"] == 30
+
+
+def test_gateway_running_session_allows_long_epoch_training_log_gap(tmp_path, monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
+    monkeypatch.setattr(route_module, "TRAINING_LOG_ACTIVE_SECONDS", 7200)
+    monkeypatch.setattr(route_module.time, "time", lambda: 3_000.0)
+    registry_dir = tmp_path / "registry"
+    workspace = tmp_path / "workspace"
+    run_dir = workspace / "output" / "runs" / "run_live"
+    run_dir.mkdir(parents=True)
+    registry_dir.mkdir()
+    log_path = run_dir / "training.log"
+    log_path.write_text(
+        "2026-06-17 23:44:55 | INFO | Epoch 9/30 | loss=0.0355 | val_auc=0.9603\n",
+        encoding="utf-8",
+    )
+    os.utime(log_path, (2_000.0, 2_000.0))
+    registry_path = registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    registry_path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "session_id": "gateway-long-epoch",
+                        "conversation_id": "conv-long-epoch",
+                        "question": "train",
+                        "model": "gpt-5.5",
+                        "status": "running",
+                        "stage": "execution",
+                        "created_at": 100.0,
+                        "updated_at": 1_000.0,
+                        "workspace_path": str(workspace),
+                        "state": {"workspace_path": str(workspace), "stage": "execution"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(route_module, "_gateway_session_registry_path", lambda: registry_path)
+
+    record = route_module._load_gateway_session_records()[0]
+
+    assert record.status == "running"
+    assert record.stage == "execution"
+    assert record.summary()["training_progress"]["current_epoch"] == 9
 
 
 def test_events_stream_replays_db_events_when_jsonl_missing(monkeypatch):

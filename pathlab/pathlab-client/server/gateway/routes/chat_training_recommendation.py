@@ -19,11 +19,13 @@ from ..knowledge.chat import (
 from .chat_pdf import (
     MARKER_CACHE_SUFFIX,
     PDF_PARSE_METHOD_MARKER,
+    PDF_PARSE_METHOD_PYMUPDF,
     STRUCTURED_CACHE_SUFFIX,
     get_url_hash,
     _parse_pdf_with_marker_best_effort,
     override_marker_gpu_queue,
 )
+from .chat_pdf_document import _build_document_graph_from_markdown
 from .chat_pdf_vectorstore import (
     index_pdf_to_vectorstore,
     is_pdf_indexed,
@@ -1226,9 +1228,23 @@ def get_training_recommendation_source_urls(profile: str) -> List[str]:
     if profile == "cervical_cytology":
         source_ids = ["smart_ccs"]
     elif profile in {"histopathology", "segmentation"}:
-        source_ids = ["pathbench"]
+        source_ids = [
+            "pathbench",
+            "pfm_feature_extractor_benchmark",
+            "clinical_public_pfm_benchmark",
+            "uni",
+            "conch",
+            "prov_gigapath",
+            "virchow",
+            "titan",
+            "clam",
+            "transmil",
+            "abmil",
+            "pathosam",
+            "sam_digital_pathology",
+        ]
     else:
-        source_ids = []
+        source_ids = ["smart_ccs"]
     return [
         str(BUNDLED_TRAINING_PDF_SOURCES[source_id]["url"])
         for source_id in source_ids
@@ -1340,8 +1356,21 @@ async def _ensure_local_source_ready(url: str, *, force_upgrade: bool = False) -
             or not marker_result.markdown.strip()
             or marker_result.markdown.startswith("[Error")
         ):
-            logger.warning(f"Bundled training recommendation parse failed: {path}")
-            return False
+            logger.warning(
+                f"Bundled training recommendation Marker parse failed; "
+                f"falling back to text extraction: {path}"
+            )
+            marker_result = await asyncio.to_thread(
+                _parse_bundled_pdf_with_text_fallback,
+                path,
+            )
+            if (
+                marker_result is None
+                or not marker_result.markdown.strip()
+                or marker_result.markdown.startswith("[Error")
+            ):
+                logger.warning(f"Bundled training recommendation parse failed: {path}")
+                return False
 
         await asyncio.to_thread(
             _save_bundled_marker_cache,
@@ -1360,6 +1389,64 @@ async def _ensure_local_source_ready(url: str, *, force_upgrade: bool = False) -
             force=True,
         )
         return True
+
+
+def _parse_bundled_pdf_with_text_fallback(path: Path) -> Any | None:
+    markdown = _extract_pdf_markdown_with_fitz(path)
+    if not markdown:
+        markdown = _extract_pdf_markdown_with_pypdf(path)
+    if not markdown.strip():
+        return None
+    structured_content = _build_document_graph_from_markdown(
+        markdown,
+        PDF_PARSE_METHOD_PYMUPDF,
+    )
+    page_count = len(re.findall(r"---\s*Page\s+\d+\s*---", markdown)) or 1
+    return type(
+        "BundledPdfFallbackResult",
+        (),
+        {
+            "markdown": markdown,
+            "structured_content": structured_content,
+            "page_count": page_count,
+        },
+    )()
+
+
+def _extract_pdf_markdown_with_fitz(path: Path) -> str:
+    try:
+        import fitz
+    except Exception:
+        return ""
+    pages: list[str] = []
+    try:
+        with fitz.open(path) as doc:
+            for page_index, page in enumerate(doc, start=1):
+                text = page.get_text("text") or ""
+                if text.strip():
+                    pages.append(f"--- Page {page_index} ---\n{text.strip()}")
+    except Exception as exc:
+        logger.warning(f"[BundledTrainingRAG] PyMuPDF fallback failed for {path}: {exc}")
+        return ""
+    return "\n\n".join(pages)
+
+
+def _extract_pdf_markdown_with_pypdf(path: Path) -> str:
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        return ""
+    pages: list[str] = []
+    try:
+        reader = PdfReader(str(path))
+        for page_index, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(f"--- Page {page_index} ---\n{text.strip()}")
+    except Exception as exc:
+        logger.warning(f"[BundledTrainingRAG] pypdf fallback failed for {path}: {exc}")
+        return ""
+    return "\n\n".join(pages)
 
 
 async def _ensure_vector_index(

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import re
 import logging
 import math
 import threading
@@ -11,7 +13,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from backend.database.database import safe_session
+from backend.database.models import TrainingTask, TrainedModel, utc_now
+from backend.database.repositories import DataGroupRepository, WSIRepository
 from backend.database.repositories.auto_research import AutoResearchRepository
 
 logger = logging.getLogger(__name__)
@@ -236,6 +242,46 @@ async def _persist_event(
             _event_payload(event),
             sequence,
         )
+        if _is_state_event(event):
+            existing = await AutoResearchRepository.get_session(db, session_id)
+            state = dict(event.get("state") or {})
+            stage = str(
+                event.get("stage")
+                or state.get("stage")
+                or getattr(existing, "phase", "")
+                or event.get("status")
+                or "running"
+            )
+            status = _event_status(event, state=state, existing_status=getattr(existing, "status", ""))
+            experiment_plan = getattr(existing, "experiment_plan", None)
+            if not isinstance(experiment_plan, dict):
+                experiment_plan = {}
+            await AutoResearchRepository.upsert_session(
+                db,
+                _session_payload(
+                    session_id=session_id,
+                    user_id=str(getattr(existing, "user_id", "") or "unknown"),
+                    question=str(
+                        getattr(existing, "research_question", "")
+                        or _objective_question(state)
+                    ),
+                    status=status,
+                    stage=stage,
+                    state=state,
+                    max_iterations=(
+                        getattr(existing, "max_iterations", None)
+                        if existing is not None
+                        else _int_or_none(state.get("max_iterations"))
+                    ),
+                    metric=str(
+                        getattr(existing, "best_metric_name", "")
+                        or _metric_name(state)
+                        or ""
+                    ),
+                    model=str(experiment_plan.get("model") or ""),
+                    workspace_path=str(getattr(existing, "workspace_path", "") or ""),
+                ),
+            )
         await db.commit()
 
 
@@ -253,6 +299,19 @@ async def _persist_session_state(
     workspace_path: str,
 ) -> None:
     async with safe_session() as db:
+        state = dict(state)
+        registration_result = await _safe_register_pathlab_trained_model(
+            db,
+            session_id=session_id,
+            user_id=user_id or "unknown",
+            question=question,
+            state=state,
+            status=status,
+            stage=stage,
+            metric=metric,
+        )
+        if registration_result:
+            state["pathlab_model_registration"] = registration_result
         await AutoResearchRepository.upsert_session(
             db,
             _session_payload(
@@ -366,6 +425,7 @@ def _experiment_payloads(
         if not run_id:
             continue
         metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+        pathlab_linkage = _pathlab_linkage(entry)
         status = "completed" if bool(entry.get("committed")) else "failed"
         if entry.get("exit_code") == 0:
             status = "completed"
@@ -374,7 +434,7 @@ def _experiment_payloads(
         payloads.append({
             "session_id": session_id,
             "experiment_name": str(entry.get("name") or entry.get("label") or run_id)[:500],
-            "training_task_id": run_id,
+            "training_task_id": pathlab_linkage.get("training_task_id") or run_id,
             "dataset_id": _string_or_none(
                 entry.get("dataset_id")
                 or entry.get("dataset")
@@ -390,6 +450,7 @@ def _experiment_payloads(
                 "metric_name": entry.get("metric_name") or metric_name,
                 "metric_value": entry.get("metric_value"),
                 "committed": bool(entry.get("committed")),
+                "run_id": run_id if pathlab_linkage else None,
                 "run_dir": entry.get("run_dir"),
                 "model_path": entry.get("model_path"),
                 "data_output_dir": entry.get("data_output_dir"),
@@ -397,6 +458,7 @@ def _experiment_payloads(
                 "quick_check": entry.get("quick_check"),
                 "run_kind": entry.get("run_kind"),
                 "error_type": entry.get("error_type"),
+                "pathlab_linkage": pathlab_linkage or None,
             }),
             "status": status[:20],
             "metrics": _json_safe(metrics),
@@ -405,12 +467,612 @@ def _experiment_payloads(
     return payloads
 
 
+async def _safe_register_pathlab_trained_model(
+    db: Any,
+    *,
+    session_id: str,
+    user_id: str,
+    question: str,
+    state: dict[str, Any],
+    status: str,
+    stage: str,
+    metric: str,
+) -> dict[str, Any] | None:
+    if not _is_terminal_success(status=status, stage=stage):
+        return None
+    try:
+        begin_nested = getattr(db, "begin_nested", None)
+        if callable(begin_nested):
+            async with begin_nested():
+                return await _register_pathlab_trained_model(
+                    db,
+                    session_id=session_id,
+                    user_id=user_id,
+                    question=question,
+                    state=state,
+                    status=status,
+                    stage=stage,
+                    metric=metric,
+                )
+        return await _register_pathlab_trained_model(
+            db,
+            session_id=session_id,
+            user_id=user_id,
+            question=question,
+            state=state,
+            status=status,
+            stage=stage,
+            metric=metric,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to register PathScientist trained model for session %s: %s",
+            session_id,
+            exc,
+        )
+        return {
+            "registered": False,
+            "reason": str(exc),
+            "session_id": session_id,
+        }
+
+
+async def _register_pathlab_trained_model(
+    db: Any,
+    *,
+    session_id: str,
+    user_id: str,
+    question: str,
+    state: dict[str, Any],
+    status: str,
+    stage: str,
+    metric: str,
+) -> dict[str, Any]:
+    candidate = _pathlab_model_candidate(state=state, status=status, stage=stage)
+    if not candidate:
+        return {
+            "registered": False,
+            "reason": "no_completed_training_model",
+            "session_id": session_id,
+        }
+
+    run_id = str(candidate.get("run_id") or "").strip()
+    task_id = _bounded_identifier(
+        f"pathscientist_{_safe_identifier_fragment(session_id)}_{_safe_identifier_fragment(run_id)}"
+    )
+    model_id = _bounded_identifier(f"{task_id}_model")
+    model_path = str(candidate.get("model_path") or "").strip()
+    model_path_obj = Path(model_path).expanduser()
+    config_path = _model_config_path(model_path_obj)
+    metric_name = str(candidate.get("metric_name") or metric or _metric_name(state) or "auc")
+    metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
+    task_type = _infer_model_task_type(state=state, entry=candidate, question=question)
+    group = await DataGroupRepository.get_or_create(
+        db,
+        data_type="wsi",
+        aggregation_level="file",
+        task_type=task_type,
+        name=f"WSI File-level {task_type.capitalize()}",
+        description="PathScientist generated model registration tasks",
+    )
+
+    feature_extractor = _bounded_text(
+        _entry_string(candidate, "feature_extractor", "extractor", "backbone"),
+        100,
+    )
+    aggregator = _bounded_text(
+        _entry_string(candidate, "aggregator", "mil_model", "model", "architecture"),
+        100,
+    )
+    classes = _model_classes(state, candidate)
+    now = utc_now()
+    started_at = _datetime_or_none(candidate.get("started_at")) or now
+    pathlab_linkage = _pathlab_linkage(candidate)
+    features_dir = (
+        pathlab_linkage.get("features_dir")
+        or _string_or_none(candidate.get("features_dir"))
+        or _string_or_none(candidate.get("data_output_dir"))
+    )
+    feature_registration = await _register_pathlab_feature_outputs(
+        db,
+        task_id=task_id,
+        features_dir=features_dir,
+        pathlab_linkage=pathlab_linkage,
+    )
+
+    preprocessing_config = _json_safe({
+        "source": "pathscientist",
+        "session_id": session_id,
+        "run_id": run_id,
+        "features_dir": features_dir,
+        "task_features_dir": feature_registration.get("task_features_dir"),
+        "feature_count": feature_registration.get("feature_count", 0),
+        "feature_extracted_rows": feature_registration.get("feature_extracted_rows", 0),
+        "data_output_dir": candidate.get("data_output_dir"),
+        "run_dir": candidate.get("run_dir"),
+        "workspace_path": _workspace_path(state),
+        "pathlab_linkage": pathlab_linkage or None,
+    })
+    model_config = _json_safe({
+        "source": "pathscientist",
+        "session_id": session_id,
+        "run_id": run_id,
+        "model_path": model_path,
+        "config_path": str(config_path) if config_path else None,
+        "feature_extractor": feature_extractor,
+        "aggregator": aggregator,
+        "metric_name": metric_name,
+        "metric_value": _float_or_none(candidate.get("metric_value")),
+        "quick_check": bool(candidate.get("quick_check")),
+    })
+
+    task = await _get_by_pk(db, TrainingTask, "task_id", task_id)
+    if task is None:
+        task = TrainingTask(task_id=task_id)
+        db.add(task)
+    task.task_name = _pathscientist_task_name(question, run_id)
+    task.task_description = _bounded_text(
+        f"PathScientist completed training run {run_id} from session {session_id}.",
+        2000,
+    )
+    task.group_id = group.group_id
+    task.user_id = user_id or "unknown"
+    task.status = "completed"
+    task.progress = 100
+    task.error_message = None
+    task.preprocessing_config = preprocessing_config
+    task.model_config = model_config
+    task.classes = classes
+    task.started_at = started_at
+    task.finished_at = now
+    if hasattr(task, "updated_at"):
+        task.updated_at = now
+
+    model = await _get_by_pk(db, TrainedModel, "model_id", model_id)
+    if model is None:
+        model = TrainedModel(model_id=model_id)
+        db.add(model)
+    model.task_id = task_id
+    model.model_name = _pathscientist_model_name(question, run_id, aggregator)
+    model.user_id = user_id or "unknown"
+    model.model_path = model_path
+    model.config_path = str(config_path) if config_path else None
+    model.classes = classes
+    model.feature_extractor = feature_extractor
+    model.aggregator = aggregator
+    model.train_metrics = _json_safe({
+        "source": "pathscientist",
+        "run_id": run_id,
+        "metric_name": metric_name,
+    })
+    model.val_metrics = _json_safe(metrics)
+    model.is_default = False
+    model.is_active = True
+    if hasattr(model, "updated_at"):
+        model.updated_at = now
+
+    await db.flush()
+    return {
+        "registered": True,
+        "session_id": session_id,
+        "run_id": run_id,
+        "training_task_id": task_id,
+        "model_id": model_id,
+        "model_path": model_path,
+        "config_path": str(config_path) if config_path else None,
+        "feature_extractor": feature_extractor,
+        "aggregator": aggregator,
+        "task_type": task_type,
+        "features_registered": feature_registration.get("feature_count", 0),
+        "feature_extracted_rows": feature_registration.get("feature_extracted_rows", 0),
+        "task_features_dir": feature_registration.get("task_features_dir"),
+    }
+
+
+async def _register_pathlab_feature_outputs(
+    db: Any,
+    *,
+    task_id: str,
+    features_dir: str | None,
+    pathlab_linkage: dict[str, Any],
+) -> dict[str, Any]:
+    """Mirror PathScientist features into PathLab's task feature view."""
+    feature_root = Path(str(features_dir or "")).expanduser()
+    feature_files = _feature_tensor_files(feature_root)
+    if not feature_files:
+        return {
+            "feature_count": 0,
+            "feature_extracted_rows": 0,
+            "task_features_dir": None,
+        }
+
+    uploads_dir = _infer_uploads_dir_from_feature_root(
+        feature_root,
+        pathlab_linkage=pathlab_linkage,
+    )
+    task_features_dir = (
+        uploads_dir / "training" / task_id / "features"
+        if uploads_dir is not None
+        else None
+    )
+    wsi_ids = [path.stem for path in feature_files]
+    if task_features_dir is not None:
+        for feature_path in feature_files:
+            _create_relative_symlink(
+                task_features_dir / f"{feature_path.stem}.pt",
+                feature_path,
+            )
+
+    try:
+        updated_rows = await WSIRepository.bulk_update_feature_extracted(
+            db,
+            wsi_ids,
+            True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to mark PathScientist feature_extracted rows for task %s: %s",
+            task_id,
+            exc,
+        )
+        updated_rows = 0
+
+    return {
+        "feature_count": len(feature_files),
+        "feature_extracted_rows": int(updated_rows or 0),
+        "task_features_dir": str(task_features_dir) if task_features_dir is not None else None,
+    }
+
+
+def _feature_tensor_files(features_dir: Path) -> list[Path]:
+    try:
+        if not features_dir.is_dir():
+            return []
+        return sorted(
+            path
+            for path in features_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".pt", ".pth"}
+        )
+    except OSError:
+        return []
+
+
+def _infer_uploads_dir_from_feature_root(
+    features_dir: Path,
+    *,
+    pathlab_linkage: dict[str, Any],
+) -> Path | None:
+    explicit = _string_or_none(pathlab_linkage.get("uploads_dir"))
+    if explicit:
+        return Path(explicit).expanduser()
+    parts = features_dir.parts
+    for index, part in enumerate(parts):
+        if part == "features" and index > 0:
+            return Path(*parts[:index]).expanduser()
+    return None
+
+
+def _create_relative_symlink(link_path: Path, target_path: Path) -> None:
+    link_path.parent.mkdir(parents=True, exist_ok=True)
+    if link_path.exists() or link_path.is_symlink():
+        link_path.unlink()
+    try:
+        rel_path = Path(os.path.relpath(target_path, link_path.parent))
+        link_path.symlink_to(rel_path)
+    except OSError:
+        link_path.symlink_to(target_path)
+
+
+def _pathlab_model_candidate(
+    *,
+    state: dict[str, Any],
+    status: str,
+    stage: str,
+) -> dict[str, Any] | None:
+    if not _is_terminal_success(status=status, stage=stage):
+        return None
+
+    run_history = _run_history(state)
+    best_run_id = str(state.get("best_run_id") or "").strip()
+    ordered: list[dict[str, Any]] = []
+    seen: set[int] = set()
+
+    def add(entry: dict[str, Any]) -> None:
+        marker = id(entry)
+        if marker not in seen:
+            seen.add(marker)
+            ordered.append(entry)
+
+    if best_run_id:
+        for entry in run_history:
+            if str(entry.get("run_id") or "") == best_run_id:
+                add(entry)
+                break
+    for entry in reversed(run_history):
+        if entry.get("committed"):
+            add(entry)
+    for entry in reversed(run_history):
+        add(entry)
+
+    for entry in ordered:
+        candidate = _validated_model_candidate(entry)
+        if candidate:
+            return candidate
+    return None
+
+
+def _validated_model_candidate(entry: dict[str, Any]) -> dict[str, Any] | None:
+    run_kind = str(entry.get("run_kind") or "").strip().lower()
+    if run_kind in {"external_test", "external-validation", "external_validation"}:
+        return None
+    if bool(entry.get("quick_check")):
+        return None
+    if entry.get("error_type"):
+        return None
+    exit_code = _int_or_none(entry.get("exit_code"))
+    if exit_code is not None and exit_code != 0:
+        return None
+    if not entry.get("committed") and exit_code != 0:
+        return None
+
+    linkage = _pathlab_linkage(entry)
+    model_path = _string_or_none(entry.get("model_path")) or linkage.get("model_path")
+    if not model_path:
+        return None
+    model_path_obj = Path(model_path).expanduser()
+    if not model_path_obj.is_file():
+        return None
+
+    candidate = dict(entry)
+    candidate["model_path"] = str(model_path_obj)
+    if linkage:
+        candidate.setdefault("pathlab_linkage", linkage)
+    return candidate
+
+
+def _is_terminal_success(*, status: str, stage: str) -> bool:
+    status_value = str(status or "").strip().lower()
+    stage_value = str(stage or "").strip().lower()
+    return status_value in {
+        "completed",
+        "complete",
+        "finished",
+        "success",
+        "succeeded",
+    } or stage_value in {
+        "completed",
+        "complete",
+        "finished",
+        "success",
+        "succeeded",
+        "synthesis",
+    }
+
+
+async def _get_by_pk(db: Any, model_cls: Any, pk_field: str, pk_value: Any) -> Any:
+    result = await db.execute(
+        select(model_cls).where(getattr(model_cls, pk_field) == pk_value)
+    )
+    return result.scalar_one_or_none()
+
+
+def _safe_identifier_fragment(value: Any) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("._-")
+    return text or "unknown"
+
+
+def _bounded_identifier(value: str, limit: int = 255) -> str:
+    text = _safe_identifier_fragment(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip("._-") or text[:limit]
+
+
+def _bounded_text(value: Any, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip()
+
+
+def _pathscientist_task_name(question: str, run_id: str) -> str:
+    base = str(question or "").strip() or f"run {run_id}"
+    return _bounded_text(f"PathScientist: {base}", 500)
+
+
+def _pathscientist_model_name(question: str, run_id: str, aggregator: str | None) -> str:
+    if question:
+        base = f"PathScientist: {question}"
+    elif aggregator:
+        base = f"PathScientist {aggregator} run {run_id}"
+    else:
+        base = f"PathScientist run {run_id}"
+    return _bounded_text(base, 500)
+
+
+def _model_config_path(model_path: Path) -> Path | None:
+    for name in (
+        "config.json",
+        "model_config.json",
+        "training_config.json",
+        "config.yaml",
+        "config.yml",
+    ):
+        candidate = model_path.parent / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _entry_string(entry: dict[str, Any], *keys: str) -> str | None:
+    containers: list[Any] = [
+        entry,
+        entry.get("metrics"),
+        entry.get("config"),
+        entry.get("hyperparams"),
+        entry.get("metadata"),
+    ]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for key in keys:
+            value = _string_or_none(container.get(key))
+            if value:
+                return value
+    return None
+
+
+def _model_classes(state: dict[str, Any], entry: dict[str, Any]) -> list[str]:
+    for value in (
+        entry.get("classes"),
+        _nested_get(entry, "classes"),
+        state.get("classes"),
+        _nested_get(state, "classes"),
+    ):
+        parsed = _string_list(value)
+        if parsed:
+            return parsed
+    metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+    for key in ("class_names", "labels", "label_names"):
+        parsed = _string_list(metrics.get(key))
+        if parsed:
+            return parsed
+    for key in ("class_to_idx", "label_to_idx", "label_mapping"):
+        parsed = _mapping_keys(metrics.get(key))
+        if parsed:
+            return parsed
+    for key in ("idx_to_class", "id_to_label", "idx_to_label"):
+        parsed = _mapping_values(metrics.get(key), sort_numeric_keys=True)
+        if parsed:
+            return parsed
+    return []
+
+
+def _mapping_keys(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    return _string_list(list(value.keys()))
+
+
+def _mapping_values(value: Any, *, sort_numeric_keys: bool = False) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    items = list(value.items())
+    if sort_numeric_keys:
+        items.sort(key=lambda item: _mapping_sort_key(item[0]))
+    return _string_list([item[1] for item in items])
+
+
+def _mapping_sort_key(value: Any) -> tuple[int, Any]:
+    try:
+        return (0, int(value))
+    except (TypeError, ValueError):
+        return (1, str(value))
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        value = list(value.keys())
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    result = []
+    seen = set()
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def _infer_model_task_type(
+    *,
+    state: dict[str, Any],
+    entry: dict[str, Any],
+    question: str,
+) -> str:
+    for value in (
+        entry.get("task_type"),
+        _nested_get(entry, "task_type"),
+        state.get("task_type"),
+        _nested_get(state, "task_type"),
+    ):
+        normalized = _normalize_task_type(value)
+        if normalized:
+            return normalized
+
+    text_parts = [
+        question,
+        str(state.get("research_question") or ""),
+        str(state.get("objective") or ""),
+        str(state.get("grounding") or ""),
+        str(entry.get("run_kind") or ""),
+    ]
+    text = " ".join(text_parts).lower()
+    if "survival" in text or "cox" in text:
+        return "survival"
+    if "segment" in text or "segmentation" in text or "mask" in text:
+        return "segmentation"
+    return "classification"
+
+
+def _normalize_task_type(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"classification", "survival", "segmentation"}:
+        return text
+    if text in {"classify", "cls"}:
+        return "classification"
+    if text in {"segment", "seg"}:
+        return "segmentation"
+    return ""
+
+
+def _datetime_or_none(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+
+
 def _event_payload(event: dict[str, Any]) -> dict[str, Any]:
     event_type = str(event.get("kind") or event.get("event_type") or "event")[:50]
     return {
         "event_type": event_type,
         "event_data": _json_safe(event),
     }
+
+
+def _is_state_event(event: dict[str, Any]) -> bool:
+    return (
+        str(event.get("kind") or event.get("event_type") or "").strip() == "state"
+        and isinstance(event.get("state"), dict)
+    )
+
+
+def _event_status(
+    event: dict[str, Any],
+    *,
+    state: dict[str, Any],
+    existing_status: Any,
+) -> str:
+    explicit = str(event.get("status") or "").strip()
+    if explicit:
+        return explicit
+    stage = str(state.get("stage") or event.get("stage") or "").strip().lower()
+    if stage in {"completed", "complete", "finished", "synthesis"}:
+        return "completed"
+    if stage in {"failed", "error"}:
+        return "failed"
+    if stage in {"interrupted", "cancelled", "canceled", "stopped"}:
+        return "interrupted"
+    return str(existing_status or "running")
 
 
 def _experiment_plan(
@@ -533,6 +1195,7 @@ def _recovery_metadata(
         "review_history",
         "review_decision",
         "integrity_report",
+        "pathlab_model_registration",
     ):
         if key in state:
             metadata[key] = state.get(key)
@@ -562,8 +1225,54 @@ def _best_experiment(
     return None
 
 
+def _pathlab_linkage(entry: dict[str, Any]) -> dict[str, Any]:
+    """Normalize links from a PathScientist run to PathLab-owned artifacts."""
+    raw = entry.get("pathlab") if isinstance(entry.get("pathlab"), dict) else {}
+    linkage: dict[str, Any] = {}
+    for key in (
+        "uploads_dir",
+        "training_task_id",
+        "training_dir",
+        "features_dir",
+        "models_dir",
+        "logs_dir",
+        "progress_dir",
+        "model_path",
+        "analysis_id",
+        "dataset_id",
+    ):
+        value = _string_or_none(raw.get(key))
+        if value:
+            linkage[key] = value
+
+    aliases = {
+        "pathlab_training_task_id": "training_task_id",
+        "training_task_id": "training_task_id",
+        "pathlab_training_dir": "training_dir",
+        "pathlab_features_dir": "features_dir",
+        "pathlab_models_dir": "models_dir",
+        "pathlab_logs_dir": "logs_dir",
+        "pathlab_progress_dir": "progress_dir",
+        "analysis_id": "analysis_id",
+        "dataset_id": "dataset_id",
+    }
+    for source, target in aliases.items():
+        value = _string_or_none(entry.get(source))
+        if value and target not in linkage:
+            linkage[target] = value
+
+    for source, target in (
+        ("data_output_dir", "features_dir"),
+        ("model_path", "model_path"),
+    ):
+        value = _string_or_none(entry.get(source))
+        if value and target not in linkage:
+            linkage[target] = value
+    return linkage
+
+
 def _compact_run(entry: dict[str, Any]) -> dict[str, Any]:
-    return _json_safe({
+    compact = {
         "run_id": entry.get("run_id"),
         "iteration": entry.get("iteration"),
         "metric_name": entry.get("metric_name"),
@@ -576,7 +1285,11 @@ def _compact_run(entry: dict[str, Any]) -> dict[str, Any]:
         "quick_check": entry.get("quick_check"),
         "run_kind": entry.get("run_kind"),
         "error_type": entry.get("error_type"),
-    })
+    }
+    pathlab_linkage = _pathlab_linkage(entry)
+    if pathlab_linkage:
+        compact["pathlab_linkage"] = pathlab_linkage
+    return _json_safe(compact)
 
 
 def _metric_name(state: dict[str, Any]) -> str:

@@ -468,7 +468,7 @@ def search_pdf_chunks(
         query_vec = _embed_texts([query])[0].tolist()
         table = db.open_table(TABLE_NAME)
 
-        search = table.search(query_vec).limit(top_k)
+        search = table.search(query_vec)
 
         # Apply URL filter if specified
         if url_hashes:
@@ -477,6 +477,7 @@ def search_pdf_chunks(
             else:
                 in_list = ", ".join(f"'{h}'" for h in url_hashes)
                 search = search.where(f"url_hash IN ({in_list})")
+        search = search.limit(top_k)
 
         results = search.to_list()
 
@@ -527,4 +528,3 @@ def is_pdf_indexed(url_hash: str, *, vectorstore_dir: Path | None = None) -> boo
         return len(results) > 0
     except Exception:
         return False
-

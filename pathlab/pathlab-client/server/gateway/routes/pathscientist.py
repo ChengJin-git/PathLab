@@ -7,6 +7,7 @@ not fail just because the optional research-agent runtime is unavailable.
 from __future__ import annotations
 
 import asyncio
+import csv
 import itertools
 import json
 import logging
@@ -35,18 +36,22 @@ from backend.auth import (
     get_user_from_header_or_param,
     get_user_from_token_param,
 )
+from backend.common.config import Config
 from backend.database.database import safe_session
 from backend.database.repositories.auto_research import AutoResearchRepository
 from gateway import pathscientist_persistence
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_LLM_PROFILE = "codex-relay"
+DEFAULT_LLM_WIRE_API = "completion"
 GATEWAY_SESSION_REGISTRY = "gateway_sessions.json"
 GATEWAY_EVENT_DIR = "gateway_events"
 GATEWAY_DELETED_SESSIONS = "gateway_deleted_sessions.json"
 GATEWAY_DELETE_AUDIT_LOG = "gateway_delete_audit.jsonl"
 LEGACY_RUNNING_STALE_SECONDS = int(os.environ.get("PATHSCIENTIST_LEGACY_RUNNING_STALE_SEC", "600"))
-DEFAULT_DATASET_CACHE_DIR = "/project/llmponco/wangyihui/original_data/pathlab_test_data"
+TRAINING_LOG_ACTIVE_SECONDS = int(os.environ.get("PATHSCIENTIST_TRAINING_LOG_ACTIVE_SEC", "7200"))
+DEFAULT_DATASET_CACHE_DIR = ""
 DOWNLOAD_PROGRESS_POLL_SECONDS = float(os.environ.get("PATHSCIENTIST_DOWNLOAD_PROGRESS_POLL_SEC", "1"))
 _DB_HISTORY_ENABLED = os.environ.get("PATHSCIENTIST_DB_HISTORY", "1").strip().lower() not in {"0", "false", "no"}
 
@@ -58,6 +63,10 @@ _WORKSPACE_SIZE_CACHE_LOCK = threading.Lock()
 _WORKSPACE_SIZE_CACHE_TTL_SECONDS = float(os.environ.get("PATHSCIENTIST_WORKSPACE_SIZE_TTL_SEC", "30"))
 _WORKSPACE_SIZE_CACHE: dict[str, tuple[float, int]] = {}
 _WORKSPACE_SIZE_PENDING: set[str] = set()
+_TRAINING_EPOCH_RE = re.compile(r"\bEpoch\s+(\d+)\s*/\s*(\d+)\b", re.IGNORECASE)
+_TRAINING_METRIC_RE = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9_]*)=([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
+)
 
 
 class StartPathScientistSessionRequest(BaseModel):
@@ -72,6 +81,7 @@ class StartPathScientistSessionRequest(BaseModel):
     manual_approval: bool = False
     download_policy: str | None = None
     data_paths: list[str] = Field(default_factory=list)
+    dataset_ids: list[str] = Field(default_factory=list)
     external_test_enabled: bool = False
     external_test_contract: dict[str, str] = Field(default_factory=dict)
 
@@ -178,6 +188,14 @@ class SessionRecord:
             "error": self.error,
         }
         if isinstance(self.state, dict):
+            current_iteration = _coerce_iteration(self.state.get("iteration_index"))
+            if current_iteration is None:
+                current_iteration = _coerce_iteration(self.state.get("current_iteration"))
+            max_iterations = _coerce_iteration(self.state.get("max_iterations"))
+            if current_iteration is not None:
+                payload["current_iteration"] = current_iteration
+            if max_iterations is not None:
+                payload["max_iterations"] = max_iterations
             for key in (
                 "persistence_dir",
                 "workspace_path",
@@ -192,6 +210,9 @@ class SessionRecord:
                 if key in self.state:
                     payload[key] = self.state[key]
         payload.update(_workspace_usage_summary(self))
+        training_progress = _training_progress_summary(self)
+        if training_progress:
+            payload["training_progress"] = training_progress
         return payload
 
 
@@ -231,8 +252,17 @@ class PathScientistSessionManager:
             [Any, str, Callable[[dict[str, Any]], None]], dict[str, Any]
         ] | None = None
 
-    def start(self, req: StartPathScientistSessionRequest, *, user_id: str = "") -> SessionRecord:
+    def start(
+        self,
+        req: StartPathScientistSessionRequest,
+        *,
+        user_id: str = "",
+        dataset_mounts: dict[str, str] | None = None,
+    ) -> SessionRecord:
         config = _build_config(req)
+        config.pathlab_user_id = str(user_id or "")
+        if dataset_mounts:
+            _merge_data_mounts(config.data_mounts, dataset_mounts)
         record = SessionRecord(
             session_id=uuid.uuid4().hex[:12],
             conversation_id="",
@@ -270,6 +300,7 @@ class PathScientistSessionManager:
         if not _conversation_base_state_exists(record.conversation_id, _record_state(record)):
             raise SessionResumeRejected("This session can be viewed, but its resume checkpoint is missing.")
         config = _build_config(req)
+        config.pathlab_user_id = str(record.user_id or "")
 
         assert record._condition is not None
         with record._condition:
@@ -535,12 +566,26 @@ class PathScientistSessionManager:
                 _persist_record_state(record, req)
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
                 return
+            sync_result = _sync_pathscientist_manifest_to_pathlab_best_effort(record, state)
+            state["pathlab_download_sync"] = sync_result
+            final_status, final_stage, final_error = _final_status_from_state(state)
+            if final_status == "failed":
+                state = {
+                    **state,
+                    "workflow_stage": state.get("stage"),
+                    "stage": final_stage,
+                    "error": final_error,
+                }
             record.state = state
             record.conversation_id = str(state.get("conversation_id") or "")
-            record.set_status("completed", stage=str(state.get("stage") or "completed"))
+            record.set_status(
+                final_status,
+                stage=final_stage,
+                error=final_error or None,
+            )
             _save_gateway_session_record(record)
             _persist_record_state(record, req)
-            record.add_event({"kind": "state", "state": state})
+            record.add_event({"kind": "state", "state": state, "status": final_status})
         except SessionStopRequested as exc:
             record.state = {
                 **_record_state(record),
@@ -629,9 +674,21 @@ class PathScientistSessionManager:
         stop_download_progress_poller = _start_download_progress_poller(record)
         try:
             state = self._invoke_resume_runner(config, req, record)
+            final_status, final_stage, final_error = _final_status_from_state(state)
+            if final_status == "failed":
+                state = {
+                    **state,
+                    "workflow_stage": state.get("stage"),
+                    "stage": final_stage,
+                    "error": final_error,
+                }
             record.state = state
             record.conversation_id = str(state.get("conversation_id") or record.conversation_id or "")
-            record.set_status("completed", stage=str(state.get("stage") or "completed"))
+            record.set_status(
+                final_status,
+                stage=final_stage,
+                error=final_error or None,
+            )
             _save_gateway_session_record(record)
             _persist_record_state(record, req)
             record.add_event({"kind": "state", "state": record.state, "status": record.status})
@@ -966,9 +1023,86 @@ def _apply_live_state_event_to_record(record: SessionRecord, event: dict[str, An
         _persist_record_state(record)
 
 
+_FAILED_FINAL_REVIEW_STATUSES = {"failed", "no_finalized_run", "error"}
+
+
+def _is_committed_run(entry: Any) -> bool:
+    return isinstance(entry, dict) and bool(entry.get("committed"))
+
+
+def _run_failed(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("committed"):
+        return False
+    exit_code = entry.get("exit_code")
+    if exit_code not in (None, "", 0, "0"):
+        return True
+    metrics = entry.get("metrics")
+    if isinstance(metrics, dict) and str(metrics.get("status") or "").lower() == "failed":
+        return True
+    return bool(entry.get("error") or entry.get("error_type"))
+
+
+def _final_failure_message(state: dict[str, Any]) -> str:
+    latest_review = state.get("latest_review") if isinstance(state.get("latest_review"), dict) else {}
+    for key in ("summary", "reason", "message"):
+        text = str(latest_review.get(key) or "").strip()
+        if text:
+            return text
+    for entry in reversed(state.get("run_history") if isinstance(state.get("run_history"), list) else []):
+        if not isinstance(entry, dict):
+            continue
+        metrics = entry.get("metrics")
+        if isinstance(metrics, dict):
+            text = str(metrics.get("error") or "").strip()
+            if text:
+                return text
+        text = str(entry.get("error") or entry.get("error_type") or "").strip()
+        if text:
+            return text
+    return "PathScientist finished without a committed successful run."
+
+
+def _final_status_from_state(state: dict[str, Any]) -> tuple[str, str, str]:
+    """Map workflow completion to UI/API status.
+
+    PathScientist can reach synthesis/completed after exhausting retries even
+    when every experiment failed. In that case the Gateway must expose a failed
+    session, not a successful one.
+    """
+    stage = str(state.get("stage") or "completed").strip() or "completed"
+    if stage in {"failed", "interrupted"}:
+        return stage, stage, str(state.get("error") or state.get("interrupted_reason") or "")
+
+    run_history = state.get("run_history")
+    runs = [entry for entry in run_history if isinstance(entry, dict)] if isinstance(run_history, list) else []
+    if any(_is_committed_run(entry) for entry in runs):
+        return "completed", stage, ""
+
+    latest_review = state.get("latest_review") if isinstance(state.get("latest_review"), dict) else {}
+    latest_review_status = str(latest_review.get("status") or "").strip().lower()
+    review_decision = str(
+        state.get("review_decision") or latest_review.get("decision") or ""
+    ).strip().lower()
+    has_failed_run_evidence = bool(runs) and all(_run_failed(entry) for entry in runs)
+    if (
+        stage in {"completed", "finished", "synthesis"}
+        and review_decision == "enter_synthesis"
+        and (
+            latest_review_status in _FAILED_FINAL_REVIEW_STATUSES
+            or has_failed_run_evidence
+        )
+    ):
+        return "failed", "failed", _final_failure_message(state)
+
+    return "completed", stage, ""
+
+
 def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
     """Resolve a PathScientist workspace from serialized research state."""
     candidates: list[Any] = [
+        state.get("workspace_path"),
         state.get("workspace_dir"),
         state.get("workspace_root"),
     ]
@@ -976,7 +1110,11 @@ def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
     if isinstance(summary, dict):
         research_session = summary.get("research_session")
         candidates.extend([
+            summary.get("workspace_path"),
             summary.get("workspace_dir"),
+            research_session.get("workspace_path")
+            if isinstance(research_session, dict)
+            else "",
             research_session.get("workspace_dir")
             if isinstance(research_session, dict)
             else "",
@@ -1250,7 +1388,7 @@ def _fallback_session_title(question: str) -> str:
 
 
 def _generate_session_title(question: str, config: Any | None = None) -> str:
-    """Generate a concise session title with gpt-5.5."""
+    """Generate a concise session title with the active PathScientist LLM."""
     try:
         from openhands.sdk.llm import Message, TextContent
         from backend.pathscientist.llm_client import (
@@ -1260,7 +1398,8 @@ def _generate_session_title(question: str, config: Any | None = None) -> str:
             make_llm_config,
         )
 
-        llm_config = make_llm_config(config=config, llm_model=DEFAULT_MODEL)
+        title_model = str(getattr(config, "llm_model", "") or "").strip() or DEFAULT_MODEL
+        llm_config = make_llm_config(config=config, llm_model=title_model)
         llm = build_chat_llm(
             llm_config,
             component="PathScientist session title",
@@ -1436,9 +1575,19 @@ def _load_gateway_session_records() -> list[SessionRecord]:
         stage = str(item.get("stage") or status)
         error = str(item.get("error") or "")
         if status in {"queued", "running"}:
-            status = "interrupted"
-            stage = "interrupted"
-            error = error or "Gateway restarted before this session reached a final state."
+            item_state = item.get("state") if isinstance(item.get("state"), dict) else {}
+            workspace = _resolve_workspace_from_state({
+                **item_state,
+                "workspace_path": item.get("workspace_path") or item_state.get("workspace_path"),
+                "workspace_dir": item.get("workspace_path") or item_state.get("workspace_dir"),
+            })
+            if _workspace_has_recent_training_log(workspace):
+                stage = str(item_state.get("stage") or stage or "execution")
+                error = ""
+            else:
+                status = "interrupted"
+                stage = "interrupted"
+                error = error or "Gateway restarted before this session reached a final state."
         try:
             created_at = float(item.get("created_at") or time.time())
         except (TypeError, ValueError):
@@ -1743,6 +1892,42 @@ def _legacy_runtime_status(summary: dict[str, Any], *, now: float | None = None)
     return LegacyRuntimeStatus(status="running", stage="running")
 
 
+def _db_runtime_status(session: Any, *, now: float | None = None) -> LegacyRuntimeStatus:
+    status = str(getattr(session, "status", None) or "completed").strip().lower()
+    stage = str(getattr(session, "phase", None) or status or "completed").strip().lower()
+    if status not in {"queued", "running"}:
+        return LegacyRuntimeStatus(status=status or "completed", stage=stage or status or "completed")
+
+    now = time.time() if now is None else now
+    recovery = getattr(session, "recovery_metadata", None)
+    recovery = recovery if isinstance(recovery, dict) else {}
+    workspace = _resolve_workspace_from_state({
+        "workspace_path": getattr(session, "workspace_path", None),
+        "workspace_dir": getattr(session, "workspace_path", None),
+        "recovery_metadata": recovery,
+    })
+    if _workspace_has_recent_training_log(workspace, now=now):
+        return LegacyRuntimeStatus(status=status, stage=stage or status)
+
+    timestamp = _timestamp_to_epoch_or_none(
+        getattr(session, "updated_at", None) or getattr(session, "created_at", None)
+    )
+    if timestamp is None:
+        return LegacyRuntimeStatus(
+            status="interrupted",
+            stage="interrupted",
+            error="No database updates were recorded; this run is not attached to a live Gateway process.",
+        )
+    age_seconds = max(0.0, now - timestamp)
+    if age_seconds > LEGACY_RUNNING_STALE_SECONDS:
+        return LegacyRuntimeStatus(
+            status="interrupted",
+            stage="interrupted",
+            error="No recent database updates; this run was likely stopped outside the web Gateway.",
+        )
+    return LegacyRuntimeStatus(status=status, stage=stage or status)
+
+
 def _first_content_text(content: Any) -> str:
     if isinstance(content, str):
         return _safe_text(content)
@@ -1911,6 +2096,7 @@ def _event_row_to_gateway_event(row: Any) -> dict[str, Any]:
 
 
 def _db_session_to_record(session: Any, events: list[dict[str, Any]] | None = None) -> SessionRecord:
+    runtime = _db_runtime_status(session)
     plan = session.experiment_plan if isinstance(getattr(session, "experiment_plan", None), dict) else {}
     comparison = (
         session.comparison_results
@@ -1923,7 +2109,7 @@ def _db_session_to_record(session: Any, events: list[dict[str, Any]] | None = No
         else {}
     )
     state: dict[str, Any] = {
-        "stage": getattr(session, "phase", None) or getattr(session, "status", None),
+        "stage": runtime.stage,
         "objective": {
             "question": getattr(session, "research_question", "") or "",
             "success_metric": getattr(session, "best_metric_name", None) or "auc",
@@ -1937,8 +2123,8 @@ def _db_session_to_record(session: Any, events: list[dict[str, Any]] | None = No
         "iteration_index": getattr(session, "current_iteration", None),
         "max_iterations": getattr(session, "max_iterations", None),
         "conversation_id": getattr(session, "conversation_id", None),
-        "persistence_dir": getattr(session, "persistence_dir", None),
-        "workspace_path": getattr(session, "workspace_path", None),
+        "persistence_dir": getattr(session, "persistence_dir", None) or recovery.get("persistence_dir"),
+        "workspace_path": getattr(session, "workspace_path", None) or recovery.get("workspace_path"),
         "resume_available": bool(getattr(session, "resume_available", False)),
         "event_source_version": getattr(session, "event_source_version", None) or "gateway-v1",
         "recovery_metadata": recovery,
@@ -1946,7 +2132,7 @@ def _db_session_to_record(session: Any, events: list[dict[str, Any]] | None = No
         "persisted_summary": {
             "conversation_id": getattr(session, "conversation_id", None),
             "research_question": getattr(session, "research_question", "") or "",
-            "execution_status": getattr(session, "status", None),
+            "execution_status": runtime.status,
             "started_at": getattr(session, "created_at", None),
             "updated_at": getattr(session, "updated_at", None),
             "tracker_state": {
@@ -1963,10 +2149,12 @@ def _db_session_to_record(session: Any, events: list[dict[str, Any]] | None = No
                     "question": getattr(session, "research_question", "") or "",
                     "success_metric": getattr(session, "best_metric_name", None) or "auc",
                 },
-                "stage": getattr(session, "phase", None) or getattr(session, "status", None),
+                "stage": runtime.stage,
             },
         },
     }
+    if runtime.error:
+        state["interrupted_reason"] = runtime.error
     for key in (
         "external_test",
         "external_test_history",
@@ -1987,11 +2175,12 @@ def _db_session_to_record(session: Any, events: list[dict[str, Any]] | None = No
         model=str(plan.get("model") or ""),
         user_id=str(getattr(session, "user_id", "") or ""),
         title=_fallback_session_title(str(getattr(session, "research_question", "") or "")),
-        status=str(getattr(session, "status", None) or "completed"),
-        stage=str(getattr(session, "phase", None) or getattr(session, "status", None) or "completed"),
+        status=runtime.status,
+        stage=runtime.stage,
         created_at=_db_datetime_to_epoch(getattr(session, "created_at", None), fallback=time.time()),
         updated_at=_db_datetime_to_epoch(getattr(session, "updated_at", None), fallback=time.time()),
         state=state,
+        error=runtime.error,
     )
     if events:
         record.hydrate_events(events)
@@ -2673,8 +2862,8 @@ def _scan_persisted_conversations(*, curated_only: bool = False) -> list[Session
             question=str(question)[:280],
             model="",
             # Avoid blocking the history list on many LLM calls. New web
-            # sessions get gpt-5.5 titles at creation; legacy sessions get a
-            # deterministic concise fallback unless already migrated later.
+            # sessions queue title generation at creation; legacy sessions get
+            # a deterministic concise fallback unless already migrated later.
             title=_fallback_session_title(str(question)),
             status=runtime.status,
             stage=runtime.stage if runtime.status == "interrupted" else str(research.get("stage") or runtime.stage),
@@ -2686,6 +2875,439 @@ def _scan_persisted_conversations(*, curated_only: bool = False) -> list[Session
         stubs.append(stub)
     return stubs
 
+
+def _unique_nonempty_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _pathlab_dataset_slug(name: str, dataset_id: str) -> str:
+    raw = str(name or dataset_id or "dataset").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    if not slug:
+        slug = "dataset"
+    suffix = re.sub(r"[^a-z0-9]+", "", str(dataset_id or "").lower())[:8]
+    if suffix and suffix not in slug:
+        slug = f"{slug}_{suffix}"
+    return slug[:96]
+
+
+def _safe_slide_id(value: str) -> str:
+    raw = str(value or "").strip() or uuid.uuid4().hex
+    slide_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._-")
+    return (slide_id or uuid.uuid4().hex)[:180]
+
+
+def _normalized_split(value: Any) -> str:
+    split = str(value or "").strip().lower()
+    if split in {"valid", "validation"}:
+        return "val"
+    return split if split in {"train", "val", "test"} else ""
+
+
+def _unique_container_mount(container: str, used: set[str]) -> str:
+    normalized = str(container or "").strip()
+    if not normalized:
+        normalized = "/data/dataset"
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized.strip("/")
+    normalized = normalized.rstrip("/") or "/data/dataset"
+    candidate = normalized
+    suffix = 1
+    while candidate in used:
+        suffix += 1
+        candidate = f"{normalized}_{suffix}"
+    used.add(candidate)
+    return candidate
+
+
+def _add_data_mount(
+    data_mounts: dict[str, str],
+    used: set[str],
+    host: str,
+    container: str | None = None,
+) -> None:
+    host_path = str(host or "").strip()
+    if not host_path:
+        return
+    if container is None:
+        base = Path(host_path).name.lower() or "data"
+        container = f"/data/{base}"
+    data_mounts[host_path] = _unique_container_mount(container, used)
+
+
+def _pathlab_dataset_view_parent() -> Path:
+    base = _resolve_pathscientist_base_dir()
+    return base / "pathlab_datasets" / "session_inputs"
+
+
+
+def _normalize_dataset_match_text(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _match_pathlab_datasets_from_question(
+    question: str,
+    datasets: list[dict[str, Any]],
+) -> list[str]:
+    normalized_question = f" {_normalize_dataset_match_text(question)} "
+    raw_question = str(question or "").lower()
+    matches: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for dataset in datasets:
+        dataset_id = str(dataset.get("dataset_id") or "").strip()
+        if not dataset_id or dataset_id in seen:
+            continue
+        dataset_name = str(dataset.get("dataset_name") or dataset.get("name") or "").strip()
+        normalized_name = _normalize_dataset_match_text(dataset_name)
+        normalized_id = _normalize_dataset_match_text(dataset_id)
+        matched = False
+        score = 0
+        if dataset_id.lower() in raw_question:
+            matched = True
+            score = max(score, len(dataset_id) + 1000)
+        if normalized_id and f" {normalized_id} " in normalized_question:
+            matched = True
+            score = max(score, len(normalized_id) + 900)
+        if normalized_name and f" {normalized_name} " in normalized_question:
+            matched = True
+            score = max(score, len(normalized_name))
+        if matched:
+            seen.add(dataset_id)
+            matches.append((score, dataset_id))
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return [dataset_id for _score, dataset_id in matches]
+
+
+async def _resolve_pathlab_dataset_mounts(
+    dataset_ids: list[str],
+    user: User,
+    *,
+    question: str = "",
+) -> dict[str, str]:
+    selected_ids = _unique_nonempty_strings(dataset_ids)
+    explicit_selection = bool(selected_ids)
+    if not selected_ids and not str(question or "").strip():
+        return {}
+
+    try:
+        from backend.auth.dependencies import get_dataset_with_access, get_permitted_dataset_ids
+        from backend.database.repositories import WSIRepository
+    except Exception as exc:
+        raise RuntimeError(f"PathLab dataset repository unavailable: {exc}") from exc
+
+    mounts: dict[str, str] = {}
+    used_containers: set[str] = set()
+    view_session_dir = _pathlab_dataset_view_parent() / uuid.uuid4().hex[:12]
+    try:
+        async with safe_session() as db:
+            user_id_filter = None if _user_is_admin(user) else str(getattr(user, "id", "") or "")
+            elevated_dataset_ids = (
+                await get_permitted_dataset_ids(user, db)
+                if callable(getattr(user, "is_admin", None))
+                else []
+            )
+            if not selected_ids:
+                visible_datasets = await WSIRepository.get_datasets(
+                    db,
+                    data_type="wsi",
+                    user_id=user_id_filter,
+                    elevated_dataset_ids=elevated_dataset_ids,
+                    limit=0,
+                )
+                selected_ids = _match_pathlab_datasets_from_question(question, visible_datasets)
+            if not selected_ids:
+                return {}
+            for dataset_id in selected_ids:
+                dataset = await get_dataset_with_access(
+                    dataset_id,
+                    user,
+                    db,
+                    not_found_detail=f"Dataset not found: {dataset_id}",
+                    forbidden_detail="You don't have permission to use this dataset in PathScientist",
+                )
+                slides = await WSIRepository.get_by_dataset(
+                    db,
+                    dataset_id,
+                    user_id=user_id_filter,
+                    data_type="wsi",
+                    elevated_dataset_ids=elevated_dataset_ids,
+                    sort_by="original_filename",
+                    sort_order="asc",
+                )
+                if not slides:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Dataset has no accessible WSI files: {dataset_id}",
+                    )
+                slug = _pathlab_dataset_slug(getattr(dataset, "name", ""), dataset_id)
+                view_dir = _prepare_pathlab_dataset_view(
+                    dataset=dataset,
+                    slides=slides,
+                    view_dir=view_session_dir / slug,
+                )
+                mounts[str(view_dir)] = _unique_container_mount(f"/data/{slug}", used_containers)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if explicit_selection:
+            raise
+        logger.debug("PathLab dataset auto-match skipped: %s", exc)
+        return {}
+    return mounts
+
+
+def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: Path) -> Path:
+    view_dir.mkdir(parents=True, exist_ok=True)
+    wsi_dir = view_dir / "wsi_files"
+    wsi_dir.mkdir(parents=True, exist_ok=True)
+    for dirname in (
+        "features",
+        "training",
+        "models",
+        "logs",
+        "progress",
+        "metadata",
+        "coordinates",
+        "ai_results",
+        "masks",
+        "annotations",
+    ):
+        (view_dir / dirname).mkdir(exist_ok=True)
+
+    rows: list[dict[str, str]] = []
+    used_slide_ids: set[str] = set()
+    missing_sources: list[str] = []
+    for slide in slides:
+        source_raw = str(getattr(slide, "wsi_path", "") or "").strip()
+        if not source_raw:
+            continue
+        source = Path(source_raw).expanduser()
+        if not source.exists():
+            missing_sources.append(str(getattr(slide, "wsi_id", "") or source.name))
+            continue
+        label = str(getattr(slide, "label", "") or "").strip()
+        if not label:
+            continue
+        stem_source = str(getattr(slide, "wsi_id", "") or "").strip() or source.stem
+        base_slide_id = _safe_slide_id(stem_source)
+        slide_id = base_slide_id
+        suffix = 1
+        while slide_id in used_slide_ids:
+            suffix += 1
+            slide_id = _safe_slide_id(f"{base_slide_id}_{suffix}")
+        used_slide_ids.add(slide_id)
+        original_filename = str(getattr(slide, "original_filename", "") or "").strip()
+        ext = source.suffix or Path(original_filename).suffix or ".svs"
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        link_path = wsi_dir / f"{slide_id}{ext}"
+        if link_path.is_symlink() or link_path.exists():
+            link_path.unlink()
+        os.symlink(source, link_path)
+        rows.append({
+            "slide_id": slide_id,
+            "label": label,
+            "split": _normalized_split(getattr(slide, "split", "")),
+        })
+
+    if len(rows) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected dataset needs at least 3 accessible labeled WSI files for PathScientist.",
+        )
+
+    split_values = [row["split"] for row in rows]
+    use_db_splits = all(split_values) and {"train", "val", "test"}.issubset(set(split_values))
+    labels_path = view_dir / "labels.csv"
+    with labels_path.open("w", newline="", encoding="utf-8") as fh:
+        fieldnames = ["slide_id", "label"] + (["split"] if use_db_splits else [])
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row[key] for key in fieldnames})
+
+    try:
+        from backend.pathscientist.dataset.wsi_splits import build_classification_splits_from_labels
+
+        build_classification_splits_from_labels(labels_path, view_dir / "splits.json")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Selected dataset cannot be split for PathScientist: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise RuntimeError(f"PathScientist split builder unavailable: {exc}") from exc
+
+    label_counts: dict[str, int] = {}
+    for row in rows:
+        label_counts[row["label"]] = label_counts.get(row["label"], 0) + 1
+    manifest = {
+        "dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
+        "dataset_name": str(getattr(dataset, "name", "") or ""),
+        "layout": "pathlab_dataset_view",
+        "wsi_dir": "wsi_files",
+        "labels_file": "labels.csv",
+        "splits_file": "splits.json",
+        "num_wsi": len(rows),
+        "classes": sorted(label_counts),
+        "label_counts": label_counts,
+        "source_organ": getattr(dataset, "source_organ", None),
+        "missing_source_count": len(missing_sources),
+    }
+    (view_dir / "dataset_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return view_dir
+
+
+def _merge_data_mounts(data_mounts: dict[str, str], extra_data_mounts: dict[str, str]) -> None:
+    used = set(data_mounts.values())
+    for host, container in (extra_data_mounts or {}).items():
+        _add_data_mount(data_mounts, used, host, container)
+
+
+def _path_is_within(parent: Path, child: Path) -> bool:
+    try:
+        child.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _pathscientist_wsi_files_under(root: Path) -> list[Path]:
+    try:
+        from backend.common.file_types import TIF_EXTENSIONS, WSI_EXTENSIONS
+    except Exception:
+        WSI_EXTENSIONS = frozenset({".svs", ".svslide", ".ndpi", ".scn", ".mrxs", ".bif", ".vsi", ".vms", ".vmu", ".kfb", ".sdpc", ".tmap", ".qptiff"})
+        TIF_EXTENSIONS = frozenset({".tif", ".tiff"})
+    allowed = {str(ext).lower() for ext in (set(WSI_EXTENSIONS) | set(TIF_EXTENSIONS))}
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    try:
+        return sorted(
+            p for p in root.rglob("*")
+            if p.is_file() and p.suffix.lower() in allowed
+        )
+    except OSError:
+        return []
+
+
+def _read_pathscientist_label_map(path_value: Any) -> dict[str, str]:
+    path = Path(str(path_value or "")).expanduser()
+    if not path.is_file():
+        return {}
+    labels: dict[str, str] = {}
+    try:
+        with path.open("r", newline="", encoding="utf-8") as fh:
+            sample = fh.read(4096)
+            fh.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",\t")
+            except csv.Error:
+                dialect = csv.excel_tab if path.suffix.lower() == ".tsv" else csv.excel
+            reader = csv.DictReader(fh, dialect=dialect)
+            for row in reader:
+                slide_id = str(row.get("slide_id") or row.get("wsi_id") or row.get("filename") or "").strip()
+                label = str(row.get("label") or row.get("class") or "").strip()
+                if slide_id and label:
+                    labels[Path(slide_id).stem] = label
+    except OSError:
+        return {}
+    return labels
+
+
+def _read_pathscientist_split_map(path_value: Any) -> dict[str, str]:
+    path = Path(str(path_value or "")).expanduser()
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, str] = {}
+    if not isinstance(payload, dict):
+        return out
+    for split in ("train", "val", "test"):
+        values = payload.get(split) or []
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            slide_id = Path(str(value or "")).stem
+            if slide_id:
+                out[slide_id] = split
+    return out
+
+
+def _pathscientist_dataset_display_name(state: dict[str, Any], manifest: dict[str, Any], raw_root: Path) -> str:
+    selected = state.get("selected_dataset") if isinstance(state, dict) else {}
+    if isinstance(selected, dict):
+        name = str(selected.get("name") or "").strip()
+        if name:
+            return name
+    prepared_contract = manifest.get("prepared_contract") if isinstance(manifest, dict) else {}
+    if isinstance(prepared_contract, dict):
+        datasets = prepared_contract.get("datasets")
+        if isinstance(datasets, list) and datasets:
+            names = [str(item.get("name") or item.get("dataset_id") or "").strip() for item in datasets if isinstance(item, dict)]
+            names = [name for name in names if name]
+            if names:
+                return " + ".join(names[:3])
+    return raw_root.parent.name or str(manifest.get("dataset_id") or "PathScientist dataset")
+
+
+def _pathscientist_sync_wsi_id(dataset_id: str, slide_path: Path) -> str:
+    raw = f"pathscientist:{dataset_id}:{slide_path.stem}"
+    slug = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw).strip("._:-")
+    return slug[:240] or uuid.uuid4().hex
+
+
+async def _sync_pathscientist_manifest_to_pathlab(
+    record: SessionRecord,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    manifest_path_raw = str((state or {}).get("dataset_manifest_path") or "").strip()
+    if not manifest_path_raw:
+        return {"status": "skipped", "reason": "no_dataset_manifest"}
+    manifest_path = Path(manifest_path_raw).expanduser()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "skipped", "reason": f"manifest_unreadable:{exc}"}
+    if str(manifest.get("status") or "") != "prepared":
+        return {"status": "skipped", "reason": "manifest_not_prepared"}
+    try:
+        from backend.pathscientist.dataset.pathlab_registration import (
+            register_manifest_with_pathlab,
+        )
+        from backend.pathscientist.dataset.types import DatasetManifest
+    except Exception as exc:
+        return {"status": "skipped", "reason": f"repository_unavailable:{exc}"}
+
+    owner_id = str(getattr(record, "user_id", "") or "") or None
+    async with safe_session() as db:
+        try:
+            payload = await register_manifest_with_pathlab(
+                db=db,
+                manifest=DatasetManifest.from_dict(manifest),
+                session_id=str(getattr(record, "session_id", "") or ""),
+                user_id=owner_id,
+            )
+            await db.commit()
+            return payload
+        except Exception:
+            await db.rollback()
+            raise
 
 def _build_config(req: StartPathScientistSessionRequest):
     try:
@@ -2703,18 +3325,10 @@ def _build_config(req: StartPathScientistSessionRequest):
     data_mounts: dict[str, str] = {}
     used: set[str] = set()
     for host in req.data_paths:
-        if not host:
-            continue
-        base = Path(host).name.lower() or "data"
-        container = f"/data/{base}"
-        suffix = 1
-        while container in used:
-            suffix += 1
-            container = f"/data/{base}_{suffix}"
-        used.add(container)
-        data_mounts[host] = container
+        _add_data_mount(data_mounts, used, host)
     config.data_mounts = data_mounts
-    config.llm_model = req.model or config.llm_model or DEFAULT_MODEL
+    config.pathlab_selected_datasets = list(req.dataset_ids or [])
+    config.llm_model = config.llm_model or DEFAULT_MODEL
     config.skill_name = req.skill or ("external_test" if req.mode == "external_test" else config.skill_name)
     config.max_iterations = req.max_iter
     config.primary_metric = req.metric or config.primary_metric
@@ -2737,6 +3351,86 @@ def _set_env_default(name: str, value: str) -> bool:
     return True
 
 
+def _normalize_pathscientist_model(model: str) -> str:
+    """Return a LiteLLM/OpenHands-compatible model id."""
+    model = str(model or "").strip()
+    if not model:
+        return ""
+    if "/" in model:
+        return model if model.startswith("openai/") else f"openai/{model}"
+    return f"openai/{model}"
+
+
+def _pathlab_llm_credentials() -> dict[str, str]:
+    """Resolve reusable LLM credentials from PathLab global settings.
+
+    PathScientist keeps its own execution model/profile because the OpenHands
+    Codex runtime requires a Codex-compatible model. PathLab's OpenRouter
+    fields are still reused as the shared OpenAI-compatible relay credentials.
+    """
+    try:
+        settings = Config.get_global_settings()
+    except Exception as exc:
+        logger.debug("PathLab LLM credentials unavailable for PathScientist: %s", exc)
+        return {}
+
+    openrouter_key = str(settings.get("openrouter_api_key") or "").strip()
+    openrouter_base_url = str(settings.get("openrouter_base_url") or "").strip()
+    if openrouter_base_url or openrouter_key:
+        return {
+            "base_url": openrouter_base_url,
+            "api_key": openrouter_key,
+        }
+
+    return {}
+
+
+def _pathlab_huggingface_token() -> str:
+    """Return the PathLab global Hugging Face token for PathScientist."""
+    try:
+        settings = Config.get_global_settings()
+    except Exception as exc:
+        logger.debug("PathLab Hugging Face token unavailable for PathScientist: %s", exc)
+        return ""
+    return str(settings.get("huggingface_token") or "").strip()
+
+
+def _apply_pathscientist_llm_defaults(config: Any) -> None:
+    """Apply the Gateway LLM defaults used by OpenHands PathScientist runs."""
+    credentials = _pathlab_llm_credentials()
+    config.llm_model = DEFAULT_MODEL
+    config.llm_base_url = credentials.get("base_url") or str(getattr(config, "llm_base_url", "") or "")
+    config.llm_api_key = credentials.get("api_key") or str(getattr(config, "llm_api_key", "") or "")
+    config.llm_profile = DEFAULT_LLM_PROFILE
+    config.llm_wire_api = DEFAULT_LLM_WIRE_API
+    os.environ["PATHSCIENTIST_LLM_MODEL"] = config.llm_model
+    os.environ["PATHSCIENTIST_LLM_BASE_URL"] = config.llm_base_url
+    os.environ["PATHSCIENTIST_LLM_API_KEY"] = config.llm_api_key
+    os.environ["PATHSCIENTIST_LLM_PROFILE"] = config.llm_profile
+    os.environ["PATHSCIENTIST_LLM_WIRE_API"] = config.llm_wire_api
+
+
+def _apply_pathlab_huggingface_token(config: Any) -> bool:
+    """Apply PathLab global HF token over PathScientist-specific token env."""
+    token = _pathlab_huggingface_token()
+    if not token:
+        return False
+
+    config.huggingface_token = token
+    os.environ["PATHSCIENTIST_HUGGINGFACE_TOKEN"] = token
+    os.environ["HF_TOKEN"] = token
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = token
+    return True
+
+
+def _default_pathscientist_dataset_cache_dir() -> str:
+    try:
+        return str(Config.get_uploads_dir())
+    except Exception as exc:
+        logger.debug("PathLab uploads dir unavailable for PathScientist cache: %s", exc)
+        return DEFAULT_DATASET_CACHE_DIR
+
+
 def _apply_pathscientist_gateway_defaults(config: Any) -> None:
     """Apply frontend/backend Gateway defaults for PathScientist runs.
 
@@ -2745,20 +3439,9 @@ def _apply_pathscientist_gateway_defaults(config: Any) -> None:
     the primary startup path, so set the operational defaults here instead of
     relying on the legacy bash launcher.
     """
-    if _set_env_default("PATHSCIENTIST_LLM_MODEL", DEFAULT_MODEL):
-        config.llm_model = DEFAULT_MODEL
-    else:
-        config.llm_model = getattr(config, "llm_model", "") or DEFAULT_MODEL
+    _apply_pathscientist_llm_defaults(config)
 
-    if _set_env_default("PATHSCIENTIST_LLM_PROFILE", "codex-relay"):
-        config.llm_profile = "codex-relay"
-    else:
-        config.llm_profile = getattr(config, "llm_profile", "") or "codex-relay"
-
-    if _set_env_default("PATHSCIENTIST_LLM_WIRE_API", "responses"):
-        config.llm_wire_api = "responses"
-    else:
-        config.llm_wire_api = getattr(config, "llm_wire_api", "") or "responses"
+    _apply_pathlab_huggingface_token(config)
 
     if _set_env_default("PATHSCIENTIST_SANDBOX", "auto"):
         config.sandbox_mode = "auto"
@@ -2777,8 +3460,9 @@ def _apply_pathscientist_gateway_defaults(config: Any) -> None:
         config.max_download_size_gb = 500.0
     if _set_env_default("PATHSCIENTIST_ALLOW_LARGE_DOWNLOADS", "1"):
         config.allow_large_downloads = True
-    if _set_env_default("PATHSCIENTIST_DATASET_CACHE_DIR", DEFAULT_DATASET_CACHE_DIR):
-        config.dataset_cache_dir = DEFAULT_DATASET_CACHE_DIR
+    default_cache_dir = _default_pathscientist_dataset_cache_dir()
+    if _set_env_default("PATHSCIENTIST_DATASET_CACHE_DIR", default_cache_dir):
+        config.dataset_cache_dir = default_cache_dir
 
     _set_env_default("PATHSCIENTIST_GENERATE_PAPER_DRAFT", "0")
     _set_env_default("PATHSCIENTIST_FEATURE_EXTRACTOR_MODE", "auto")
@@ -2825,12 +3509,23 @@ def list_skills():
 
 
 @router.post("/sessions")
-def create_session(
+async def create_session(
     req: StartPathScientistSessionRequest,
     user: User = Depends(current_active_user),
 ):
     try:
-        record = _SESSION_MANAGER.start(req, user_id=str(user.id))
+        dataset_mounts = await _resolve_pathlab_dataset_mounts(
+            req.dataset_ids,
+            user,
+            question=req.question,
+        )
+        record = _SESSION_MANAGER.start(
+            req,
+            user_id=str(user.id),
+            dataset_mounts=dataset_mounts,
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return record.summary()
@@ -3096,6 +3791,17 @@ def _persist_record_state(
     )
 
 
+def _sync_pathscientist_manifest_to_pathlab_best_effort(
+    record: SessionRecord,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        return asyncio.run(_sync_pathscientist_manifest_to_pathlab(record, state))
+    except Exception as exc:
+        logger.warning("PathScientist PathLab dataset sync failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)}
+
+
 def _record_state_sse_payload(record: SessionRecord) -> dict[str, Any]:
     state = _record_state(record)
     if not state:
@@ -3116,19 +3822,25 @@ def _record_state_sse_payload(record: SessionRecord) -> dict[str, Any]:
 def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
     """Find the workspace associated with a serialized PathScientist state."""
     candidates: list[Any] = [
+        state.get("workspace_path"),
         state.get("workspace_dir"),
         state.get("workspace_root"),
     ]
     grounding = state.get("grounding")
     if isinstance(grounding, dict):
         candidates.extend([
+            grounding.get("workspace_path"),
             grounding.get("workspace_dir"),
             grounding.get("workspace_root"),
         ])
     summary = state.get("persisted_summary")
     if isinstance(summary, dict):
         candidates.extend([
+            summary.get("workspace_path"),
             summary.get("workspace_dir"),
+            (summary.get("research_session") or {}).get("workspace_path")
+            if isinstance(summary.get("research_session"), dict)
+            else "",
             (summary.get("research_session") or {}).get("workspace_dir")
             if isinstance(summary.get("research_session"), dict)
             else "",
@@ -3309,6 +4021,154 @@ def _workspace_usage_summary(record: SessionRecord) -> dict[str, Any]:
     if size is not None:
         payload["workspace_size_bytes"] = size
     return payload
+
+
+def _latest_training_log(workspace: Path) -> Path | None:
+    runs_dir = workspace / "output" / "runs"
+    if not runs_dir.is_dir():
+        return None
+    candidates: list[Path] = []
+    try:
+        for run_dir in runs_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            log_path = run_dir / "training.log"
+            if log_path.is_file():
+                candidates.append(log_path)
+    except OSError:
+        return None
+    if not candidates:
+        return None
+
+    def sort_key(path: Path) -> tuple[float, str]:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        return mtime, str(path)
+
+    return max(candidates, key=sort_key)
+
+
+def _parse_training_metric_value(value: str) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed == parsed else None
+
+
+def _parse_training_epoch_line(line: str) -> dict[str, Any] | None:
+    epoch_match = _TRAINING_EPOCH_RE.search(line)
+    if not epoch_match:
+        return None
+    metrics: dict[str, float] = {}
+    for name, raw_value in _TRAINING_METRIC_RE.findall(line):
+        parsed = _parse_training_metric_value(raw_value)
+        if parsed is not None:
+            metrics[name] = parsed
+    return {
+        "current_epoch": int(epoch_match.group(1)),
+        "total_epochs": int(epoch_match.group(2)),
+        "current_metrics": metrics,
+    }
+
+
+def _training_progress_from_log(log_path: Path) -> dict[str, Any]:
+    current: dict[str, Any] | None = None
+    best_val_auc: float | None = None
+    best_epoch: int | None = None
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                parsed = _parse_training_epoch_line(line)
+                if parsed is None:
+                    continue
+                current = parsed
+                val_auc = parsed["current_metrics"].get("val_auc")
+                if isinstance(val_auc, float) and (best_val_auc is None or val_auc > best_val_auc):
+                    best_val_auc = val_auc
+                    best_epoch = int(parsed["current_epoch"])
+    except OSError:
+        return {}
+    if current is None:
+        return {}
+    progress = dict(current)
+    current_metrics = progress.get("current_metrics")
+    if isinstance(current_metrics, dict):
+        val_auc = current_metrics.get("val_auc")
+        if isinstance(val_auc, float):
+            progress["current_val_auc"] = val_auc
+        val_loss = current_metrics.get("val_loss")
+        if isinstance(val_loss, float):
+            progress["current_val_loss"] = val_loss
+        val_acc = current_metrics.get("val_acc")
+        if isinstance(val_acc, float):
+            progress["current_val_acc"] = val_acc
+    if best_val_auc is not None:
+        progress["best_val_auc"] = best_val_auc
+    if best_epoch is not None:
+        progress["best_epoch"] = best_epoch
+    progress["run_id"] = log_path.parent.name
+    try:
+        progress["log_path"] = str(log_path.resolve())
+        progress["updated_at"] = int(log_path.stat().st_mtime)
+    except OSError:
+        progress["log_path"] = str(log_path)
+    return progress
+
+
+def _training_progress_summary(record: SessionRecord) -> dict[str, Any]:
+    workspace = _resolve_session_workspace(record)
+    if workspace is None:
+        return {}
+    log_path = _latest_training_log(workspace)
+    if log_path is None:
+        return {}
+    progress = _training_progress_from_log(log_path)
+    if not progress:
+        return {}
+    run_id = str(progress.get("run_id") or "")
+    run_entry = _run_history_entry(record.state, run_id) if isinstance(record.state, dict) else {}
+    metadata = _run_metadata_entry(log_path.parent)
+    if metadata:
+        if "quick_check" in metadata:
+            progress["quick_check"] = bool(metadata.get("quick_check"))
+        run_kind = metadata.get("run_kind")
+        if run_kind:
+            progress["run_kind"] = str(run_kind)
+    if run_entry:
+        if "quick_check" in run_entry:
+            progress["quick_check"] = bool(run_entry.get("quick_check"))
+        run_kind = run_entry.get("run_kind")
+        if run_kind:
+            progress["run_kind"] = str(run_kind)
+    return progress
+
+
+def _run_metadata_entry(run_dir: Path) -> dict[str, Any]:
+    metadata_path = run_dir / "run_metadata.json"
+    if not metadata_path.is_file():
+        return {}
+    try:
+        loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _workspace_has_recent_training_log(workspace: Path | None, *, now: float | None = None) -> bool:
+    if workspace is None:
+        return False
+    log_path = _latest_training_log(workspace)
+    if log_path is None:
+        return False
+    now = time.time() if now is None else now
+    try:
+        age_seconds = max(0.0, now - log_path.stat().st_mtime)
+    except OSError:
+        return False
+    return age_seconds <= TRAINING_LOG_ACTIVE_SECONDS
 
 
 def _run_history_entry(state: dict[str, Any], run_id: str) -> dict[str, Any]:
