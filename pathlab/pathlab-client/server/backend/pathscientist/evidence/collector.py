@@ -73,6 +73,10 @@ class EvidenceCollector:
         started_at: str = "",
         data_output_dir: str = "",
         data_output_artifacts: list[str] | None = None,
+        model_path: str = "",
+        pathlab: dict[str, Any] | None = None,
+        quick_check: bool = False,
+        run_kind: str = "",
     ) -> None:
         """Buffer the latest experiment output for finalization."""
         self._experiment = {
@@ -86,6 +90,10 @@ class EvidenceCollector:
             "started_at": started_at or datetime.now(timezone.utc).isoformat(),
             "data_output_dir": data_output_dir,
             "data_output_artifacts": data_output_artifacts,
+            "model_path": model_path,
+            "pathlab": dict(pathlab or {}),
+            "quick_check": bool(quick_check),
+            "run_kind": run_kind,
         }
 
     def finalize(self, committed: bool, iteration: int = 0) -> EvidenceFinalizeResult:
@@ -170,6 +178,8 @@ class EvidenceCollector:
             agent_notes="",
             artifacts=artifacts,
             data_output_dir=data_output_dir,
+            model_path=str(exp.get("model_path") or ""),
+            pathlab=dict(exp.get("pathlab") or {}),
             untracked_files=untracked_files,
             started_at=exp["started_at"],
             finished_at=datetime.now(timezone.utc).isoformat(),

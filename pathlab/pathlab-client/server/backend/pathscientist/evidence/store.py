@@ -165,6 +165,8 @@ class EvidenceStore:
             "primary_metric_value": record.primary_metric_value,
             "committed": record.committed,
             "error_type": record.error_type,
+            "model_path": record.model_path,
+            "pathlab": record.pathlab,
             "started_at": record.started_at,
             "finished_at": record.finished_at,
         })
@@ -207,6 +209,8 @@ class EvidenceStore:
                     "primary_metric_value": data.get("primary_metric_value", 0.0),
                     "committed": data.get("committed", False),
                     "error_type": data.get("error_type", ""),
+                    "model_path": data.get("model_path", ""),
+                    "pathlab": data.get("pathlab", {}) if isinstance(data.get("pathlab", {}), dict) else {},
                     "started_at": data.get("started_at", ""),
                     "finished_at": data.get("finished_at", ""),
                 })

@@ -288,6 +288,51 @@ def test_collector_empty_data_output_delta_does_not_reindex_historical_files(tmp
     assert "old_features.pt" not in artifact_names
 
 
+def test_collector_persists_model_path_and_pathlab_linkage(tmp_path):
+    """Model-producing runs must keep checkpoint and PathLab linkage in evidence."""
+    ws_dir = _make_workspace(tmp_path)
+    store = EvidenceStore(tmp_path / ".evidence")
+
+    model_path = ws_dir / "output" / "runs" / "run_model" / "best_model.pth"
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(b"checkpoint")
+
+    pathlab = {
+        "uploads_dir": str(tmp_path / "uploads"),
+        "features_dir": str(tmp_path / "uploads" / "features" / "Virchow2"),
+        "training_task_id": "task_123",
+        "training_dir": str(tmp_path / "uploads" / "training" / "task_123"),
+        "model_path": str(model_path),
+    }
+
+    collector = EvidenceCollector(
+        workspace_root=ws_dir, store=store, session_id="s1", primary_metric="auc"
+    )
+    collector.record_experiment_output(
+        run_id="run_model",
+        run_dir="output/runs/run_model",
+        exit_code=0,
+        stdout="done",
+        stderr="",
+        metrics={"auc": 0.94},
+        duration=60.0,
+        model_path=str(model_path),
+        pathlab=pathlab,
+    )
+
+    result = collector.finalize(committed=True, iteration=0)
+    assert result.skipped is False
+
+    record = store.load("run_model")
+    assert record.model_path == str(model_path)
+    assert record.pathlab == pathlab
+
+    rows = store.list_runs(committed=True)
+    row = next(r for r in rows if r["run_id"] == "run_model")
+    assert row["model_path"] == str(model_path)
+    assert row["pathlab"]["training_task_id"] == "task_123"
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

@@ -14,6 +14,10 @@ def test_pathscientist_skill_registry_loads_seed_assets():
     skill = registry.get("mil_classification")
     assert skill.get_template_path().exists()
     assert "classification_template.py" in str(skill.get_template_path())
+    template_files = skill.get_template_files()
+    assert "train.py" in template_files
+    assert "common/aggregators/registry.py" in template_files
+    assert "def get_aggregator" in template_files["common/aggregators/registry.py"]
 
 
 def test_pathscientist_template_registry_resolves_common_dir():

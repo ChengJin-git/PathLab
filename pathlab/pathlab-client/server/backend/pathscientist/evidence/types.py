@@ -62,6 +62,8 @@ class EvidenceRecord:
     # Artifacts
     artifacts: list[ArtifactRef] = field(default_factory=list)
     data_output_dir: str = ""  # stable user-visible output path (may differ from run_dir)
+    model_path: str = ""  # absolute/host checkpoint path for model-producing runs
+    pathlab: dict[str, Any] = field(default_factory=dict)  # PathLab uploads/task linkage
     untracked_files: dict[str, str] = field(default_factory=dict)  # filename→content for pre-revert untracked files
 
     # Timestamps
@@ -90,6 +92,8 @@ class EvidenceRecord:
             "agent_notes": self.agent_notes,
             "artifacts": [a.to_dict() for a in self.artifacts],
             "data_output_dir": self.data_output_dir,
+            "model_path": self.model_path,
+            "pathlab": self.pathlab,
             "untracked_files": self.untracked_files,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -119,6 +123,8 @@ class EvidenceRecord:
             agent_notes=data.get("agent_notes", ""),
             artifacts=artifacts,
             data_output_dir=data.get("data_output_dir", ""),
+            model_path=data.get("model_path", ""),
+            pathlab=data.get("pathlab", {}) if isinstance(data.get("pathlab", {}), dict) else {},
             untracked_files=data.get("untracked_files", {}),
             started_at=data.get("started_at", ""),
             finished_at=data.get("finished_at", ""),

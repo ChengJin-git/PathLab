@@ -209,6 +209,23 @@ def _finalize_iteration(
                 iteration=pre_increment_iteration,
                 run_id=run_id,
             )
+            if deps.last_experiment and deps.tracker.history:
+                exp = deps.last_experiment
+                metadata_keys = (
+                    "run_dir",
+                    "data_output_dir",
+                    "data_output_artifacts",
+                    "model_path",
+                    "pathlab",
+                    "quick_check",
+                    "run_kind",
+                    "error_type",
+                )
+                tracker_entry = deps.tracker.history[-1]
+                for key in metadata_keys:
+                    value = exp.get(key)
+                    if value not in (None, "", [], {}):
+                        tracker_entry[key] = value
 
         # Update iteration state (increments iteration_index).
         # Append to finalized_run_ids BEFORE record_iteration so the canonical
@@ -281,6 +298,10 @@ def _finalize_iteration(
                         "started_at": "",
                         "data_output_dir": "",
                         "data_output_artifacts": None,
+                        "model_path": "",
+                        "pathlab": {},
+                        "quick_check": False,
+                        "run_kind": "",
                     }.items()
                 })
                 # Forward pre-revert snapshots if present

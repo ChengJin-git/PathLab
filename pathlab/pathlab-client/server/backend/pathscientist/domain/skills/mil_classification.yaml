@@ -7,6 +7,18 @@ description: >
   Matches PathLab's WSIClassificationTrainer.
 
 template: classification_template.py
+template_files:
+  train.py: classification_template.py
+  common/aggregators/__init__.py: common/aggregators/__init__.py
+  common/aggregators/registry.py: common/aggregators/registry.py
+  common/aggregators/base.py: common/aggregators/base.py
+  common/aggregators/abmil.py: common/aggregators/abmil.py
+  common/aggregators/clam.py: common/aggregators/clam.py
+  common/aggregators/dsmil.py: common/aggregators/dsmil.py
+  common/aggregators/transmil.py: common/aggregators/transmil.py
+  common/aggregators/dtfdmil.py: common/aggregators/dtfdmil.py
+  common/aggregators/meanmil.py: common/aggregators/meanmil.py
+  common/aggregators/maxmil.py: common/aggregators/maxmil.py
 
 task_types: [classification]
 
@@ -56,7 +68,7 @@ dataset:
     default_feature_dim: 1024
 
 inputs:
-  features_dir: /data/features     # {wsi_id}.pt files, shape (N_patches, D)
+  features_dir: /data/features/{extractor}/{params_hash}     # {wsi_id}.pt files, shape (N_patches, D)
   splits_file: /data/splits.json   # {train:[], val:[], test:[], labels:{}}
 
 outputs:
@@ -79,6 +91,7 @@ constraints:
   - "Do NOT generate synthetic/mock/demo/dummy features, labels, or metrics when data is missing; fail with a data-readiness error instead."
   - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
   - "Honor PATHSCIENTIST_MIL_MODEL from the execution plan. Do NOT switch ABMIL/CLAM/DSMIL/TransMIL/DTFD-MIL across iterations unless the user explicitly requests architecture exploration."
+  - "PathLab uploads layout: when DATA_DIR points at PathLab's upload repository, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/<params_hash>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/<params_hash>/{wsi_id}_coords.h5, slide metadata in metadata/{wsi_id}.json, masks in masks/, progress in progress/, and logs in logs/."
 
 reference_code:
   aggregator: server/backend/ai/aggregators/abmil.py
@@ -95,14 +108,15 @@ upstream_skill: feature_extraction
 
 readiness_guidance:
   feature_ready_contract:
-    features_dir: /data/features
+    features_dir: /data/features/{extractor}/{params_hash}
     splits_file: /data/splits.json
   raw_wsi_contract:
-    wsi_dir: /data/WSIs
+    wsi_dir: /data/wsi_files
     labels_file: /data/labels.csv
   policy: >
     If feature tensors and splits are already provided, train MIL directly and
     do not rerun feature extraction. If only raw WSI and labels are provided,
     run feature_extraction first via feature_extraction_launcher.sh
-    (script_type=bash, run_kind=feature_extraction), then point FEATURES_DIR
-    at the generated pt_files/{extractor} directory for MIL training.
+    (script_type=bash, run_kind=feature_extraction), then point FEATURES_DIR at
+    the generated PathLab feature leaf features/{extractor}/{params_hash}
+    for MIL training.

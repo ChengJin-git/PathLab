@@ -76,6 +76,15 @@ class RunRecord:
     metric_value: float = 0.0
     committed: bool = False
     notes: str = ""
+    metrics: dict = field(default_factory=dict)
+    run_dir: str = ""
+    data_output_dir: str = ""
+    data_output_artifacts: list[str] = field(default_factory=list)
+    model_path: str = ""
+    pathlab: dict = field(default_factory=dict)
+    quick_check: bool = False
+    run_kind: str = ""
+    error_type: str = ""
 
 
 @dataclass

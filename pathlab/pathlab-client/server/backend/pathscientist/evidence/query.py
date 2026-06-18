@@ -51,11 +51,17 @@ def query_comparison_table(store: EvidenceStore, session_id: str = "") -> list[d
                 "run_id": record.run_id,
                 "iteration": record.iteration,
                 "primary_metric_value": record.primary_metric_value,
+                "primary_metric_name": record.primary_metric_name,
+                "metrics": dict(record.metrics or {}),
                 "committed": record.committed,
                 "error_type": record.error_type,
                 "duration": record.duration,
                 "code_diff_summary": record.git_diff[:200] if record.git_diff else "",
                 "agent_notes": record.agent_notes,
+                "run_dir": record.run_dir,
+                "data_output_dir": record.data_output_dir,
+                "model_path": record.model_path,
+                "pathlab": dict(record.pathlab or {}),
             })
         except Exception:
             continue
