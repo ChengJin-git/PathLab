@@ -23,6 +23,7 @@ import {
   invalidateDatasetSourceOptions,
 } from '../lib/datasetQueryInvalidation'
 import { canEditDatasetVisibility } from '../lib/datasetPermissions'
+import { isExternalUnavailable } from '../lib/externalAvailability'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, DatasetCard, type ExportLabelsOptions } from '../components/list'
@@ -1698,6 +1699,7 @@ export default function ListPage() {
                     : rawSource
 
                 const isDeleting = deletingDatasetNames.has(dataset.dataset_name)
+                const isUnavailable = isExternalUnavailable(dataset)
 
                 return (
                   <DatasetCard
@@ -1708,12 +1710,13 @@ export default function ListPage() {
                     sourceOrganLabel={sourceOrganLabel}
                     sourceOrganValue={sourceOrganValue}
                     isDeleting={isDeleting}
+                    isUnavailable={isUnavailable}
                     isAdmin={isAdmin}
                     renamingDatasetId={renamingDatasetId}
                     renameDatasetNewName={renameDatasetNewName}
                     exporting={exporting}
                     exportingDatasetId={exportingDataset?.dataset_id ?? null}
-                    onClick={() => handleDatasetClick(dataset)}
+                    onClick={() => !isUnavailable && handleDatasetClick(dataset)}
                     onRenameConfirm={handleRenameConfirm}
                     onRenameCancel={handleRenameCancel}
                     onRenameChange={setRenameDatasetNewName}
@@ -1759,18 +1762,31 @@ export default function ListPage() {
                     : rawSource
 
                 const isDeleting = deletingDatasetNames.has(dataset.dataset_name)
+                const isUnavailable = isExternalUnavailable(dataset)
 
                 return (
                   <Card
                     key={dataset.dataset_id ?? dataset.dataset_name}
-                    className={`group border-slate-200 bg-white transition-all duration-200 relative overflow-hidden ${isDeleting ? 'pointer-events-none' : 'hover:shadow-md'}`}
-                    onClick={isDeleting ? undefined : () => handleDatasetClick(dataset)}
+                    className={`group border-slate-200 bg-white transition-all duration-200 relative overflow-hidden ${isDeleting ? 'pointer-events-none' : 'hover:shadow-md'} ${isUnavailable ? 'opacity-60' : ''}`}
+                    onClick={isDeleting || isUnavailable ? undefined : () => handleDatasetClick(dataset)}
                   >
                     {isDeleting && (
                       <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[2px] rounded-xl">
                         <div className="flex items-center gap-2">
                           <Loader2 className="w-5 h-5 animate-spin text-red-400" />
                           <span className="text-sm font-medium text-red-500">{t('listPage.datasetDeleting')}</span>
+                        </div>
+                      </div>
+                    )}
+                    {isUnavailable && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-[1px] rounded-xl">
+                        <div className="flex flex-col items-center gap-2">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] sm:text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            {t('listPage.externalUnavailable')}
+                          </span>
+                          {dataset.availability?.reason && (
+                            <span className="text-[10px] sm:text-xs text-amber-600 max-w-[80%] text-center">{dataset.availability.reason}</span>
+                          )}
                         </div>
                       </div>
                     )}

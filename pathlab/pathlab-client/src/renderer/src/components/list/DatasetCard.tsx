@@ -31,6 +31,7 @@ export interface DatasetCardProps {
   sourceOrganLabel: string
   sourceOrganValue: string
   isDeleting: boolean
+  isUnavailable?: boolean
   isAdmin: boolean
   renamingDatasetId?: string | null
   renameDatasetNewName?: string
@@ -53,6 +54,7 @@ export function DatasetCard({
   sourceOrganLabel,
   sourceOrganValue,
   isDeleting,
+  isUnavailable,
   isAdmin,
   renamingDatasetId,
   renameDatasetNewName,
@@ -74,15 +76,28 @@ export function DatasetCard({
     <Card
       data-testid="dataset-card"
       className={`group relative overflow-hidden transition-all duration-300 border-slate-200 bg-white h-full flex flex-col ${
-        isDeleting ? 'pointer-events-none' : 'hover:shadow-xl hover:-translate-y-1'
-      }`}
-      onClick={isDeleting ? undefined : onClick}
+        isDeleting || isUnavailable ? 'pointer-events-none' : 'hover:shadow-xl hover:-translate-y-1'
+      } ${isUnavailable ? 'opacity-60' : ''}`}
+      onClick={isDeleting || isUnavailable ? undefined : onClick}
     >
       {isDeleting && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[2px] rounded-xl">
           <div className="flex flex-col items-center gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-red-400" />
             <span className="text-xs font-medium text-red-500">{t('listPage.datasetDeleting')}</span>
+          </div>
+        </div>
+      )}
+
+      {isUnavailable && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-[1px] rounded-xl">
+          <div className="flex flex-col items-center gap-2">
+            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] sm:text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+              {t('listPage.externalUnavailable')}
+            </span>
+            {dataset.availability?.reason && (
+              <span className="text-[10px] sm:text-xs text-amber-600 max-w-[80%] text-center">{dataset.availability.reason}</span>
+            )}
           </div>
         </div>
       )}
