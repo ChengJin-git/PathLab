@@ -78,9 +78,10 @@ def compute_pathlab_params_hash(
 def _uses_pathlab_uploads_layout(data_output: Path, wsi_dir: Path) -> bool:
     if os.getenv("PATHSCIENTIST_PATHLAB_UPLOADS_LAYOUT", "").lower() in {"1", "true", "yes"}:
         return True
-    if (data_output / "wsi_files").is_dir():
+    raw_wsi_dirs = {"wsi_files", "wsis"}
+    if any((data_output / dirname).is_dir() for dirname in ("wsi_files", "WSIs", "wsis")):
         return True
-    return wsi_dir.name == "wsi_files" and wsi_dir.parent == data_output
+    return wsi_dir.name.lower() in raw_wsi_dirs and wsi_dir.parent == data_output
 
 
 def _artifact_dirs(data_output: Path, wsi_dir: Path, extractor_name: str) -> tuple[Path, Path]:
@@ -432,6 +433,66 @@ def _write_worker_payload(
     atomic_json_dump(payload, meta_dir / f"worker_{args.rank}.json")
 
 
+def _progress_summary(
+    *,
+    args,
+    assigned: list[Path],
+    results: dict,
+    total_patches: int,
+    start: float,
+    current: int,
+    last_wsi_id: str | None = None,
+) -> dict:
+    successful = sum(1 for r in results.values() if r.get("status") in {"success", "cached"})
+    cached = sum(1 for r in results.values() if r.get("status") == "cached")
+    failed = sum(
+        1
+        for r in results.values()
+        if r.get("status") not in {"success", "cached"}
+    )
+    payload = {
+        "rank": args.rank,
+        "world_size": args.world_size,
+        "current": current,
+        "total": len(assigned),
+        "successful": successful,
+        "cached": cached,
+        "failed": failed,
+        "patches_extracted": total_patches,
+        "duration": round(time.time() - start, 1),
+    }
+    if last_wsi_id:
+        payload["last_wsi_id"] = last_wsi_id
+    return payload
+
+
+def _write_progress(
+    *,
+    args,
+    assigned: list[Path],
+    results: dict,
+    total_patches: int,
+    start: float,
+    progress_dir: Path,
+    current: int,
+    last_wsi_id: str | None = None,
+) -> None:
+    payload = _progress_summary(
+        args=args,
+        assigned=assigned,
+        results=results,
+        total_patches=total_patches,
+        start=start,
+        current=current,
+        last_wsi_id=last_wsi_id,
+    )
+    atomic_json_dump(payload, progress_dir / f"feature_worker_{args.rank}.json")
+
+
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
 def main() -> None:
     args = parse_args()
     start = time.time()
@@ -442,6 +503,7 @@ def main() -> None:
     features_dir, coords_dir = _artifact_dirs(data_output, wsi_dir, extractor_name)
     task_features_dir = _pathlab_task_features_dir(data_output, wsi_dir)
     meta_dir = output_dir / "worker_meta"
+    progress_dir = output_dir / "progress"
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     features_dir.mkdir(parents=True, exist_ok=True)
@@ -449,6 +511,7 @@ def main() -> None:
     if task_features_dir is not None:
         task_features_dir.mkdir(parents=True, exist_ok=True)
     meta_dir.mkdir(parents=True, exist_ok=True)
+    progress_dir.mkdir(parents=True, exist_ok=True)
 
     wsi_files = sorted(p for p in wsi_dir.iterdir() if p.suffix.lower() in WSI_EXTS)
     if _is_quick_check():
@@ -457,18 +520,72 @@ def main() -> None:
     assigned = wsi_files[args.rank::args.world_size]
     results = {}
     total_patches = 0
+    _log(
+        "feature_extraction worker start "
+        f"rank={args.rank} world_size={args.world_size} assigned={len(assigned)} "
+        f"extractor={extractor_name} device={device} "
+        f"wsi_dir={wsi_dir} features_dir={features_dir} coords_dir={coords_dir}"
+    )
+    _write_progress(
+        args=args,
+        assigned=assigned,
+        results=results,
+        total_patches=total_patches,
+        start=start,
+        progress_dir=progress_dir,
+        current=0,
+    )
 
     if os.getenv("PATHSCIENTIST_FAKE_FEATURE_EXTRACTION", "") == "1":
-        for wsi_path in assigned:
+        for index, wsi_path in enumerate(assigned, start=1):
             wsi_id = wsi_path.stem
+            _log(f"wsi_start rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} path={wsi_path}")
+            out_path = features_dir / f"{wsi_id}.pt"
+            if out_path.exists():
+                _link_task_feature(task_features_dir, wsi_id, out_path)
+                try:
+                    feat = torch.load(out_path, map_location="cpu", weights_only=True)
+                    total_patches += int(feat.shape[0])
+                    results[wsi_id] = {
+                        "status": "cached",
+                        "n_patches": int(feat.shape[0]),
+                        "feature_dim": int(feat.shape[1]),
+                    }
+                except Exception:
+                    results[wsi_id] = {"status": "cached"}
+                _log(f"wsi_cached rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} output={out_path}")
+                _write_progress(
+                    args=args,
+                    assigned=assigned,
+                    results=results,
+                    total_patches=total_patches,
+                    start=start,
+                    progress_dir=progress_dir,
+                    current=index,
+                    last_wsi_id=wsi_id,
+                )
+                continue
             coords_path = coords_dir / f"{wsi_id}_coords.h5"
             atomic_bytes_write(b"fake h5", coords_path)
             feature = torch.zeros((3, 8), dtype=torch.float32)
-            out_path = features_dir / f"{wsi_id}.pt"
             atomic_torch_save(feature, out_path)
             _link_task_feature(task_features_dir, wsi_id, out_path)
             total_patches += 3
             results[wsi_id] = {"status": "success", "n_patches": 3, "feature_dim": 8}
+            _log(
+                f"wsi_done rank={args.rank} index={index}/{len(assigned)} "
+                f"wsi_id={wsi_id} patches=3 output={out_path}"
+            )
+            _write_progress(
+                args=args,
+                assigned=assigned,
+                results=results,
+                total_patches=total_patches,
+                start=start,
+                progress_dir=progress_dir,
+                current=index,
+                last_wsi_id=wsi_id,
+            )
         _write_worker_payload(
             args=args,
             extractor_name=extractor_name,
@@ -482,6 +599,7 @@ def main() -> None:
             total_patches=total_patches,
             start=start,
         )
+        _log(f"feature_extraction worker finish rank={args.rank} successful={len(results)} patches={total_patches}")
         return
 
     if not assigned:
@@ -498,12 +616,14 @@ def main() -> None:
             total_patches=total_patches,
             start=start,
         )
+        _log(f"feature_extraction worker finish rank={args.rank} successful=0 patches=0")
         return
 
     extractor, transforms, output_dim = build_extractor(extractor_name, device)
 
-    for wsi_path in assigned:
+    for index, wsi_path in enumerate(assigned, start=1):
         wsi_id = wsi_path.stem
+        _log(f"wsi_start rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} path={wsi_path}")
         out_path = features_dir / f"{wsi_id}.pt"
         if out_path.exists():
             _link_task_feature(task_features_dir, wsi_id, out_path)
@@ -517,17 +637,45 @@ def main() -> None:
                 }
             except Exception:
                 results[wsi_id] = {"status": "cached"}
+            _log(f"wsi_cached rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} output={out_path}")
+            _write_progress(
+                args=args,
+                assigned=assigned,
+                results=results,
+                total_patches=total_patches,
+                start=start,
+                progress_dir=progress_dir,
+                current=index,
+                last_wsi_id=wsi_id,
+            )
             continue
 
         coords_h5 = str(coords_dir / f"{wsi_id}_coords.h5")
         if not Path(coords_h5).exists():
+            _log(f"tiling_start rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} coords={coords_h5}")
             coords_h5 = tile_wsi(str(wsi_path), str(coords_dir), wsi_id) or ""
+            if coords_h5:
+                _log(f"tiling_done rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} coords={coords_h5}")
+        else:
+            _log(f"coords_cached rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} coords={coords_h5}")
         if not coords_h5:
             results[wsi_id] = {"status": "no_tissue"}
+            _log(f"wsi_no_tissue rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id}")
+            _write_progress(
+                args=args,
+                assigned=assigned,
+                results=results,
+                total_patches=total_patches,
+                start=start,
+                progress_dir=progress_dir,
+                current=index,
+                last_wsi_id=wsi_id,
+            )
             continue
 
         patch_errors: list[str] = []
         try:
+            _log(f"extraction_start rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id}")
             features = extract_wsi_features(
                 str(wsi_path),
                 coords_h5,
@@ -544,6 +692,20 @@ def main() -> None:
                 "error": f"{type(exc).__name__}: {exc}",
                 "patch_errors": patch_errors[:5],
             }
+            _log(
+                f"wsi_failed rank={args.rank} index={index}/{len(assigned)} "
+                f"wsi_id={wsi_id} error={type(exc).__name__}: {exc}"
+            )
+            _write_progress(
+                args=args,
+                assigned=assigned,
+                results=results,
+                total_patches=total_patches,
+                start=start,
+                progress_dir=progress_dir,
+                current=index,
+                last_wsi_id=wsi_id,
+            )
             continue
         if features is None or features.shape[0] == 0:
             results[wsi_id] = {
@@ -551,6 +713,17 @@ def main() -> None:
                 "error": "no_features",
                 "patch_errors": patch_errors[:5],
             }
+            _log(f"wsi_failed rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} error=no_features")
+            _write_progress(
+                args=args,
+                assigned=assigned,
+                results=results,
+                total_patches=total_patches,
+                start=start,
+                progress_dir=progress_dir,
+                current=index,
+                last_wsi_id=wsi_id,
+            )
             continue
 
         atomic_torch_save(features, out_path)
@@ -561,6 +734,20 @@ def main() -> None:
             "n_patches": int(features.shape[0]),
             "feature_dim": int(features.shape[1]),
         }
+        _log(
+            f"wsi_done rank={args.rank} index={index}/{len(assigned)} "
+            f"wsi_id={wsi_id} patches={int(features.shape[0])} output={out_path}"
+        )
+        _write_progress(
+            args=args,
+            assigned=assigned,
+            results=results,
+            total_patches=total_patches,
+            start=start,
+            progress_dir=progress_dir,
+            current=index,
+            last_wsi_id=wsi_id,
+        )
 
     _write_worker_payload(
         args=args,
@@ -574,6 +761,11 @@ def main() -> None:
         results=results,
         total_patches=total_patches,
         start=start,
+    )
+    _log(
+        "feature_extraction worker finish "
+        f"rank={args.rank} successful={sum(1 for r in results.values() if r.get('status') in {'success', 'cached'})} "
+        f"patches={total_patches}"
     )
 
 

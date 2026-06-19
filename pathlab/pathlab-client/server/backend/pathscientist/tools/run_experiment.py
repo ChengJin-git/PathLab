@@ -107,10 +107,64 @@ def _script_extractor_name(script_text: str) -> str:
     return (match.group(1).strip() if match else "")
 
 
+def _host_path_for_mounted_container_path(path_text: str, data_mounts: dict | None) -> Path | None:
+    """Map a container path back to its host path using ``data_mounts``.
+
+    PathScientist stores mounts as ``{host_path: container_path}``. Feature
+    extraction runs inside the sandbox write to the container path, while the
+    contract checker runs in the host process. Checking the container path
+    directly therefore misses valid artifacts unless we reverse the mapping.
+    """
+    raw = str(path_text or "").strip()
+    if not raw:
+        return None
+
+    raw_norm = raw.rstrip("/") or "/"
+    for host_path, container_path in sorted(
+        (data_mounts or {}).items(),
+        key=lambda item: len(str(item[1] or "")),
+        reverse=True,
+    ):
+        host = str(host_path or "").strip()
+        container = str(container_path or "").strip()
+        if not host or not container:
+            continue
+        container_norm = container.rstrip("/") or "/"
+        if raw_norm == container_norm:
+            return Path(host)
+        prefix = container_norm.rstrip("/") + "/"
+        if raw_norm.startswith(prefix):
+            return Path(host) / raw_norm[len(prefix):]
+    return None
+
+
+def _candidate_data_output_roots(*, config, data_output_dir: str) -> list[Path]:
+    roots: list[Path] = []
+
+    def add_root(path_text: str) -> None:
+        text = str(path_text or "").strip()
+        if not text:
+            return
+        path = Path(text)
+        if path not in roots:
+            roots.append(path)
+        mapped = _host_path_for_mounted_container_path(
+            text,
+            getattr(config, "data_mounts", {}) or {},
+        )
+        if mapped is not None and mapped not in roots:
+            roots.append(mapped)
+
+    add_root(data_output_dir)
+    add_root((getattr(config, "planned_data_output_dir", "") or "").strip())
+    return roots
+
+
 def _expected_feature_output_dirs(
     *,
     data_output_dir: str,
     script_text: str,
+    config=None,
 ) -> list[Path]:
     """Return persistent feature dirs that satisfy the output contract.
 
@@ -119,7 +173,7 @@ def _expected_feature_output_dirs(
     under ``features/<extractor>/<params_hash>``; standalone fallback datasets
     still use ``pt_files/<extractor>``.
     """
-    root = Path(data_output_dir)
+    roots = _candidate_data_output_roots(config=config, data_output_dir=data_output_dir)
     env_names: list[str] = []
     for name in (
         os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTOR", ""),
@@ -130,15 +184,21 @@ def _expected_feature_output_dirs(
             env_names.append(name)
     if env_names:
         dirs: list[Path] = []
-        for name in env_names:
-            dirs.append(root / "features" / name)
-            dirs.append(root / "pt_files" / name)
+        for root in roots:
+            for name in env_names:
+                dirs.append(root / "features" / name)
+                dirs.append(root / "pt_files" / name)
         return dirs
 
     script_name = _script_extractor_name(script_text)
     if script_name:
-        return [root / "features" / script_name, root / "pt_files" / script_name]
-    return [root / "features", root / "pt_files"]
+        return [
+            path
+            for root in roots
+            for path in (root / "features" / script_name, root / "pt_files" / script_name)
+        ]
+    return [path for root in roots for path in (root / "features", root / "pt_files")]
+
 
 
 def _feature_output_contract_violation(
@@ -165,6 +225,7 @@ def _feature_output_contract_violation(
     expected_dirs = _expected_feature_output_dirs(
         data_output_dir=data_output_dir,
         script_text=script_text,
+        config=config,
     )
     for expected in expected_dirs:
         if _contains_feature_tensors(expected):
@@ -204,8 +265,11 @@ def _model_selection_contract_violation(
     *,
     config,
     metrics: dict,
+    is_feature_extraction: bool = False,
 ) -> str:
     """Return an error when training switched the planned MIL model."""
+    if is_feature_extraction:
+        return ""
     planned = (getattr(config, "planned_mil_model", "") or "").strip()
     if not planned or not metrics:
         return ""
@@ -240,8 +304,13 @@ def _model_selection_contract_violation_for_test(
     *,
     config,
     metrics: dict,
+    is_feature_extraction: bool = False,
 ) -> str:
-    return _model_selection_contract_violation(config=config, metrics=metrics)
+    return _model_selection_contract_violation(
+        config=config,
+        metrics=metrics,
+        is_feature_extraction=is_feature_extraction,
+    )
 
 
 def _resolve_data_output_dir(
@@ -1347,6 +1416,7 @@ class RunExperimentExecutor(ToolExecutor):
                 model_selection_violation_text = _model_selection_contract_violation(
                     config=self._config,
                     metrics=metrics,
+                    is_feature_extraction=is_feature_extraction,
                 )
                 model_selection_contract_failed = bool(model_selection_violation_text)
             best_model = run_dir / "best_model.pth"

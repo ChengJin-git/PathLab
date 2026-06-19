@@ -14,6 +14,38 @@ from typing import Any, Optional
 import yaml
 
 
+_COMMON_TEMPLATE_EXCLUDE_DIRS = {"__pycache__", "checkpoints"}
+_COMMON_TEMPLATE_EXCLUDE_SUFFIXES = {
+    ".bin",
+    ".ckpt",
+    ".h5",
+    ".hdf5",
+    ".pt",
+    ".pth",
+    ".pyc",
+    ".safetensors",
+}
+
+
+def _common_template_files(templates_dir: Path) -> dict[str, str]:
+    """Return source-only common/ files that every sandbox workspace needs."""
+    common_dir = templates_dir / "common"
+    if not common_dir.is_dir():
+        return {}
+
+    out: dict[str, str] = {}
+    for path in sorted(common_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(templates_dir)
+        if any(part in _COMMON_TEMPLATE_EXCLUDE_DIRS for part in rel.parts):
+            continue
+        if path.suffix.lower() in _COMMON_TEMPLATE_EXCLUDE_SUFFIXES:
+            continue
+        out[rel.as_posix()] = path.read_text(encoding="utf-8")
+    return out
+
+
 @dataclass
 class Skill:
     """A self-contained training skill definition."""
@@ -89,15 +121,16 @@ class Skill:
     def get_template_files(self) -> dict[str, str]:
         """Return workspace-relative template files for this skill."""
         templates_dir = Path(__file__).parent.parent / "templates"
+        out = _common_template_files(templates_dir)
         if self.template_files:
-            out: dict[str, str] = {}
             for workspace_path, template_name in self.template_files.items():
                 path = templates_dir / template_name
                 if not path.exists():
                     raise FileNotFoundError(f"Template not found: {path}")
                 out[workspace_path] = path.read_text(encoding="utf-8")
             return out
-        return {"train.py": self.get_template_content()}
+        out["train.py"] = self.get_template_content()
+        return out
 
     def get_constraints_prompt(self) -> str:
         """Format constraints for injection into LLM prompt."""
