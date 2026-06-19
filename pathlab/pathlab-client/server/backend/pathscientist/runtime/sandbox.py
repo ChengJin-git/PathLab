@@ -140,7 +140,9 @@ def _symlink_target_mounts(root: Path, *, max_symlinks: int = 10000) -> list[Pat
         return []
 
     mounts: list[Path] = []
+    dataset_mounts: list[Path] = []
     seen_mounts: set[str] = set()
+    seen_dataset_mounts: set[str] = set()
     scanned = 0
 
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -155,14 +157,110 @@ def _symlink_target_mounts(root: Path, *, max_symlinks: int = 10000) -> list[Pat
                     root,
                     max_symlinks,
                 )
-                return mounts
+                return _merge_symlink_mounts(mounts, dataset_mounts)
+            dataset_mount = _pathlab_dataset_parent_for_symlink(link_path)
+            if dataset_mount is not None:
+                dataset_str = str(dataset_mount)
+                if dataset_str not in seen_dataset_mounts:
+                    seen_dataset_mounts.add(dataset_str)
+                    dataset_mounts.append(dataset_mount)
             for mount_path in _symlink_chain_mounts(link_path):
                 mount_str = str(mount_path)
                 if mount_str not in seen_mounts:
                     seen_mounts.add(mount_str)
                     mounts.append(mount_path)
 
-    return mounts
+    return _merge_symlink_mounts(mounts, dataset_mounts)
+
+
+_SPLIT_DIR_NAMES = {"train", "training", "val", "valid", "validation", "test", "eval"}
+
+
+def _contains_path(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _dedupe_mounts(mounts: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[str] = set()
+    for mount in mounts:
+        key = str(mount)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(mount)
+    return out
+
+
+def _pathlab_dataset_parent_for_symlink(link_path: Path) -> Path | None:
+    """Infer the source dataset root for PathLab class-directory symlinks."""
+    try:
+        raw_target = link_path.readlink()
+    except OSError:
+        return None
+    if not raw_target.is_absolute():
+        return None
+
+    target = raw_target
+    label_dir = link_path.parent.name
+    if not label_dir or target.parent.name != label_dir:
+        return None
+
+    split_or_dataset = target.parent.parent
+    dataset_root = (
+        split_or_dataset.parent
+        if split_or_dataset.name.lower() in _SPLIT_DIR_NAMES
+        else split_or_dataset
+    )
+    try:
+        if dataset_root.exists() and dataset_root.is_dir():
+            return dataset_root
+    except OSError:
+        return None
+    return None
+
+
+def _merge_symlink_mounts(mounts: list[Path], dataset_mounts: list[Path]) -> list[Path]:
+    if not dataset_mounts:
+        return _lift_symlink_mounts_to_common_parent(mounts)
+
+    selected = _dedupe_mounts(dataset_mounts)
+    for mount in mounts:
+        if any(_contains_path(parent, mount) for parent in selected):
+            continue
+        selected.append(mount)
+    return _dedupe_mounts(selected)
+
+
+def _lift_symlink_mounts_to_common_parent(mounts: list[Path]) -> list[Path]:
+    """Collapse many class/split leaf target mounts to their dataset parent.
+
+    PathLab dataset views commonly store patches as symlinks:
+    ``images/<class>/<id>.jpg -> <warehouse>/<dataset>/<split>/<class>/<file>``.
+    Binding each leaf works until a large first class hits the scan cap before
+    later classes are seen. Binding the shared dataset parent keeps every class
+    target visible inside the sandbox.
+    """
+    if len(mounts) < 2:
+        return mounts
+    try:
+        expanded = [mount.expanduser() for mount in mounts]
+        common = Path(os.path.commonpath([str(path) for path in expanded]))
+    except (OSError, ValueError):
+        return mounts
+    if common.is_file():
+        common = common.parent
+    if not common.exists() or not common.is_dir():
+        return mounts
+    if str(common) in {common.anchor, os.path.expanduser("~")}:
+        return mounts
+    if common.name in {"", "home", "tmp", "data", "project"}:
+        return mounts
+    return [common]
 
 
 @dataclass
