@@ -565,7 +565,37 @@ async def init_db():
             "users.session_nonces column ensured and backfilled from session_nonce"
         )
 
+    await _enforce_data_group_task_taxonomy_constraint()
     await _create_default_admin()
+
+
+async def _enforce_data_group_task_taxonomy_constraint() -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'chk_data_groups_task_type_canonical'
+                          AND conrelid = 'data_groups'::regclass
+                    ) THEN
+                        ALTER TABLE data_groups
+                        ADD CONSTRAINT chk_data_groups_task_type_canonical
+                        CHECK (task_type IN (
+                            'wsi_classification',
+                            'patch_classification',
+                            'wsi_survival',
+                            'patch_segmentation'
+                        ));
+                    END IF;
+                END $$;
+                """
+            )
+        )
+    logger.info("data_groups.task_type canonical constraint ensured")
 
 
 async def _create_default_admin():

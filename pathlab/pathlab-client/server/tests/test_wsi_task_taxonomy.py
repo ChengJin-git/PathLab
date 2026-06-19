@@ -1,4 +1,5 @@
 import types
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -18,7 +19,6 @@ from gateway.routes.wsi_upload import (
     get_csv_template,
     upload_wsi_by_path,
 )
-from backend.database.migrate_task_taxonomy import LEGACY_TO_CANONICAL
 from helpers import _make_user
 
 
@@ -332,6 +332,19 @@ def test_wsi_repository_response_uses_row_data_type():
     assert _canonical_task_type_for_response("wsi_classification", "patch") == "wsi_classification"
 
 
+def test_wsi_repository_response_rejects_legacy_classification_task_type():
+    with pytest.raises(ValueError, match="got: classification"):
+        _canonical_task_type_for_response("classification", "wsi")
+
+
+def test_database_startup_enforces_task_taxonomy_constraint_without_migration():
+    source = (Path(__file__).resolve().parents[1] / "backend/database/database.py").read_text()
+
+    assert "chk_data_groups_task_type_canonical" in source
+    assert "migrate_task_taxonomy" not in source
+    assert "_run_task_taxonomy_migration" not in source
+
+
 def test_upload_resolver_maps_default_classification_to_patch_classification():
     assert (
         _resolve_task_type_for_axes(
@@ -458,17 +471,3 @@ def test_wsi_csv_template_rejects_legacy_task_types(legacy_task_type):
             )
 
     asyncio.run(_run())
-
-
-def test_task_taxonomy_migration_maps_legacy_data_groups_to_canonical_ids():
-    assert LEGACY_TO_CANONICAL[("classification", "wsi", "case")] == "wsi_classification"
-    assert LEGACY_TO_CANONICAL[("classification", "wsi", "file")] == "wsi_classification"
-    assert LEGACY_TO_CANONICAL[("classification", "patch", "file")] == "patch_classification"
-    assert LEGACY_TO_CANONICAL[("survival", "wsi", "case")] == "wsi_survival"
-    assert LEGACY_TO_CANONICAL[("survival", "wsi", "file")] == "wsi_survival"
-    assert LEGACY_TO_CANONICAL[("segmentation", "patch", "file")] == "patch_segmentation"
-
-
-def test_task_taxonomy_migration_marks_invalid_legacy_groups_for_cleanup():
-    assert LEGACY_TO_CANONICAL[("classification", "patch", "case")] is None
-    assert LEGACY_TO_CANONICAL[("survival", "patch", "file")] is None

@@ -10,7 +10,6 @@
 - `models.py`：业务 ORM 模型
 - `init_db.py`：初始化与建表逻辑
 - `repositories/`：按业务拆分的数据访问对象
-- `migrate_task_taxonomy.py`：任务 taxonomy / data group 相关迁移脚本
 
 ## 当前 ORM 表现状
 

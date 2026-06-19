@@ -18,7 +18,11 @@ from backend.common.file_types import (
     TIF_EXTENSIONS,
     SIZE_THRESHOLD,
 )
-from backend.ai.task_taxonomy import normalize_task_type, is_segmentation_task
+from backend.ai.task_taxonomy import (
+    is_canonical_task_type,
+    is_segmentation_task,
+    normalize_task_type,
+)
 from backend.services.dataset_splits import DatasetSplitService
 from .base import BaseRepository
 
@@ -31,10 +35,12 @@ def _canonical_task_type_for_response(
     if not raw_task_type:
         # Default: infer from data_type
         return "patch_classification" if response_data_type == "patch" else "wsi_classification"
+    if is_canonical_task_type(raw_task_type):
+        return raw_task_type
     try:
         return normalize_task_type(task_type=raw_task_type, data_type=response_data_type)
     except ValueError:
-        return raw_task_type
+        raise
 
 
 def _canonical_task_type_for_filter(
