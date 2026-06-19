@@ -897,8 +897,10 @@
   "setEmail": {
     "title": "設定電郵",
     "currentEmail": "目前電郵：",
+    "noEmailSet": "尚未設定聯絡電郵。",
     "newEmail": "新電郵",
     "emailPlaceholder": "user@example.com",
+    "emailHint": "此電郵僅用於通知和聯絡，不作為用戶名。",
     "submit": "更新電郵",
     "submitting": "更新中...",
     "success": "電郵更新成功",
@@ -1562,6 +1564,7 @@
     "removeAttachment": "移除附件",
     "closeNotification": "關閉通知",
     "chatMessages": "聊天訊息",
+    "jumpToBottom": "跳到底部",
     "messageInput": "訊息輸入區域",
     "deleteConfirmation": "刪除確認",
     "conversationLoadFailed": "載入對話失敗，請重試。",
@@ -1811,6 +1814,9 @@
     "selectTaskPlaceholder": "選擇任務...",
     "resultsCount": "{{count}} 個結果",
     "noResults": "無結果",
+    "independentInference": {
+      "unavailable": "不可用：外部存儲無法訪問"
+    },
     "analysisAvailable": "已分析",
     "noTasksAvailable": "沒有可用的任務",
     "analysisSubmitted": "分析已提交",
@@ -1901,6 +1907,7 @@
       "items": "張",
       "compatibilityNote": "模型與資料集的任務類型和資料類型必須匹配。",
       "incompatibleDataset": "不相容：任務類型或資料類型不匹配",
+      "unavailableDataset": "不可用：外部存儲無法訪問",
       "description": "描述（選填）",
       "descriptionPlaceholder": "新增本次批量推理的備注...",
       "submit": "執行批量推理",
@@ -2024,9 +2031,16 @@
       "listView": "列表視圖"
     },
     "derivedFrom": "匯出自",
+    "public": "公開",
     "private": "私有",
+    "makePublic": "設為公開",
+    "makePrivate": "設為私有",
+    "makePublicSuccess": "資料集已設為公開",
+    "makePrivateSuccess": "資料集已設為私有",
+    "failedUpdateVisibility": "更新可見性失敗",
     "newDataset": "新建資料集",
     "newDatasetDescription": "註冊切片以建立新資料集",
+    "externalUnavailable": "不可用",
     "noFilteredDatasets": "沒有符合目前篩選條件的資料集",
     "noFilteredDatasetsDescription": "請嘗試調整篩選條件，或清除篩選後查看全部資料集。",
     "failedDeleteWsi": "刪除失敗：{{error}}",
@@ -2209,7 +2223,8 @@
       "backToDatasets": "返回數據集列表",
       "datasetName": "{{name}}",
       "selectSlides": "選擇訓練檔案（已選 {{count}} 個）",
-      "viewFiles": "查看 / 管理檔案"
+      "viewFiles": "查看 / 管理檔案",
+      "unavailable": "不可用"
     },
     "dataSplit": {
       "title": "數據拆分策略",
@@ -3144,6 +3159,7 @@
       "failedToLoadTiles": "載入切片失敗",
       "failedToInitialize": "初始化檢視器失敗",
       "failedToLoadImage": "載入圖像失敗",
+      "externalStorageUnavailable": "外部存儲不可用{{reason}}",
       "patchImageAlt": "切片圖像"
     },
     "attentionClassSelector": {
@@ -3685,7 +3701,8 @@
     "downloadFullResults": "下載完整結果",
     "modelFiles": "模型檔案",
     "downloadModel": "匯出模型",
-    "exportingModel": "正在準備匯出..."
+    "exportingModel": "正在準備匯出...",
+    "exportingFullResults": "正在準備完整匯出..."
   },
   "analysisCharts": {
     "confusionMatrix": "混淆矩陣",
@@ -3956,6 +3973,7 @@
     "hero": {
       "badge": "由 Agentic AI 強力驅動",
       "title1": "用自然語言掌控",
+      "title1b": "病理工作流",
       "title2": "病理 AI 工作流",
       "subtitle": "全流程數位病理智能工作台。從數據匯入、自動零樣本訓練配置，到任務日誌監控與醫學影像證據層，全程自然語言互動。",
       "primaryCta": "開始使用",

@@ -1038,6 +1038,8 @@
     "loadingFileInfo": "Loading file information...",
     "backToChat": "Back to Chat",
     "backToDataset": "Back to {{name}}",
+    "previousSlide": "Previous slide",
+    "nextSlide": "Next slide",
     "noPreviousSlide": "No previous slide",
     "noNextSlide": "No next slide",
     "zoomIn": "Zoom In",
@@ -1812,6 +1814,9 @@
     "selectTaskPlaceholder": "Select a task...",
     "resultsCount": "{{count}} results",
     "noResults": "no results",
+    "independentInference": {
+      "unavailable": "Unavailable: external storage not accessible"
+    },
     "analysisAvailable": "analyzed",
     "noTasksAvailable": "No tasks available",
     "analysisSubmitted": "Analysis Submitted",
@@ -1902,6 +1907,7 @@
       "items": "items",
       "compatibilityNote": "Model and dataset must have matching task type and data type.",
       "incompatibleDataset": "Incompatible: task type or data type mismatch",
+      "unavailableDataset": "Unavailable: external storage not accessible",
       "description": "Description (Optional)",
       "descriptionPlaceholder": "Add notes about this batch inference run...",
       "submit": "Run Batch Inference",
@@ -2028,6 +2034,7 @@
     "failedUpdateVisibility": "Failed to update visibility",
     "newDataset": "New Dataset",
     "newDatasetDescription": "Register slides to create a new dataset",
+    "externalUnavailable": "Unavailable",
     "noFilteredDatasets": "No datasets match the current filters",
     "noFilteredDatasetsDescription": "Try adjusting or clearing the filters to see more datasets.",
     "failedDeleteWsi": "Failed to delete: {{error}}",
@@ -2210,7 +2217,8 @@
       "backToDatasets": "Back to Datasets",
       "datasetName": "{{name}}",
       "selectSlides": "Select files for training ({{count}} selected)",
-      "viewFiles": "View / Manage Files"
+      "viewFiles": "View / Manage Files",
+      "unavailable": "Unavailable"
     },
     "dataSplit": {
       "title": "Data Split Strategy",
@@ -3202,6 +3210,7 @@
       "failedToLoadTiles": "Failed to load tiles",
       "failedToInitialize": "Failed to initialize viewer",
       "failedToLoadImage": "Failed to load image",
+      "externalStorageUnavailable": "External storage unavailable{{reason}}",
       "patchImageAlt": "Patch Image"
     },
     "attentionClassSelector": {
