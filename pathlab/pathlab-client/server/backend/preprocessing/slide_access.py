@@ -9,6 +9,8 @@ from typing import Any, Optional, cast
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.storage import external_availability
+
 Config = import_module("backend.common.config").Config
 WSIRepository = import_module("backend.database.repositories").WSIRepository
 
@@ -108,6 +110,22 @@ def _load_slide(file_path: str):
     return slide
 
 
+def _external_unavailable_error(wsi_id: str, reason: str | None = None) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "code": "EXTERNAL_STORAGE_UNAVAILABLE",
+            "message": "External storage is temporarily unavailable for this slide.",
+            "wsi_id": wsi_id,
+            "reason": reason,
+        },
+    )
+
+
+def _is_storage_access_error(exc: Exception) -> bool:
+    return isinstance(exc, (FileNotFoundError, PermissionError, OSError, TimeoutError))
+
+
 async def get_wsi_path_from_db(wsi_id: str, db: AsyncSession) -> Optional[Path]:
     try:
         wsi = await WSIRepository.get_by_id(db, wsi_id)
@@ -137,6 +155,12 @@ async def get_slide(wsi_id: str, db: AsyncSession):
     if slide is not None:
         return slide
 
+    if external_availability.should_short_circuit_open(wsi_id):
+        availability = external_availability.get_wsi_availability(wsi_id)
+        raise _external_unavailable_error(
+            wsi_id, cast(str | None, availability.get("reason"))
+        )
+
     try:
         slide = _load_slide(await _resolve_slide_path(wsi_id, db))
         manager.put_slide(wsi_id, slide)
@@ -144,6 +168,15 @@ async def get_slide(wsi_id: str, db: AsyncSession):
     except HTTPException:
         raise
     except Exception as e:
+        if _is_storage_access_error(e):
+            reason = str(e) or e.__class__.__name__
+            external_availability.record_wsi_availability(
+                wsi_id,
+                status=external_availability.UNAVAILABLE,
+                reason=reason,
+                checked_by="open_failure",
+            )
+            raise _external_unavailable_error(wsi_id, reason)
         logger.error(f"Failed to open slide: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to open slide: {str(e)}")
 

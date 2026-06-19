@@ -73,3 +73,80 @@ async def test_slide_cache_manager_closes_lru_slide_on_capacity(monkeypatch):
     assert first_slide.closed is True
     assert second_slide.closed is False
     assert list(manager.slide_cache) == ["second"]
+
+
+@pytest.mark.asyncio
+async def test_get_slide_short_circuits_cached_unavailable(monkeypatch):
+    from backend.preprocessing import slide_access
+
+    manager = slide_access.SlideCacheManager(slide_cache_size=1, dzg_cache_size=1)
+    slide_access.set_cache_manager(manager)
+
+    monkeypatch.setattr(
+        slide_access.external_availability,
+        "should_short_circuit_open",
+        lambda _wsi_id: True,
+    )
+    monkeypatch.setattr(
+        slide_access.external_availability,
+        "get_wsi_availability",
+        lambda _wsi_id: {
+            "status": "unavailable",
+            "reason": "External storage not responding",
+        },
+    )
+
+    def _fail_load(_path):
+        raise AssertionError("should not open cached-unavailable slide")
+
+    monkeypatch.setattr(slide_access, "_load_slide", _fail_load)
+
+    with pytest.raises(slide_access.HTTPException) as exc:
+        await slide_access.get_slide("wsi-1", object())
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "EXTERNAL_STORAGE_UNAVAILABLE"
+    assert exc.value.detail["reason"] == "External storage not responding"
+
+
+@pytest.mark.asyncio
+async def test_get_slide_records_open_failure(monkeypatch):
+    from backend.preprocessing import slide_access
+
+    manager = slide_access.SlideCacheManager(slide_cache_size=1, dzg_cache_size=1)
+    slide_access.set_cache_manager(manager)
+    recorded = {}
+
+    monkeypatch.setattr(
+        slide_access.external_availability,
+        "should_short_circuit_open",
+        lambda _wsi_id: False,
+    )
+
+    def _record_wsi_availability(wsi_id, **kwargs):
+        recorded.update({"wsi_id": wsi_id, **kwargs})
+
+    monkeypatch.setattr(
+        slide_access.external_availability,
+        "record_wsi_availability",
+        _record_wsi_availability,
+    )
+
+    async def _resolve_slide_path(_wsi_id, _db):
+        return "/missing/slide.svs"
+
+    monkeypatch.setattr(slide_access, "_resolve_slide_path", _resolve_slide_path)
+    monkeypatch.setattr(
+        slide_access,
+        "_load_slide",
+        lambda _path: (_ for _ in ()).throw(FileNotFoundError("missing")),
+    )
+
+    with pytest.raises(slide_access.HTTPException) as exc:
+        await slide_access.get_slide("wsi-1", object())
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "EXTERNAL_STORAGE_UNAVAILABLE"
+    assert recorded["wsi_id"] == "wsi-1"
+    assert recorded["status"] == "unavailable"
+    assert recorded["checked_by"] == "open_failure"
