@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Activity, BarChart3, CheckCircle, ChevronDown, ChevronUp, Loader2, Play } from 'lucide-react'
@@ -40,6 +41,7 @@ interface IndependentInferencePanelProps {
 }
 
 export function IndependentInferencePanel({ trainedModels }: IndependentInferencePanelProps) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { openPanel } = useBackgroundTask()
@@ -88,11 +90,25 @@ export function IndependentInferencePanel({ trainedModels }: IndependentInferenc
     const items = wsiData?.items ?? []
     return selectedModel ? items.filter((item) => isCompatible(selectedModel, item)) : items
   }, [selectedModel, wsiData?.items])
+
+  const unavailableWsiIds = useMemo(() => {
+    return new Set(
+      (wsiData?.items ?? [])
+        .filter((item) => item.availability?.status === 'unavailable')
+        .map((item) => item.wsi_id)
+    )
+  }, [wsiData?.items])
+
   const results: BatchInferenceResult[] = resultsData?.items ?? []
   const resultsTotal = resultsData?.total ?? 0
   const totalResultPages = Math.max(1, Math.ceil(resultsTotal / PAGE_SIZE))
   const taskType = resultsData?.task_type ?? selectedTask?.model_task_type ?? selectedTask?.task_type ?? ''
-  const canSubmit = !!selectedModelId && selectedWsiIds.length > 0 && !submitting && !pendingTaskId
+  const canSubmit =
+    !!selectedModelId &&
+    selectedWsiIds.length > 0 &&
+    selectedWsiIds.every((wsiId) => !unavailableWsiIds.has(wsiId)) &&
+    !submitting &&
+    !pendingTaskId
 
   const toggleWsi = (wsiId: string) => {
     setSelectedWsiIds((current) =>
@@ -187,23 +203,34 @@ export function IndependentInferencePanel({ trainedModels }: IndependentInferenc
               </p>
             ) : (
               <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                {candidates.map((item) => (
-                  <button
-                    type="button"
-                    key={item.wsi_id}
-                    onClick={() => toggleWsi(item.wsi_id)}
-                    className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
-                      selectedWsiIds.includes(item.wsi_id)
-                        ? 'border-purple-300 bg-purple-50 text-purple-800'
-                        : 'border-gray-100 bg-white text-gray-700 hover:border-purple-200'
-                    }`}
-                  >
-                    <div className="font-medium truncate">{item.original_filename ?? item.wsi_id}</div>
-                    <div className="mt-0.5 text-gray-400 truncate">
-                      {item.dataset_name ?? item.dataset_id ?? 'No dataset'} · {item.task_type ?? 'unknown'}
-                    </div>
-                  </button>
-                ))}
+                {candidates.map((item) => {
+                  const isUnavailable = unavailableWsiIds.has(item.wsi_id)
+                  return (
+                    <button
+                      type="button"
+                      key={item.wsi_id}
+                      onClick={() => !isUnavailable && toggleWsi(item.wsi_id)}
+                      disabled={isUnavailable}
+                      className={`w-full rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                        selectedWsiIds.includes(item.wsi_id)
+                          ? 'border-purple-300 bg-purple-50 text-purple-800'
+                          : isUnavailable
+                            ? 'border-gray-100 bg-gray-50 text-gray-400 cursor-not-allowed'
+                            : 'border-gray-100 bg-white text-gray-700 hover:border-purple-200'
+                      }`}
+                    >
+                      <div className="font-medium truncate">{item.original_filename ?? item.wsi_id}</div>
+                      <div className="mt-0.5 text-gray-400 truncate">
+                        {item.dataset_name ?? item.dataset_id ?? 'No dataset'} · {item.task_type ?? 'unknown'}
+                      </div>
+                      {isUnavailable && (
+                        <div className="mt-0.5 text-amber-500 text-[10px]">
+                          {t('resultsPage.independentInference.unavailable')}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>

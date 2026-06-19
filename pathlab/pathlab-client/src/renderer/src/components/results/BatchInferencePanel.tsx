@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -139,6 +139,15 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
     ? inferenceDatasets.filter((d) => isCompatible(selectedModel, d))
     : inferenceDatasets
 
+  const unavailableDatasetIds = useMemo(() => {
+    return new Set(
+      compatibleDatasets
+        .filter((d) => d.availability?.status === 'unavailable')
+        .map((d) => d.dataset_id)
+        .filter(Boolean)
+    )
+  }, [compatibleDatasets])
+
   const selectedDataset = inferenceDatasets.find(
     (d) => d.dataset_id === selectedDatasetId
   ) ?? null
@@ -147,6 +156,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
     !!selectedModelId && !!selectedModelTaskId && !!selectedDatasetId &&
     selectedModel != null && selectedDataset != null &&
     isCompatible(selectedModel, selectedDataset) &&
+    !unavailableDatasetIds.has(selectedDatasetId) &&
     !submitting && !pendingTaskId
 
   const totalResultPages = Math.max(1, Math.ceil(resultsTotal / PAGE_SIZE))
@@ -251,25 +261,30 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                           setSelectedDatasetId(d.dataset_id)
                           setIsDatasetOpen(false)
                         }}
-                        disabled={!compat}
-                        className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
-                          !compat
-                            ? 'opacity-40 cursor-not-allowed'
-                            : selectedDatasetId === d.dataset_id
-                            ? 'bg-purple-50 font-medium text-purple-700'
-                            : 'hover:bg-purple-50 text-gray-700'
-                        }`}
-                      >
-                        <div className="font-medium truncate">{d.name}</div>
-                        <div className="text-xs text-gray-400 mt-0.5">
-                          {d.task_type} · {t(`resultsPage.batchInference.dataType.${d.data_type}`, { defaultValue: d.data_type })} · {d.slide_count} {t('resultsPage.batchInference.items')}
-                        </div>
-                        {!compat && (
-                          <div className="text-xs text-red-400 mt-0.5">
-                            {t('resultsPage.batchInference.incompatibleDataset')}
-                          </div>
-                        )}
-                      </button>
+                         disabled={!compat || unavailableDatasetIds.has(d.dataset_id)}
+                         className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
+                           !compat || unavailableDatasetIds.has(d.dataset_id)
+                             ? 'opacity-40 cursor-not-allowed'
+                             : selectedDatasetId === d.dataset_id
+                             ? 'bg-purple-50 font-medium text-purple-700'
+                             : 'hover:bg-purple-50 text-gray-700'
+                         }`}
+                       >
+                         <div className="font-medium truncate">{d.name}</div>
+                         <div className="text-xs text-gray-400 mt-0.5">
+                           {d.task_type} · {t(`resultsPage.batchInference.dataType.${d.data_type}`, { defaultValue: d.data_type })} · {d.slide_count} {t('resultsPage.batchInference.items')}
+                         </div>
+                         {!compat && (
+                           <div className="text-xs text-red-400 mt-0.5">
+                             {t('resultsPage.batchInference.incompatibleDataset')}
+                           </div>
+                         )}
+                         {unavailableDatasetIds.has(d.dataset_id) && (
+                           <div className="text-xs text-amber-500 mt-0.5">
+                             {t('resultsPage.batchInference.unavailableDataset')}
+                           </div>
+                         )}
+                       </button>
                     )
                   })
                 )}
