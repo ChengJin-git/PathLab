@@ -314,10 +314,8 @@ class LiteratureService:
         Idempotent: ingesting the same paper twice merges via
         PaperRegistry.register's alias-overlap merge.
 
-        Phase 5b will extend this to also write the paper's abstract
-        into ChunkStore + PassageIndex when the provider's capability
-        record (see ``provider_capabilities.py``) declares
-        ``has_abstract``. For now metadata-only registration.
+        For now this remains metadata-only registration; chunk/RAG ingest is
+        handled by the dedicated literature ingestion path.
         """
         if paper is None:
             return False
