@@ -950,6 +950,32 @@ def test_match_pathlab_datasets_from_question_does_not_treat_synthetic_as_named_
     assert matches == ["internal"]
 
 
+def test_final_status_from_state_marks_missing_data_as_failed():
+    route_module = load_route_module()
+
+    status, stage, error = route_module._final_status_from_state(
+        {
+            "stage": "pre_execution_ready",
+            "stop_reason": "data_missing",
+            "data_readiness": {
+                "status": "missing_data",
+                "missing": ["features_dir", "images_dir"],
+            },
+            "execution_plan": {
+                "status": "blocked",
+                "missing": ["features_dir", "images_dir"],
+                "notes": ["Required data is missing."],
+            },
+            "run_history": [],
+        }
+    )
+
+    assert status == "failed"
+    assert stage == "failed"
+    assert "features_dir" in error
+    assert "images_dir" in error
+
+
 def test_classify_pathlab_mount_roles_keeps_chinese_internal_dataset_internal(tmp_path):
     route_module = load_route_module()
     view_dir = tmp_path / "local_tcga_nsclc_subset4_521c7518"

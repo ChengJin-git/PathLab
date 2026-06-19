@@ -1087,6 +1087,34 @@ def _final_status_from_state(state: dict[str, Any]) -> tuple[str, str, str]:
     if stage in {"failed", "interrupted"}:
         return stage, stage, str(state.get("error") or state.get("interrupted_reason") or "")
 
+    stop_reason = str(state.get("stop_reason") or "").strip().lower()
+    data_readiness = state.get("data_readiness") if isinstance(state.get("data_readiness"), dict) else {}
+    execution_plan = state.get("execution_plan") if isinstance(state.get("execution_plan"), dict) else {}
+    readiness_status = str(data_readiness.get("status") or "").strip().lower()
+    plan_status = str(execution_plan.get("status") or "").strip().lower()
+    if (
+        stop_reason == "data_missing"
+        or readiness_status == "missing_data"
+        or plan_status in {"blocked", "needs_acquisition"}
+    ):
+        missing = []
+        for value in [
+            *(data_readiness.get("missing") or []),
+            *(execution_plan.get("missing") or []),
+        ]:
+            text = str(value or "").strip()
+            if text and text not in missing:
+                missing.append(text)
+        notes = [
+            str(value or "").strip()
+            for value in (execution_plan.get("notes") or data_readiness.get("notes") or [])
+            if str(value or "").strip()
+        ]
+        detail = f"Missing required data: {', '.join(missing)}." if missing else "Missing required data."
+        if notes:
+            detail = f"{detail} {notes[0]}"
+        return "failed", "failed", detail
+
     run_history = state.get("run_history")
     runs = [entry for entry in run_history if isinstance(entry, dict)] if isinstance(run_history, list) else []
     if any(_is_committed_run(entry) for entry in runs):
