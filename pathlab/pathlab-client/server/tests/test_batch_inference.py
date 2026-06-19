@@ -68,6 +68,106 @@ def _mock_dataset(dataset_id: str, task_type: str, name: str = "Dataset") -> Mag
     return ds
 
 
+def test_results_wsi_guard_ignores_cached_unavailable_uploaded_wsi(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from gateway.routes import results
+
+    uploads_dir = tmp_path / "uploads"
+    local_wsi = SimpleNamespace(
+        wsi_id="local-1",
+        wsi_path=str(uploads_dir / "wsi_files" / "local-1.svs"),
+    )
+    monkeypatch.setattr(
+        results.external_availability.Config,
+        "get_uploads_dir",
+        lambda: uploads_dir,
+    )
+    monkeypatch.setattr(
+        results.external_availability,
+        "get_wsi_availability",
+        lambda _wsi_id: {"status": "unavailable", "reason": "stale external cache"},
+    )
+
+    results._raise_if_wsi_cached_unavailable([local_wsi])
+
+
+@pytest.mark.asyncio
+async def test_results_dataset_guard_ignores_cached_unavailable_uploaded_only_dataset(
+    tmp_path, monkeypatch
+):
+    from gateway.routes import results
+
+    uploads_dir = tmp_path / "uploads"
+    monkeypatch.setattr(
+        results.external_availability.Config,
+        "get_uploads_dir",
+        lambda: uploads_dir,
+    )
+    monkeypatch.setattr(
+        results.external_availability,
+        "get_dataset_availability",
+        lambda _dataset_id: {
+            "status": "unavailable",
+            "reason": "stale external cache",
+            "unavailable_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        results.DatasetRepository,
+        "get_wsi_path_refs_batch",
+        AsyncMock(
+            return_value={
+                "ds-local": [
+                    {
+                        "wsi_id": "local-1",
+                        "wsi_path": str(uploads_dir / "wsi_files" / "local-1.svs"),
+                    }
+                ]
+            }
+        ),
+    )
+
+    await results._raise_if_dataset_cached_unavailable(AsyncMock(), "ds-local")
+
+
+def test_independent_inference_item_omits_availability_for_uploaded_wsi(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from gateway.routes import results
+
+    uploads_dir = tmp_path / "uploads"
+    dataset = SimpleNamespace(
+        name="Uploaded",
+        data_group=SimpleNamespace(
+            data_type="wsi", task_type="wsi_classification", aggregation_level="file"
+        ),
+    )
+    wsi = SimpleNamespace(
+        wsi_id="local-1",
+        original_filename="local-1.svs",
+        dataset_id="ds-local",
+        dataset=dataset,
+        case_id=None,
+        data_type="wsi",
+        created_at=datetime.now(timezone.utc),
+        wsi_path=str(uploads_dir / "wsi_files" / "local-1.svs"),
+    )
+    monkeypatch.setattr(
+        results.external_availability.Config,
+        "get_uploads_dir",
+        lambda: uploads_dir,
+    )
+    monkeypatch.setattr(
+        results.external_availability,
+        "get_wsi_availability",
+        lambda _wsi_id: {"status": "unavailable", "reason": "stale external cache"},
+    )
+
+    item = results._independent_wsi_item(wsi)
+
+    assert "availability" not in item
+
+
 @pytest.mark.asyncio
 async def test_datasets_for_inference_returns_list():
     with patch(
@@ -132,6 +232,20 @@ async def test_datasets_for_inference_unlabeled_dataset_included():
             return_value=["wsi-1", "wsi-2"],
         ),
         patch(
+            "gateway.routes.results.DatasetRepository.get_wsi_path_refs_batch",
+            new_callable=AsyncMock,
+            return_value={
+                "ds-unavailable": [
+                    {"wsi_id": "wsi-1", "wsi_path": "/mnt/external/wsi-1.svs"},
+                    {"wsi_id": "wsi-2", "wsi_path": "/uploads/wsi_files/wsi-2.svs"},
+                ]
+            },
+        ),
+        patch(
+            "gateway.routes.results.external_availability.Config.get_uploads_dir",
+            return_value="/uploads",
+        ),
+        patch(
             "gateway.routes.results.DatasetRepository.get_distinct_label_count",
             new_callable=AsyncMock,
             return_value=0,
@@ -148,6 +262,109 @@ async def test_datasets_for_inference_unlabeled_dataset_included():
     assert result["total"] == 1
     assert result["items"][0]["dataset_id"] == "ds-unlabeled"
     assert result["items"][0]["slide_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_datasets_for_inference_includes_cached_availability():
+    ds = _mock_dataset("ds-unavailable", "wsi_classification")
+    with (
+        patch(
+            "gateway.routes.results.DatasetRepository.get_all",
+            new_callable=AsyncMock,
+            return_value=[ds],
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_wsi_ids",
+            new_callable=AsyncMock,
+            return_value=["wsi-1", "wsi-2"],
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_wsi_path_refs_batch",
+            new_callable=AsyncMock,
+            return_value={
+                "ds-unavailable": [
+                    {"wsi_id": "wsi-1", "wsi_path": "/mnt/external/wsi-1.svs"},
+                    {"wsi_id": "wsi-2", "wsi_path": "/uploads/wsi_files/wsi-2.svs"},
+                ]
+            },
+        ),
+        patch(
+            "gateway.routes.results.external_availability.Config.get_uploads_dir",
+            return_value="/uploads",
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_distinct_label_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
+            "gateway.routes.results.external_availability.roll_up_dataset_availability",
+            return_value={
+                "status": "unavailable",
+                "unavailable_count": 1,
+                "total_count": 2,
+            },
+        ) as rollup,
+    ):
+        from gateway.routes.results import get_datasets_for_inference
+
+        result = await get_datasets_for_inference(
+            unlabeled_only=True,
+            task_type=None,
+            user=_make_user("admin"),
+            db=AsyncMock(),
+        )
+
+    assert result["items"][0]["availability"]["status"] == "unavailable"
+    assert result["items"][0]["availability"]["unavailable_count"] == 1
+    assert result["items"][0]["availability"]["external_count"] == 1
+    rollup.assert_called_once_with(["wsi-1"])
+
+
+@pytest.mark.asyncio
+async def test_datasets_for_inference_omits_availability_for_uploaded_only_dataset():
+    ds = _mock_dataset("ds-local", "wsi_classification")
+    with (
+        patch(
+            "gateway.routes.results.DatasetRepository.get_all",
+            new_callable=AsyncMock,
+            return_value=[ds],
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_wsi_ids",
+            new_callable=AsyncMock,
+            return_value=["local-1"],
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_wsi_path_refs_batch",
+            new_callable=AsyncMock,
+            return_value={
+                "ds-local": [
+                    {"wsi_id": "local-1", "wsi_path": "/uploads/wsi_files/local-1.svs"}
+                ]
+            },
+        ),
+        patch(
+            "gateway.routes.results.external_availability.Config.get_uploads_dir",
+            return_value="/uploads",
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_distinct_label_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+    ):
+        from gateway.routes.results import get_datasets_for_inference
+
+        result = await get_datasets_for_inference(
+            unlabeled_only=True,
+            task_type=None,
+            user=_make_user("admin"),
+            db=AsyncMock(),
+        )
+
+    assert result["items"][0]["dataset_id"] == "ds-local"
+    assert "availability" not in result["items"][0]
 
 
 @pytest.mark.asyncio
@@ -299,6 +516,43 @@ async def test_independent_inference_wsi_list_includes_unlabeled_uploads():
 
 
 @pytest.mark.asyncio
+async def test_independent_inference_wsi_list_includes_cached_availability():
+    wsi = _mock_wsi("wsi-1")
+    with (
+        patch(
+            "gateway.routes.results.TrainedModelRepository.get_active_models",
+            new_callable=AsyncMock,
+            return_value=[_mock_trained_model()],
+        ),
+        patch(
+            "gateway.routes.results.WSIRepository.get_all_with_dataset",
+            new_callable=AsyncMock,
+            return_value=[wsi],
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_distinct_label_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
+            "gateway.routes.results.external_availability.get_wsi_availability",
+            return_value={"status": "unavailable", "reason": "File not found"},
+        ) as get_availability,
+    ):
+        from gateway.routes.results import get_wsi_for_independent_inference
+
+        result = await get_wsi_for_independent_inference(
+            user=_make_user("admin"), db=AsyncMock()
+        )
+
+    assert result["items"][0]["availability"] == {
+        "status": "unavailable",
+        "reason": "File not found",
+    }
+    get_availability.assert_called_once_with("wsi-1")
+
+
+@pytest.mark.asyncio
 async def test_independent_inference_wsi_list_checks_segmentation_annotations_by_annotation_id():
     wsi = _mock_wsi("wsi-1", task_type="patch_segmentation", data_type="patch")
     db = AsyncMock()
@@ -385,6 +639,66 @@ async def test_independent_inference_submit_success():
     assert payload["wsi_ids"] == ["wsi-1"]
     assert payload["execution_mode"] == "batch_inference"
     mock_enqueue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_independent_inference_submit_rejects_cached_unavailable_wsi_before_enqueue():
+    from fastapi import HTTPException
+
+    model_task = _mock_model_task("wsi_classification", "wsi")
+    trained_model = _mock_trained_model()
+    wsi = _mock_wsi("wsi-1")
+    mock_enqueue = AsyncMock()
+    worker_health = AsyncMock(return_value=True)
+
+    with (
+        patch(
+            "gateway.routes.results.TrainedModelRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=trained_model,
+        ),
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=model_task,
+        ),
+        patch("gateway.routes.results._require_task_access", new_callable=AsyncMock),
+        patch(
+            "gateway.routes.results.WSIRepository.get_by_ids_with_dataset",
+            new_callable=AsyncMock,
+            return_value={"wsi-1": wsi},
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_distinct_label_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
+            "gateway.routes.results.external_availability.get_wsi_availability",
+            return_value={"status": "unavailable", "reason": "File not found"},
+        ),
+        patch("gateway.routes.results.is_worker_healthy", new=worker_health),
+        patch("gateway.routes.results.enqueue_task_descriptor", new=mock_enqueue),
+    ):
+        from gateway.models import IndependentInferenceRequest
+        from gateway.routes.results import start_independent_inference
+
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await start_independent_inference(
+                req=IndependentInferenceRequest(model_id="model-1", wsi_ids=["wsi-1"]),
+                user=_make_user("admin"),
+                db=mock_db,
+            )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "EXTERNAL_DATASET_UNAVAILABLE"
+    assert exc_info.value.detail["reason"] == "File not found"
+    mock_db.add.assert_not_called()
+    worker_health.assert_not_awaited()
+    mock_enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -715,6 +1029,103 @@ async def test_batch_inference_submit_success():
     created_task = mock_db.add.call_args.args[0]
     assert created_task.group_id == "targetgroup-1"
     mock_enqueue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_inference_submit_rejects_cached_unavailable_dataset_before_enqueue():
+    from fastapi import HTTPException
+
+    model_task = _mock_model_task("wsi_classification", "wsi")
+    trained_model = _mock_trained_model()
+
+    dataset_dg = MagicMock()
+    dataset_dg.group_id = "targetgroup-1"
+    dataset_dg.task_type = "wsi_classification"
+    dataset_dg.data_type = "wsi"
+    dataset_dg.aggregation_level = "file"
+    target_dataset = MagicMock()
+    target_dataset.dataset_id = "ds-unavailable"
+    target_dataset.name = "Unavailable Dataset"
+    target_dataset.user_id = "user-1"
+    target_dataset.data_group = dataset_dg
+    target_dataset.is_public = False
+    target_dataset.parent_dataset_id = None
+
+    mock_enqueue = AsyncMock()
+    worker_health = AsyncMock(return_value=True)
+
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=model_task,
+        ),
+        patch(
+            "gateway.routes.results.TrainedModelRepository.get_by_task_id",
+            new_callable=AsyncMock,
+            return_value=[trained_model],
+        ),
+        patch("gateway.routes.results._require_task_access", new_callable=AsyncMock),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=target_dataset,
+        ),
+        patch(
+            "gateway.routes.results._has_external_validation_dataset_access",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "gateway.routes.results.check_dataset_gpu_permission",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_distinct_label_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
+            "gateway.routes.results.external_availability.get_dataset_availability",
+            return_value={
+                "status": "unavailable",
+                "reason": "External storage not responding",
+                "unavailable_count": 3,
+            },
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_wsi_path_refs_batch",
+            new=AsyncMock(
+                return_value={
+                    "ds-unavailable": [
+                        {"wsi_id": "wsi-bad", "wsi_path": "/mnt/external/wsi-bad.svs"}
+                    ]
+                }
+            ),
+        ),
+        patch("gateway.routes.results.is_worker_healthy", new=worker_health),
+        patch("gateway.routes.results.enqueue_task_descriptor", new=mock_enqueue),
+    ):
+        from gateway.models import BatchInferenceRequest
+        from gateway.routes.results import start_batch_inference
+
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock()
+
+        req = BatchInferenceRequest(
+            model_task_id="model-task-1", dataset_id="ds-unavailable"
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await start_batch_inference(req=req, user=_make_user("admin"), db=mock_db)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "EXTERNAL_DATASET_UNAVAILABLE"
+    assert exc_info.value.detail["dataset_id"] == "ds-unavailable"
+    assert exc_info.value.detail["reason"] == "External storage not responding"
+    mock_db.add.assert_not_called()
+    worker_health.assert_not_awaited()
+    mock_enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio

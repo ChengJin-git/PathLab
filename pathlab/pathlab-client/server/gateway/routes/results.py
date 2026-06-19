@@ -57,7 +57,7 @@ from backend.database.repositories import (
 from backend.common.config import Config
 from ..dependencies import make_sse_response
 from backend.common.redis_client import get_redis, make_key
-from backend.storage import StorageManager
+from backend.storage import StorageManager, external_availability
 from backend.auth import (
     current_active_user,
     User,
@@ -143,6 +143,72 @@ storage_manager = StorageManager(str(Config.get_uploads_dir()))
 
 router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
+
+
+def _external_unavailable_detail(
+    *,
+    reason: str | None,
+    dataset_id: str | None = None,
+    wsi_ids: List[str] | None = None,
+    unavailable_count: int | None = None,
+) -> Dict[str, Any]:
+    detail: Dict[str, Any] = {
+        "code": "EXTERNAL_DATASET_UNAVAILABLE",
+        "message": "Selected data is temporarily unavailable because its external storage cannot be reached.",
+        "reason": reason or "External storage unavailable",
+    }
+    if dataset_id:
+        detail["dataset_id"] = dataset_id
+    if wsi_ids:
+        detail["wsi_ids"] = wsi_ids
+    if unavailable_count is not None:
+        detail["unavailable_count"] = unavailable_count
+    return detail
+
+
+async def _raise_if_dataset_cached_unavailable(db: AsyncSession, dataset_id: str) -> None:
+    availability = external_availability.get_dataset_availability(dataset_id)
+    if availability.get("status") != external_availability.UNAVAILABLE:
+        return
+    refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, [dataset_id])
+    external_refs = [
+        ref
+        for ref in refs_by_dataset.get(dataset_id, [])
+        if external_availability.is_external_path(ref.get("wsi_path"))
+    ]
+    if not external_refs:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            dataset_id=dataset_id,
+            reason=availability.get("reason"),
+            unavailable_count=int(availability.get("unavailable_count") or 0),
+        ),
+    )
+
+
+def _raise_if_wsi_cached_unavailable(wsis: List[Any]) -> None:
+    unavailable: List[Tuple[str, Dict[str, Any]]] = []
+    for wsi in wsis:
+        wsi_path = getattr(wsi, "wsi_path", None)
+        if wsi_path is not None and not external_availability.is_external_path(wsi_path):
+            continue
+        wsi_id = _coerce_str(getattr(wsi, "wsi_id", wsi))
+        availability = external_availability.get_wsi_availability(wsi_id)
+        if availability.get("status") == external_availability.UNAVAILABLE:
+            unavailable.append((wsi_id, availability))
+    if not unavailable:
+        return
+
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            reason=unavailable[0][1].get("reason"),
+            wsi_ids=[wsi_id for wsi_id, _ in unavailable],
+            unavailable_count=len(unavailable),
+        ),
+    )
 
 
 async def _fail_training_task_enqueue(task_id: str, detail: str) -> None:
@@ -1818,6 +1884,9 @@ async def get_datasets_for_validation(
         elevated_dataset_ids = set(await _get_elevated_dataset_ids(user, db) or [])
         all_granted_dataset_ids = await _get_all_granted_dataset_ids(user, db)
 
+    dataset_ids_for_refs = [_coerce_str(ds.dataset_id) for ds in datasets if getattr(ds, "dataset_id", None)]
+    refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, dataset_ids_for_refs)
+
     result = []
     for ds in datasets:
         dg = ds.data_group
@@ -1958,8 +2027,9 @@ async def _is_wsi_unlabeled_for_independent_inference(
 def _independent_wsi_item(wsi: WSISlide) -> Dict[str, Any]:
     dataset = wsi.dataset
     data_group = dataset.data_group if dataset else None
-    return {
-        "wsi_id": _coerce_str(wsi.wsi_id),
+    wsi_id = _coerce_str(wsi.wsi_id)
+    item = {
+        "wsi_id": wsi_id,
         "original_filename": wsi.original_filename,
         "dataset_id": _coerce_str(wsi.dataset_id),
         "dataset_name": dataset.name if dataset else None,
@@ -1971,6 +2041,9 @@ def _independent_wsi_item(wsi: WSISlide) -> Dict[str, Any]:
             wsi.created_at.isoformat() + "Z" if isinstance(wsi.created_at, datetime) else None
         ),
     }
+    if external_availability.is_external_path(getattr(wsi, "wsi_path", None)):
+        item["availability"] = external_availability.get_wsi_availability(wsi_id)
+    return item
 
 
 @router.get("/independent-inference/wsi")
@@ -2063,16 +2136,27 @@ async def get_datasets_for_inference(
         ):
             continue
 
-        result.append(
-            {
-                "dataset_id": dataset_id,
-                "name": ds.name,
-                "data_type": dg.data_type,
-                "task_type": dg.task_type,
-                "aggregation_level": dg.aggregation_level,
-                "slide_count": slide_count,
-            }
-        )
+        refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, [dataset_id])
+
+        item = {
+            "dataset_id": dataset_id,
+            "name": ds.name,
+            "data_type": dg.data_type,
+            "task_type": dg.task_type,
+            "aggregation_level": dg.aggregation_level,
+            "slide_count": slide_count,
+        }
+        external_wsi_ids = [
+            _coerce_str(ref["wsi_id"])
+            for ref in refs_by_dataset.get(dataset_id, [])
+            if external_availability.is_external_path(ref.get("wsi_path"))
+        ]
+        if external_wsi_ids:
+            item["availability"] = external_availability.roll_up_dataset_availability(
+                external_wsi_ids
+            )
+            item["availability"]["external_count"] = len(external_wsi_ids)
+        result.append(item)
 
     return {"items": result, "total": len(result)}
 
@@ -2171,6 +2255,8 @@ async def start_batch_inference(
             status_code=400,
             detail="Batch inference only supports unlabeled datasets. Please use external validation for labeled datasets.",
         )
+
+    await _raise_if_dataset_cached_unavailable(db, req.dataset_id)
 
     if not await is_worker_healthy():
         raise HTTPException(status_code=503, detail="Task worker unavailable")
@@ -2336,6 +2422,11 @@ async def start_independent_inference(
         )
     if target_data_group is None:
         raise HTTPException(status_code=400, detail="No compatible data group found")
+
+    valid_wsi_map = await WSIRepository.get_by_ids_with_dataset(db, valid_ids)
+    _raise_if_wsi_cached_unavailable(
+        [valid_wsi_map[wsi_id] for wsi_id in valid_ids if wsi_id in valid_wsi_map]
+    )
 
     if not await is_worker_healthy():
         raise HTTPException(status_code=503, detail="Task worker unavailable")
