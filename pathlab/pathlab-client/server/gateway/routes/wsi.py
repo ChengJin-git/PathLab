@@ -46,6 +46,7 @@ from backend.auth.dependencies import (
     get_user_id_filter,
     get_wsi_with_access,
 )
+from backend.storage import external_availability
 from backend.annotation.summary_cache import (
     load_dataset_annotation_summary_cache,
     is_dataset_annotation_summary_cache_valid,
@@ -107,6 +108,40 @@ def _build_segmentation_wsi_lookups(wsis) -> tuple[Dict[str, str], Dict[str, str
 
 def _get_wsi_data_type(wsi) -> str:
     return get_effective_wsi_data_type(wsi)
+
+
+def _attach_cached_availability(item: dict[str, Any], wsi_path: str | None = None) -> None:
+    if not external_availability.is_external_path(wsi_path):
+        return
+
+    wsi_id = item.get("wsi_id")
+    if not wsi_id:
+        return
+    item["availability"] = external_availability.get_wsi_availability(str(wsi_id))
+
+
+async def _attach_dataset_availability(
+    db: AsyncSession, datasets: List[dict[str, Any]]
+) -> None:
+    dataset_ids = [str(item["dataset_id"]) for item in datasets if item.get("dataset_id")]
+    refs_by_dataset = (
+        await DatasetRepository.get_wsi_path_refs_batch(db, dataset_ids) if dataset_ids else {}
+    )
+
+    for item in datasets:
+        dataset_id = item.get("dataset_id")
+        refs = refs_by_dataset.get(str(dataset_id), []) if dataset_id else []
+        external_wsi_ids = [
+            str(ref["wsi_id"])
+            for ref in refs
+            if external_availability.is_external_path(ref.get("wsi_path"))
+        ]
+        if not external_wsi_ids:
+            continue
+        item["availability"] = external_availability.roll_up_dataset_availability(
+            external_wsi_ids
+        )
+        item["availability"]["external_count"] = len(external_wsi_ids)
 
 
 def _is_split_stratification_error(exc: Exception) -> bool:
@@ -383,6 +418,7 @@ async def _serialize_dataset_wsi_items(
         item = wsi.to_summary_dict()
         item["data_type"] = dataset_data_type or _get_wsi_data_type(wsi)
         item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+        _attach_cached_availability(item, wsi.wsi_path)
         if annotation_presence:
             item["has_segmentation_annotation"] = annotation_presence.get(
                 wsi.wsi_id, False
@@ -562,6 +598,7 @@ async def list_wsi(
             item = wsi.to_summary_dict()
             item["data_type"] = _get_wsi_data_type(wsi)
             item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+            _attach_cached_availability(item, wsi.wsi_path)
             items.append(item)
 
         return {
@@ -716,6 +753,8 @@ async def list_datasets(
             )
         items.append(dataset)
 
+    await _attach_dataset_availability(db, items)
+
     return {
         "items": items,
         "total": total,
@@ -760,6 +799,8 @@ async def get_dataset_summary(
         )
         owner = result.one_or_none()
         dataset["username"] = (owner.nickname or owner.username) if owner else None
+
+    await _attach_dataset_availability(db, [dataset])
 
     return dataset
 
@@ -1148,6 +1189,7 @@ async def get_wsi(
     meta["data_type"] = _get_wsi_data_type(wsi)
     # can_delete: True if admin or user owns the WSI
     meta["can_delete"] = user.is_admin() or (wsi.user_id == str(user.id))
+    _attach_cached_availability(meta, wsi.wsi_path)
 
     return {
         "wsi_id": wsi_id,

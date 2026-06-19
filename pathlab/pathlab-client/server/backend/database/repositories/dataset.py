@@ -213,6 +213,22 @@ class DatasetRepository(BaseRepository[Dataset]):
         return mapping
 
     @staticmethod
+    async def get_wsi_path_refs_batch(
+        db: AsyncSession, dataset_ids: List[str]
+    ) -> Dict[str, List[Dict[str, str]]]:
+        if not dataset_ids:
+            return {}
+        result = await db.execute(
+            select(WSISlide.dataset_id, WSISlide.wsi_id, WSISlide.wsi_path).where(
+                WSISlide.dataset_id.in_(dataset_ids)
+            )
+        )
+        mapping: Dict[str, List[Dict[str, str]]] = {did: [] for did in dataset_ids}
+        for dataset_id, wsi_id, wsi_path in result.all():
+            mapping[dataset_id].append({"wsi_id": wsi_id, "wsi_path": wsi_path})
+        return mapping
+
+    @staticmethod
     async def get_wsi_case_ids(db: AsyncSession, dataset_id: str) -> Dict[str, str]:
         """Get case_id mapping for all WSIs in a dataset.
 

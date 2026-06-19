@@ -26,6 +26,7 @@ _backend_models = importlib.import_module("backend.database.models")
 _backend_auth_dependencies = importlib.import_module("backend.auth.dependencies")
 _backend_common_config = importlib.import_module("backend.common.config")
 _backend_common_file_types = importlib.import_module("backend.common.file_types")
+external_availability = importlib.import_module("backend.storage.external_availability")
 
 get_db = _backend_database.get_db
 async_session = _backend_database.async_session
@@ -677,6 +678,13 @@ def _check_external_files_sync(
     return result
 
 
+def _record_external_availability_result(result: dict[str, Any]) -> None:
+    try:
+        external_availability.record_many_from_scan(result)
+    except Exception as exc:
+        logger.warning(f"Failed to record external availability scan result: {exc}")
+
+
 # ==============================================================================
 # External File Endpoints
 # ==============================================================================
@@ -865,6 +873,7 @@ async def check_external_files(
         result = await asyncio.to_thread(
             _check_external_files_sync, wsi_data, uploads_dir
         )
+        _record_external_availability_result(result)
         return result
 
     except Exception as e:
