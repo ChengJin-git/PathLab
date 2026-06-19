@@ -26,7 +26,8 @@ interface WSIViewerProps {
   dataLevel?: 'wsi' | 'patch'  // Data level: 'wsi' uses heatmap, 'patch' uses patch_cam
   onHeatmapLoaded?: (data: HeatmapData | null) => void
   onViewerReady?: (viewer: any) => void  // Expose OSD viewer instance to parent (for annotation overlay)
-  onSlideInfo?: (info: { width: number; height: number }) => void  // Expose slide dimensions to parent
+  onSlideInfo?: (info: { width: number; height: number }) => void
+  availability?: { status: 'unknown' | 'available' | 'unavailable' | 'stale'; reason?: string | null } | null
 }
 
 interface DZIInfo {
@@ -146,6 +147,7 @@ export default function WSIViewer({
   onHeatmapLoaded,
   onViewerReady,
   onSlideInfo,
+  availability,
 }: WSIViewerProps) {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -174,6 +176,14 @@ export default function WSIViewer({
         setLoading(true)
         setError(undefined)
         setPatchPreviewUrl(null)
+
+        if (availability?.status === 'unavailable') {
+          setLoading(false)
+          setError(t('wsiViewerComponents.viewer.externalStorageUnavailable', {
+            reason: availability.reason ?? '',
+          }))
+          return
+        }
 
         // First, check if this is a patch or WSI (via gateway with auth)
         const infoUrl = withAuthTokenQuery(`${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/info`)
@@ -301,7 +311,7 @@ export default function WSIViewer({
         osdViewer.destroy()
       }
     }
-  }, [wsi_id])
+  }, [wsi_id, availability])
 
   // Load heatmap data when taskId, foldKey, classIdx, or dataLevel changes
   useEffect(() => {
@@ -597,7 +607,11 @@ export default function WSIViewer({
 
       {error && (
         <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
-            <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-xl shadow-xl border border-red-100 text-red-600 font-medium">
+            <div className={`px-6 py-4 rounded-xl shadow-xl border font-medium ${
+              availability?.status === 'unavailable'
+                ? 'bg-amber-50/95 backdrop-blur-md border-amber-200 text-amber-700'
+                : 'bg-white/90 backdrop-blur-md border-red-100 text-red-600'
+            }`}>
                 {error}
             </div>
         </div>
