@@ -210,3 +210,29 @@ async def test_get_or_create_rejects_invalid_axes_before_storing(monkeypatch):
         )
 
     assert create_called is False
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_rejects_legacy_task_type_before_storing(monkeypatch):
+    create_called = False
+
+    async def _fake_create(*_args, **_kwargs):
+        nonlocal create_called
+        create_called = True
+        return None
+
+    monkeypatch.setattr(
+        DataGroupRepository,
+        "create",
+        staticmethod(_fake_create),
+    )
+
+    with pytest.raises(ValueError, match="got: classification"):
+        await DataGroupRepository.get_or_create(
+            _DummyDB(),
+            data_type="wsi",
+            aggregation_level="file",
+            task_type="classification",
+        )
+
+    assert create_called is False
