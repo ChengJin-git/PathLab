@@ -132,11 +132,10 @@ def _build_skill_selection_prompt(
     """Build a prompt asking the LLM to select the best skill.
 
     Plan-2026-04-29 grounding-routing-repair Task 3 Step 5b: when a
-    heuristic profile is supplied we surface its preferred_skill / organ
-    / prediction_target as a hint. Pre-fix the LLM saw only the question
-    and the skill list — CRC-MSI prompts hit ``selected_skill="none"``
-    because there was no anchor. With the hint the LLM can confirm or
-    explicitly override.
+    heuristic profile is supplied we surface a weak candidate and evidence
+    as a hint. Pre-fix the LLM saw only the question and the skill list —
+    CRC-MSI prompts hit ``selected_skill="none"`` because there was no
+    anchor. With evidence the LLM can confirm or explicitly override.
     """
     skill_list = "\n".join(
         f"- **{s['name']}**: {s['description']}"
@@ -144,13 +143,18 @@ def _build_skill_selection_prompt(
     )
     hint_block = ""
     if profile is not None:
-        bits = [f"preferred_skill={profile.preferred_skill}"]
+        bits = []
+        if profile.preferred_skill:
+            bits.append(
+                f"candidate={profile.preferred_skill}, "
+                f"evidence={_heuristic_profile_evidence(profile)}"
+            )
         if profile.organ:
             bits.append(f"organ={profile.organ}")
         if profile.prediction_target:
             bits.append(f"target={profile.prediction_target}")
         hint_block = (
-            "\n\n## Heuristic Suggestion (you may confirm or override)\n"
+            "\n\n## Heuristic Candidates (weak evidence; you may override)\n"
             + ", ".join(bits)
         )
     return f"""You are a research task router for computational pathology.
@@ -181,6 +185,22 @@ Respond with ONLY a JSON object, no other text. Required keys:
 {{"selected_skill": "<skill_name or none>",
   "stop_after_skill": "<acquisition|feature_extraction|skill_name|>",
   "reason": "<one sentence why, including stop intent if any>"}}"""
+
+
+def _heuristic_profile_evidence(profile: TaskProfile) -> list[str]:
+    """Return compact evidence strings for a heuristic skill candidate."""
+    evidence: list[str] = []
+    if profile.task_type:
+        evidence.append(f"task_type:{profile.task_type}")
+    if profile.asset_level:
+        evidence.append(f"asset_level:{profile.asset_level}")
+    if profile.input_modality:
+        evidence.append(f"input_modality:{profile.input_modality}")
+    if profile.prediction_target:
+        evidence.append(f"target:{profile.prediction_target}")
+    if profile.organ:
+        evidence.append(f"organ:{profile.organ}")
+    return evidence
 
 
 def _extract_first_json_object(text: str) -> dict[str, Any] | None:
@@ -592,10 +612,9 @@ def ground_objective(
     target fields on the passed objective.
 
     When ``objective.dataset_hint`` is empty the function still extracts a
-    dataset from the question and writes it back onto the passed
-    ``objective`` (legacy behaviour preserved for single-caller uses) AND
-    emits the inferred value on the returned dict as
-    ``dataset_hint_inferred`` so the director can mirror it onto state.
+    dataset from the question and emits the inferred value on the returned
+    dict as ``dataset_hint_inferred`` so the director can mirror it onto
+    state.
 
     Returns a dict with at least:
       - selected_skill: str or "" if no match
@@ -715,6 +734,7 @@ def ground_objective(
         effective_dataset_hint=effective_dataset_hint,
         task_profile_enrichment=task_profile_enrichment,
         selected_skill=selected_skill,
+        selected_skill_source=str(grounding.get("selected_skill_source") or ""),
         task_from_question=_task_from_q,
         existing_sources=grounding.get("task_profile_sources"),
     )
@@ -934,6 +954,7 @@ def _phase_skill_selection(
         if preferred in available_names:
             logger.info("Grounding: using preferred skill %r", preferred)
             partial["selected_skill"] = preferred
+            partial["selected_skill_source"] = "user"
             partial["route"] = "skill"
             partial["reason"] = "user-specified"
         else:
@@ -946,6 +967,7 @@ def _phase_skill_selection(
                     preferred, fallback_source, candidate,
                 )
                 partial["selected_skill"] = candidate
+                partial["selected_skill_source"] = fallback_source
                 partial["route"] = "skill"
                 partial["reason"] = (
                     f"unknown_preferred_skill:{preferred}; {fallback_source}"
@@ -982,6 +1004,7 @@ def _phase_skill_selection(
         if not selected_is_none and selected in available_names:
             logger.info("Grounding: LLM selected skill %r — %s", selected, reason)
             partial["selected_skill"] = selected
+            partial["selected_skill_source"] = "llm"
             partial["route"] = "skill"
             partial["reason"] = reason
             return partial, llm_stop_after_skill, available_names
@@ -1004,6 +1027,7 @@ def _phase_skill_selection(
                 "Grounding: %s selected skill %r", fallback_source, candidate,
             )
             partial["selected_skill"] = candidate
+            partial["selected_skill_source"] = fallback_source
             partial["route"] = "skill"
             partial["reason"] = (
                 f"{fallback_source}: llm_returned={selected!r}, "
@@ -1025,6 +1049,7 @@ def _phase_skill_selection(
                 fallback_source, candidate,
             )
             partial["selected_skill"] = candidate
+            partial["selected_skill_source"] = fallback_source
             partial["route"] = "skill"
             partial["reason"] = f"{fallback_source}: llm_error={type(e).__name__}"
         else:
@@ -1041,6 +1066,7 @@ def _phase_finalize_profile(
     selected_skill: str,
     task_from_question: str,
     existing_sources: dict[str, Any] | None,
+    selected_skill_source: str = "",
 ) -> tuple[Any, str | None, str | None, dict[str, Any]]:
     """Phase-4/5 of ``ground_objective``: produce the final task profile,
     coarse task_type, and organ given the picked skill.
@@ -1050,21 +1076,27 @@ def _phase_finalize_profile(
     interleaved inline block. Returns
     ``(profile, organ_or_none, coarse_task_type, partial_grounding_dict)``.
     """
+    explicit_user_skill = selected_skill_source == "user"
     profile, final_sources = _resolve_task_profile(
         objective.question,
         dataset_hint=effective_dataset_hint,
         selected_skill=selected_skill,
         enrichment=task_profile_enrichment,
-        allow_shape_override=not bool(
-            (selected_skill or "").strip()
-            or (objective.preferred_skill or "").strip()
-        ),
+        allow_shape_override=not explicit_user_skill,
     )
     partial: dict[str, Any] = {"task_profile": profile.to_dict()}
     if final_sources:
         merged_sources = dict(existing_sources or {})
         merged_sources.update(final_sources)
         partial["task_profile_sources"] = merged_sources
+    if (
+        final_sources.get("task_shape") == "llm"
+        and selected_skill_source != "user"
+        and profile.preferred_skill
+        and profile.preferred_skill != selected_skill
+    ):
+        partial["selected_skill"] = profile.preferred_skill
+        partial["selected_skill_source"] = "llm_task_profile"
     if final_sources.get("dataset_hint_candidates"):
         partial["dataset_hint_candidates"] = list(
             final_sources["dataset_hint_candidates"]
@@ -1072,7 +1104,7 @@ def _phase_finalize_profile(
     organ = profile.organ or None
     task_type = _infer_task_type(
         objective,
-        selected_skill=selected_skill,
+        selected_skill=partial.get("selected_skill", selected_skill),
         task_hint=task_from_question,
     )
     return profile, organ, task_type, partial

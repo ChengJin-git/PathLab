@@ -1,8 +1,9 @@
 """LLM task-profile enrichment for grounding.
 
-The deterministic ``dataset.task_profile.infer_task_profile`` path remains the
-offline source of truth. This module only fills missing/uncertain fields from a
-structured LLM response and fails open when the LLM is unavailable or malformed.
+The deterministic ``dataset.task_profile.infer_task_profile`` path provides
+offline hints and fallback values. Medium/high-confidence structured LLM fields
+are allowed to correct those hints; malformed or unavailable LLM output still
+fails open to the deterministic profile.
 """
 from __future__ import annotations
 
@@ -313,19 +314,29 @@ def merge_task_profile_enrichment(
         elif OrganResolver.load_default().organ_matches(profile.organ, [enrichment.organ]):
             sources["organ"] = "heuristic+llm"
         else:
+            updates["organ"] = enrichment.organ
+            sources["organ"] = "llm_override"
             sources["organ_conflict"] = {
                 "heuristic": profile.organ,
                 "llm": enrichment.organ,
             }
 
-    # Prediction target from deterministic rules is usually stronger. Use LLM
-    # when the rule did not infer one, or when it agrees and adds label aliases.
+    # Medium/high-confidence LLM target semantics are allowed to correct
+    # deterministic aliases. If confidence is absent, keep the historical
+    # conservative behavior and only fill missing targets.
     if enrichment.prediction_target:
         if not profile.prediction_target:
             updates["prediction_target"] = enrichment.prediction_target
             sources["prediction_target"] = "llm"
         elif profile.prediction_target == enrichment.prediction_target:
             sources.setdefault("prediction_target", "heuristic+llm")
+        elif _conf_at_least(enrichment.prediction_target_confidence):
+            updates["prediction_target"] = enrichment.prediction_target
+            sources["prediction_target"] = "llm_override"
+            sources["prediction_target_conflict"] = {
+                "heuristic": profile.prediction_target,
+                "llm": enrichment.prediction_target,
+            }
 
     if enrichment.required_label_keywords:
         merged_keywords = _merge_keywords(
