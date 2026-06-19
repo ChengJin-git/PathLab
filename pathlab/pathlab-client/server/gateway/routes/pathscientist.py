@@ -3095,6 +3095,9 @@ def _dataset_alias_score(alias: str) -> int:
     return max(len(alias), len(tokens) * 20)
 
 
+_DATASET_LLM_CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
+
+
 def _match_pathlab_datasets_from_question(
     question: str,
     datasets: list[dict[str, Any]],
@@ -3128,6 +3131,139 @@ def _match_pathlab_datasets_from_question(
             matches.append((score, dataset_id))
     matches.sort(key=lambda item: item[0], reverse=True)
     return [dataset_id for _score, dataset_id in matches]
+
+
+def _pathscientist_dataset_match_llm_caller() -> Callable[[str], str] | None:
+    try:
+        from backend.pathscientist.config import PathScientistConfig
+        from backend.pathscientist.runtime.metric_parser import build_llm_text_caller
+    except Exception as exc:
+        logger.debug("PathScientist dataset-match LLM unavailable: %s", exc)
+        return None
+
+    try:
+        config = PathScientistConfig.from_env()
+        _apply_pathscientist_gateway_defaults(config)
+        return build_llm_text_caller(config)
+    except Exception as exc:
+        logger.debug("PathScientist dataset-match LLM disabled: %s", exc)
+        return None
+
+
+def _pathlab_dataset_llm_candidates(datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for dataset in datasets:
+        dataset_id = str(dataset.get("dataset_id") or "").strip()
+        if not dataset_id:
+            continue
+        labels = dataset.get("labels") or {}
+        if isinstance(labels, dict):
+            labels_payload: Any = {
+                str(key): value
+                for key, value in list(labels.items())[:12]
+            }
+        else:
+            labels_payload = labels
+        candidates.append(
+            {
+                "dataset_id": dataset_id,
+                "name": str(dataset.get("dataset_name") or dataset.get("name") or "").strip(),
+                "data_type": str(dataset.get("data_type") or "").strip(),
+                "task_type": str(dataset.get("task_type") or dataset.get("group_task_type") or "").strip(),
+                "aggregation_level": str(dataset.get("aggregation_level") or "").strip(),
+                "source_organ": str(dataset.get("source_organ") or "").strip(),
+                "parent_dataset_name": str(dataset.get("parent_dataset_name") or "").strip(),
+                "file_count": dataset.get("file_count") or 0,
+                "labels": labels_payload,
+                "predefined_split_counts": dataset.get("predefined_split_counts") or {},
+            }
+        )
+    return candidates
+
+
+def _parse_pathlab_dataset_llm_matches(raw_text: str, allowed_ids: set[str]) -> list[str]:
+    try:
+        from backend.pathscientist.structured_output import extract_json
+        payload = extract_json(raw_text)
+    except Exception:
+        try:
+            payload = json.loads(raw_text or "{}")
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(payload, dict):
+        return []
+
+    raw_matches = payload.get("matches")
+    if raw_matches is None and payload.get("dataset_id"):
+        raw_matches = [payload]
+    if not isinstance(raw_matches, list):
+        return []
+
+    selected: list[str] = []
+    seen: set[str] = set()
+    for item in raw_matches:
+        if not isinstance(item, dict):
+            continue
+        dataset_id = str(item.get("dataset_id") or "").strip()
+        confidence = str(item.get("confidence") or "").strip().lower()
+        if dataset_id not in allowed_ids or dataset_id in seen:
+            continue
+        if _DATASET_LLM_CONFIDENCE_RANK.get(confidence, 0) < _DATASET_LLM_CONFIDENCE_RANK["medium"]:
+            continue
+        seen.add(dataset_id)
+        selected.append(dataset_id)
+        if len(selected) >= 3:
+            break
+    return selected
+
+
+def _match_pathlab_datasets_with_llm(
+    question: str,
+    datasets: list[dict[str, Any]],
+) -> list[str]:
+    question = str(question or "").strip()
+    if not question or not datasets:
+        return []
+
+    candidates = _pathlab_dataset_llm_candidates(datasets)
+    if not candidates:
+        return []
+
+    max_candidates = max(
+        1,
+        int(os.environ.get("PATHSCIENTIST_DATASET_LLM_MATCH_MAX_CANDIDATES", "120")),
+    )
+    candidates = candidates[:max_candidates]
+    allowed_ids = {str(item.get("dataset_id") or "").strip() for item in candidates}
+    allowed_ids.discard("")
+
+    caller = _pathscientist_dataset_match_llm_caller()
+    if caller is None:
+        return []
+
+    prompt = (
+        "You match a user's PathScientist request to registered PathLab datasets.\n"
+        "Choose only from the candidate list. Do not invent dataset IDs.\n"
+        "Use semantic clues such as organ, disease, task type, data type, labels, "
+        "parent dataset, split counts, and cohort size.\n"
+        "Prefer a registered PathLab dataset when it clearly satisfies the user's request.\n"
+        "If no candidate is a good match, return {\"matches\": []}.\n"
+        "Return ONLY JSON with this schema:\n"
+        "{\"matches\":[{\"dataset_id\":\"...\",\"confidence\":\"high|medium|low\",\"reason\":\"...\"}]}\n\n"
+        f"User request:\n{question}\n\n"
+        "Candidate datasets:\n"
+        f"{json.dumps(candidates, ensure_ascii=False)}"
+    )
+
+    try:
+        raw_text = caller(prompt)
+    except Exception as exc:
+        logger.debug("PathScientist dataset semantic match failed: %s", exc)
+        return []
+    selected_ids = _parse_pathlab_dataset_llm_matches(raw_text, allowed_ids)
+    if selected_ids:
+        logger.info("PathScientist matched PathLab datasets by LLM semantics: %s", selected_ids)
+    return selected_ids
 
 
 async def _resolve_pathlab_dataset_mounts(
@@ -3179,6 +3315,8 @@ async def _resolve_pathlab_dataset_mounts(
                         visible_dataset_ids.add(dataset_id)
                         visible_datasets.append(dataset_row)
                 selected_ids = _match_pathlab_datasets_from_question(question, visible_datasets)
+                if not selected_ids:
+                    selected_ids = _match_pathlab_datasets_with_llm(question, visible_datasets)
             if not selected_ids:
                 return {}
             for dataset_id in selected_ids:

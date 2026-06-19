@@ -1157,6 +1157,136 @@ def test_resolve_pathlab_dataset_mounts_matches_patch_dataset_name(monkeypatch, 
     assert (Path(host) / "pathlab_training_manifest.json").is_file()
 
 
+def test_resolve_pathlab_dataset_mounts_uses_llm_when_dataset_name_is_unknown(
+    monkeypatch,
+    tmp_path,
+):
+    route_module = load_route_module()
+    route_module._resolve_pathscientist_base_dir = lambda: tmp_path / "pathscientist-base"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    slides = []
+    for wsi_id, label, split in [
+        ("patch-1", "MSIH", "train"),
+        ("patch-2", "nonMSIH", "train"),
+        ("patch-3", "MSIH", "test"),
+    ]:
+        source = source_dir / f"{wsi_id}.jpg"
+        source.write_bytes(b"image")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=wsi_id,
+                wsi_path=str(source),
+                original_filename=source.name,
+                label=label,
+                split=split,
+            )
+        )
+    dataset = SimpleNamespace(
+        id=1,
+        dataset_id="patch-dataset",
+        name="CRC-MSI-100patches",
+        user_id="user-dataset",
+        is_public=False,
+        parent_dataset_id=None,
+        source_organ="colorectal",
+        data_type="patch",
+    )
+    prompts: list[str] = []
+
+    class FakeSession:
+        pass
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return FakeSession()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return []
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        assert dataset_id == "patch-dataset"
+        return dataset
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_datasets(db, **kwargs):
+            if kwargs.get("data_type") == "patch":
+                return [
+                    {
+                        "dataset_id": "patch-dataset",
+                        "dataset_name": "CRC-MSI-100patches",
+                        "data_type": "patch",
+                        "task_type": "classification",
+                        "source_organ": "colorectal",
+                        "file_count": 100,
+                        "labels": {"MSIH": 50, "nonMSIH": 50},
+                    }
+                ]
+            return [
+                {
+                    "dataset_id": "wsi-dataset",
+                    "dataset_name": "TCGA-LUAD Diagnostic Slides",
+                    "data_type": "wsi",
+                    "task_type": "classification",
+                    "source_organ": "lung",
+                    "file_count": 10,
+                    "labels": {"LUAD": 10},
+                }
+            ]
+
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            assert dataset_id == "patch-dataset"
+            assert kwargs.get("data_type") == "patch"
+            return slides
+
+    def fake_llm(prompt):
+        prompts.append(prompt)
+        return (
+            '{"matches": ['
+            '{"dataset_id": "patch-dataset", "confidence": "high", '
+            '"reason": "colorectal MSI patch classification dataset"}'
+            "]}"
+        )
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.auth.dependencies":
+            return SimpleNamespace(
+                get_dataset_with_access=fake_get_dataset_with_access,
+                get_permitted_dataset_ids=fake_get_permitted_dataset_ids,
+            )
+        if name == "backend.database.repositories":
+            return SimpleNamespace(WSIRepository=FakeWSIRepository)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+    monkeypatch.setattr(route_module, "_pathscientist_dataset_match_llm_caller", lambda: fake_llm)
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    mounts = route_module.asyncio.run(
+        route_module._resolve_pathlab_dataset_mounts(
+            [],
+            SimpleNamespace(id="user-dataset", is_admin=lambda: False),
+            question="Use the colorectal MSI patch test cohort for a quick smoke test",
+        )
+    )
+
+    assert prompts
+    assert "CRC-MSI-100patches" in prompts[0]
+    assert "TCGA-LUAD Diagnostic Slides" in prompts[0]
+    assert len(mounts) == 1
+    [(host, container)] = mounts.items()
+    assert Path(host).name.startswith("crc_msi_100patches")
+    assert container.startswith("/data/crc_msi_100patches")
+    assert (Path(host) / "images" / "MSIH").is_dir()
+
+
 def test_prepare_pathlab_dataset_view_uses_symlinks_and_generates_contract(tmp_path):
     route_module = load_route_module()
     source_dir = tmp_path / "source"
