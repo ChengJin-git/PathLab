@@ -303,6 +303,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     })
   }, [availableDatasets, config.task_type, normalizedDataType])
 
+  const unavailableDatasetIds = useMemo(() => {
+    return new Set(
+      compatibleDatasets
+        .filter(d => d.availability?.status === 'unavailable')
+        .map(d => d.dataset_id)
+        .filter(Boolean)
+    )
+  }, [compatibleDatasets])
+
 
   const selectedDataset = useMemo(() => {
     return compatibleDatasets.find(d => d.dataset_id === selectedDatasetId) || null
@@ -758,42 +767,43 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
            ) : compatibleDatasets.length === 0 ? (
              <p className="text-sm text-amber-600 py-2">{t('chatComponents.taskConfig.noDatasetsAvailable')}</p>
            ) : (
-             <Select
-               value={selectedDatasetId || ''}
-               onChange={(newVal) => {
-                 const newDatasetId = newVal || null
-                 setSelectedDatasetId(newDatasetId)
-                 setValidationErrors(prev => prev.filter(err => err.field !== 'dataset_id'))
+              <Select
+                value={selectedDatasetId || ''}
+                onChange={(newVal) => {
+                  const newDatasetId = newVal || null
+                  setSelectedDatasetId(newDatasetId)
+                  setValidationErrors(prev => prev.filter(err => err.field !== 'dataset_id'))
 
-                 // Immediately update split info from dataset summary
-                 if (newDatasetId) {
-                   const selectedDataset = compatibleDatasets.find(d => d.dataset_id === newDatasetId)
-                   if (selectedDataset) {
-                     const hasSplits = selectedDataset.has_predefined_splits ?? false
-                     const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
-                     setHasPreDefinedSplits(hasSplits)
-                     setPredefinedSplitCounts(counts)
-                     // Auto-select manual split if CSV splits are available
-                     if (hasSplits) {
-                       setSplitStrategy('manual')
-                     } else if (splitStrategy === 'manual') {
-                       // No predefined splits — fall back from manual
-                       setSplitStrategy('random')
-                     }
-                   }
-                 } else {
-                   setHasPreDefinedSplits(false)
-                   setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
-                 }
-               }}
-               options={compatibleDatasets.map(dataset => ({
-                 value: dataset.dataset_id || '',
-                 label: `${dataset.dataset_name} (${t('chatComponents.taskConfig.filesCount', { count: dataset.file_count })})`,
-               }))}
-               placeholder={t('chatComponents.taskConfig.selectDatasetPlaceholder')}
-               disabled={isCoreFieldLocked}
-               triggerClassName={`${getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : ''} ${lockedSelectClass}`}
-             />
+                  // Immediately update split info from dataset summary
+                  if (newDatasetId) {
+                    const selectedDataset = compatibleDatasets.find(d => d.dataset_id === newDatasetId)
+                    if (selectedDataset) {
+                      const hasSplits = selectedDataset.has_predefined_splits ?? false
+                      const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
+                      setHasPreDefinedSplits(hasSplits)
+                      setPredefinedSplitCounts(counts)
+                      // Auto-select manual split if CSV splits are available
+                      if (hasSplits) {
+                        setSplitStrategy('manual')
+                      } else if (splitStrategy === 'manual') {
+                        // No predefined splits — fall back from manual
+                        setSplitStrategy('random')
+                      }
+                    }
+                  } else {
+                    setHasPreDefinedSplits(false)
+                    setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
+                  }
+                }}
+                options={compatibleDatasets.map(dataset => ({
+                  value: dataset.dataset_id || '',
+                  label: `${dataset.dataset_name} (${t('chatComponents.taskConfig.filesCount', { count: dataset.file_count })})`,
+                  disabled: unavailableDatasetIds.has(dataset.dataset_id || ''),
+                }))}
+                placeholder={t('chatComponents.taskConfig.selectDatasetPlaceholder')}
+                disabled={isCoreFieldLocked}
+                triggerClassName={`${getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : ''} ${lockedSelectClass}`}
+              />
             )}
            {getFieldError('dataset_id') && (
              <p className="text-xs text-red-500 mt-1">{getFieldError('dataset_id')}</p>
