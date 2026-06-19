@@ -44,6 +44,15 @@ export interface WSISummary {
   parent_dataset_name?: string | null
   // Permission flag - whether user can delete this WSI
   can_delete?: boolean
+  // External storage availability (only present for external-backed data)
+  availability?: ExternalAvailability | null
+}
+
+export interface ExternalAvailability {
+  status: 'unknown' | 'available' | 'unavailable' | 'stale'
+  reason?: string | null
+  counts?: { available: number; total: number } | null
+  external_count?: number | null
 }
 
 /**
@@ -294,9 +303,8 @@ export interface DatasetSummary extends DatasetSplitSummary {
   task_type: TaskType
   aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
   is_public?: boolean
-  // Permission flag - whether user can delete this dataset
   can_delete?: boolean
-  // COCO categories for segmentation datasets
+  availability?: ExternalAvailability | null
   coco_categories?: Array<{ id: number; name: string; supercategory?: string }>
   num_coco_categories?: number
 }

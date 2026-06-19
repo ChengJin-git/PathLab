@@ -1,5 +1,6 @@
 import { API_BASE } from '../config'
 import { apiFetch, apiFetchBlob, buildSearchParams, downloadBlobFile } from './client'
+import type { ExternalAvailability } from './wsi'
 
 // ============================================================================
 // TYPES
@@ -12,6 +13,7 @@ export interface InferenceDataset {
   task_type: string
   aggregation_level: string
   slide_count: number
+  availability?: ExternalAvailability | null
 }
 
 export interface BatchInferenceTask {
@@ -48,6 +50,7 @@ export interface IndependentInferenceWSI {
   task_type: string | null
   aggregation_level: string | null
   created_at: string | null
+  availability?: ExternalAvailability | null
 }
 
 export interface BatchInferenceResult {
