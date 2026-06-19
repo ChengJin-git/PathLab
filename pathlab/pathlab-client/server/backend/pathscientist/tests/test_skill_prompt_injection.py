@@ -69,9 +69,9 @@ def test_feature_extraction_skill_renders_tiers():
 
 def test_patch_classification_skill_renders_upstream():
     """patch_classification.yaml has recommended_feature_extractors (with
-    preferred list containing CONCH) and upstream_skill=feature_extraction.
-    The rendered block must list CONCH under preferred and point back at
-    the feature_extraction skill so the agent knows to run it first.
+    preferred list starting with Virchow2) and upstream_skill=feature_extraction.
+    The rendered block must prioritize Virchow2 under preferred and point back
+    at the feature_extraction skill so the agent knows to run it first.
     """
     skill = Skill.from_yaml(_SKILLS_DIR / "patch_classification.yaml")
 
@@ -86,6 +86,11 @@ def test_patch_classification_skill_renders_upstream():
     ]
     assert preferred_lines, (
         "Expected a 'Preferred' line listing pathology FMs; got:\n" + out
+    )
+    preferred_names = preferred_lines[0].split(":", 1)[1].strip()
+    assert preferred_names.startswith("Virchow2"), (
+        "Virchow2 must be first in the patch-level preferred extractor list; got:\n"
+        + preferred_lines[0]
     )
     assert any("CONCH" in line for line in preferred_lines), (
         "CONCH must appear on the 'Preferred' line; got:\n" + out

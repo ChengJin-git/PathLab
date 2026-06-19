@@ -103,7 +103,7 @@ reference_code:
 upstream_skill: feature_extraction
 
 recommended_feature_extractors:
-  preferred: [UNI2, CONCH, "CONCH 1.5", Virchow2, "H-Optimus-1", GPFM, mSTAR, Phikon2]
+  preferred: [Virchow2, UNI2, CONCH, "CONCH 1.5", "H-Optimus-1", GPFM, mSTAR, Phikon2]
   acceptable: [UNI, Virchow, Phikon, "H-Optimus-0", OpenMidnight]
   vision_language: [PLIP, PathoCLIP]            # only for text-aware tasks
   domain_specific:
