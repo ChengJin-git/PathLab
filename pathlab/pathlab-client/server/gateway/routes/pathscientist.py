@@ -3163,13 +3163,21 @@ async def _resolve_pathlab_dataset_mounts(
                 else []
             )
             if not selected_ids:
-                visible_datasets = await WSIRepository.get_datasets(
-                    db,
-                    data_type="wsi",
-                    user_id=user_id_filter,
-                    elevated_dataset_ids=elevated_dataset_ids,
-                    limit=0,
-                )
+                visible_datasets = []
+                visible_dataset_ids: set[str] = set()
+                for data_type in ("wsi", "patch"):
+                    for dataset_row in await WSIRepository.get_datasets(
+                        db,
+                        data_type=data_type,
+                        user_id=user_id_filter,
+                        elevated_dataset_ids=elevated_dataset_ids,
+                        limit=0,
+                    ):
+                        dataset_id = str(dataset_row.get("dataset_id") or "").strip()
+                        if not dataset_id or dataset_id in visible_dataset_ids:
+                            continue
+                        visible_dataset_ids.add(dataset_id)
+                        visible_datasets.append(dataset_row)
                 selected_ids = _match_pathlab_datasets_from_question(question, visible_datasets)
             if not selected_ids:
                 return {}
