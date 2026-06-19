@@ -148,6 +148,38 @@ def _register_acquired_dataset_with_pathlab(
         return {"status": "failed", "reason": str(exc)}
 
 
+def _register_pathscientist_features_with_pathlab(
+    *,
+    features_dir: str,
+    wsi_dir: str = "",
+    extractor_name: str = "",
+    data_role: str = "internal",
+) -> dict[str, Any]:
+    """Best-effort DB registration for features written by PathScientist."""
+    try:
+        from backend.database.database import safe_session
+        from ..dataset.feature_registration import register_extracted_features_with_pathlab
+    except Exception as exc:
+        logger.warning("PathLab feature registration unavailable: %s", exc)
+        return {"status": "failed", "reason": f"import_error:{exc}"}
+
+    async def _run() -> dict[str, Any]:
+        async with safe_session() as db:
+            return await register_extracted_features_with_pathlab(
+                db=db,
+                features_dir=features_dir,
+                wsi_dir=wsi_dir,
+                extractor_name=extractor_name,
+                data_role=data_role,
+            )
+
+    try:
+        return _run_async_best_effort(_run(), "PathLab feature registration")
+    except Exception as exc:
+        logger.warning("PathLab feature registration failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)}
+
+
 def _notify_progress(
     progress_callback: ProgressCallback | None,
     state: ResearchSessionState,
@@ -873,6 +905,100 @@ def _sync_planned_feature_extraction_env_from_current_step(state, config) -> Non
     config.planned_feature_extractor = inputs.get("extractor_name") or ""
 
 
+
+
+def _register_pathscientist_labels_with_pathlab(
+    *,
+    manifest_file: str,
+    labels_file: str,
+    splits_file: str,
+) -> dict[str, Any]:
+    """Best-effort DB backfill for labels inferred by PathScientist."""
+    try:
+        from backend.database.database import safe_session
+        from ..dataset.label_registration import register_inferred_labels_with_pathlab
+    except Exception as exc:
+        logger.warning("PathLab label registration unavailable: %s", exc)
+        return {"status": "failed", "reason": f"import_error:{exc}"}
+
+    async def _run() -> dict[str, Any]:
+        async with safe_session() as db:
+            return await register_inferred_labels_with_pathlab(
+                db=db,
+                manifest_file=manifest_file,
+                labels_file=labels_file,
+                splits_file=splits_file,
+            )
+
+    try:
+        return _run_async_best_effort(_run(), "PathLab label registration")
+    except Exception as exc:
+        logger.warning("PathLab label registration failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)}
+
+
+def _labels_and_splits_ready(labels_file: str, splits_file: str, task_type: str = "mil_classification") -> bool:
+    if not labels_file or not splits_file:
+        return False
+    labels_path = Path(labels_file)
+    splits_path = Path(splits_file)
+    if not labels_path.is_file() or not splits_path.is_file():
+        return False
+    try:
+        from ..dataset.readiness import splits_file_matches_task
+
+        return splits_file_matches_task(splits_path, task_type)
+    except Exception:
+        return False
+
+
+def _advance_execution_plan_after_label_inference(state: ResearchSessionState) -> bool:
+    plan = state.execution_plan or {}
+    steps = list(plan.get("steps") or [])
+    current = int(plan.get("current_step", 0) or 0)
+    if current >= len(steps):
+        return False
+    step = steps[current]
+    if not isinstance(step, dict) or str(step.get("id") or "") != "infer_labels":
+        return False
+    outputs = step.get("outputs") or {}
+    task_profile = state.task_profile or (state.grounding or {}).get("task_profile") or {}
+    task_type = str(task_profile.get("task_type") or "mil_classification")
+    labels_file = str(outputs.get("labels_file") or "")
+    splits_file = str(outputs.get("splits_file") or "")
+    if not _labels_and_splits_ready(
+        labels_file,
+        splits_file,
+        task_type=task_type,
+    ):
+        return False
+
+    inputs = step.get("inputs") or {}
+    registration = _register_pathscientist_labels_with_pathlab(
+        manifest_file=str(inputs.get("dataset_manifest_file") or ""),
+        labels_file=labels_file,
+        splits_file=splits_file,
+    )
+    step.setdefault("outputs", {})["pathlab_label_registration"] = registration
+
+    plan["current_step"] = current + 1
+    plan["steps"] = steps
+    state.execution_plan = plan
+    state.data_readiness = {
+        **(state.data_readiness or {}),
+        "status": "raw_wsi_ready" if not (state.data_readiness or {}).get("features_dir") else "features_ready",
+        "labels_file": str(outputs.get("labels_file") or ""),
+        "splits_file": str(outputs.get("splits_file") or ""),
+        "missing": [
+            item for item in (state.data_readiness or {}).get("missing", [])
+            if item not in {"labels_file", "splits_file"}
+        ],
+    }
+    state.grounding["execution_plan"] = state.execution_plan
+    state.grounding["data_readiness"] = state.data_readiness
+    return True
+
+
 def _advance_execution_plan_after_iteration(
     state: ResearchSessionState,
     *,
@@ -906,6 +1032,14 @@ def _advance_execution_plan_after_iteration(
 
     actual_features_dir = str(features_dir)
     step_id = str(step.get("id") or "")
+    step_inputs = step.get("inputs") or {}
+    registration = _register_pathscientist_features_with_pathlab(
+        features_dir=actual_features_dir,
+        wsi_dir=str(step_inputs.get("wsi_dir") or ""),
+        extractor_name=str(step_inputs.get("extractor_name") or ""),
+        data_role=str(step_inputs.get("data_role") or "internal"),
+    )
+    step.setdefault("outputs", {})["pathlab_feature_registration"] = registration
     step.setdefault("outputs", {})["features_dir"] = actual_features_dir
     if step_id == "extract_external_features":
         for future_step in steps[current + 1:]:
@@ -1324,7 +1458,7 @@ def _resolve_features_data_output_dir(
 
 def _feature_leaf_for_output_root(output_root: Path, extractor_name: str) -> Path:
     output_root = Path(output_root)
-    if (output_root / "wsi_files").is_dir():
+    if any((output_root / dirname).is_dir() for dirname in ("wsi_files", "WSIs", "wsis")):
         return output_root / "features" / extractor_name
     return output_root / "pt_files" / extractor_name
 
@@ -2056,7 +2190,11 @@ def _prepare_explicit_internal_dataset_if_possible(
 
         workspace_root = Path(session.workspace_dir)
         prepared_root = workspace_root / ".dataset" / "explicit_internal"
-        contract = MILClassificationNormalizer().prepare(raw_root, prepared_root)
+        contract = MILClassificationNormalizer().prepare(
+            raw_root,
+            prepared_root,
+            task_profile=profile.to_dict() if hasattr(profile, "to_dict") else {},
+        )
         if not contract.get("wsi_dir") or not contract.get("labels_file"):
             return None
     except Exception as exc:
@@ -2271,6 +2409,7 @@ def _run_acquisition_stage(
         if local_status in {
             "features_ready",
             "raw_wsi_ready",
+            "raw_wsi_needs_labels",
             "patch_features_ready",
             "patch_images_ready",
             "not_applicable",
@@ -3045,6 +3184,12 @@ def run_research_session(
         # data setup, not a metric-bearing iteration. If the current step
         # produced .pt files, advance the plan and skip RunRecord
         # processing for this turn.
+        if _current_execution_step(state).get("id") == "infer_labels":
+            if _advance_execution_plan_after_label_inference(state):
+                persist_research_session_state(conversation, state)
+                _notify_progress(progress_callback, state)
+                continue
+
         if _current_execution_skill(state) == "feature_extraction":
             from pathlib import Path as _Path
             deps_for_workspace = get_session(session.session_id)
@@ -3375,6 +3520,11 @@ def continue_research_session(
         # Plan-2026-04-30 data-readiness review P0-2: same setup-vs-iteration
         # rule as run_research_session. feature_extraction setup advances
         # WITHOUT touching iteration_index / RunRecord history.
+        if _current_execution_step(state).get("id") == "infer_labels":
+            if _advance_execution_plan_after_label_inference(state):
+                persist_research_session_state(conversation, state)
+                continue
+
         if _current_execution_skill(state) == "feature_extraction":
             from pathlib import Path as _Path
             deps_for_workspace = get_session(session.session_id)

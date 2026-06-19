@@ -121,6 +121,55 @@ def _first_value(row: dict[str, str], aliases: tuple[str, ...]) -> str:
     return ""
 
 
+def _string_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        values: list[str] = []
+        for item in value:
+            values.extend(_string_values(item))
+        return values
+    return [str(value)]
+
+
+def _profile_intent_text(task_profile: dict[str, Any] | None) -> str:
+    if not task_profile:
+        return ""
+    parts: list[str] = []
+    for key in ("prediction_target", "target", "question", "objective"):
+        value = task_profile.get(key)
+        if value:
+            parts.extend(_string_values(value))
+    for key in ("required_label_keywords", "label_keywords", "dataset_keywords"):
+        parts.extend(_string_values(task_profile.get(key)))
+    return " ".join(parts).lower().replace("_", " ")
+
+
+def _label_columns_for_profile(task_profile: dict[str, Any] | None) -> tuple[str, ...]:
+    text = f" {_profile_intent_text(task_profile)} "
+    if any(
+        token in text
+        for token in (
+            " intestinal metaplasia ",
+            " metaplasia ",
+            " im ",
+            "肠化",
+            "肠上皮化生",
+            "肠化生",
+        )
+    ):
+        return ("Task4", *_LABEL_COLUMNS)
+    if "atrophy" in text:
+        return ("Task3", *_LABEL_COLUMNS)
+    if "activity" in text or "active inflammation" in text:
+        return ("Task2", *_LABEL_COLUMNS)
+    if "inflammation" in text or "chronic gastritis" in text or "gastritis" in text:
+        return ("Task1", *_LABEL_COLUMNS)
+    return _LABEL_COLUMNS
+
+
 def _first_value_with_column(
     row: dict[str, str],
     aliases: tuple[str, ...],
@@ -162,11 +211,13 @@ def _standardize_labels(
     labels_dest: Path,
     *,
     ordered_slide_ids: list[str],
+    task_profile: dict[str, Any] | None = None,
 ) -> tuple[int, str]:
     """Write labels_dest as slide_id,label and return count + source column."""
     slide_ids = set(ordered_slide_ids)
     label_map: dict[str, str] = {}
     label_column = ""
+    label_columns = _label_columns_for_profile(task_profile)
     for labels_src in labels_srcs:
         try:
             rows = _read_table(labels_src)
@@ -177,7 +228,7 @@ def _standardize_labels(
                 _first_value(row, _SLIDE_ID_COLUMNS),
                 slide_ids,
             )
-            label, column = _first_value_with_column(row, _LABEL_COLUMNS)
+            label, column = _first_value_with_column(row, label_columns)
             if slide and label and slide not in label_map:
                 label_map[slide] = label
                 if column and not label_column:
@@ -234,7 +285,13 @@ class MILClassificationNormalizer:
     def supports(self, task_type: str) -> bool:
         return task_type in self.supported_task_types
 
-    def prepare(self, raw_root: Path, prepared_root: Path) -> dict[str, Any]:
+    def prepare(
+        self,
+        raw_root: Path,
+        prepared_root: Path,
+        *,
+        task_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         raw_root = Path(raw_root)
         prepared_root = Path(prepared_root)
         wsi_dir = prepared_root / "WSIs"
@@ -269,6 +326,7 @@ class MILClassificationNormalizer:
             label_sources,
             labels_dest,
             ordered_slide_ids=slide_ids,
+            task_profile=task_profile,
         )
         if n_labeled == 0:
             n_labeled, label_column = _derive_labels_from_prefixed_slide_ids(

@@ -155,11 +155,20 @@ def _render_execution_plan(state: ResearchSessionState) -> list[str]:
         plan_missing = plan.get("missing") or []
         if plan_missing:
             lines.append(f"  - plan missing: {', '.join(plan_missing)}")
+        current_step = steps[current] if 0 <= current < len(steps) and isinstance(steps[current], dict) else {}
         if (
             status == "ready"
-            and 0 <= current < len(steps)
-            and isinstance(steps[current], dict)
-            and steps[current].get("skill") == "feature_extraction"
+            and current_step
+            and current_step.get("id") == "infer_labels"
+        ):
+            lines.append(
+                "Do NOT train or extract features in this label inference setup step; "
+                "only infer/resolve labels, write labels.csv and splits.json, then finish the step.",
+            )
+        if (
+            status == "ready"
+            and current_step
+            and current_step.get("skill") == "feature_extraction"
             and any(
                 isinstance(s, dict) and s.get("skill") != "feature_extraction"
                 for s in steps[current + 1:]

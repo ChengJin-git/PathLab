@@ -204,6 +204,108 @@ def _patch_ready_step(
     )
 
 
+
+def _label_inference_step(readiness: DataReadinessResult) -> ExecutionStep:
+    manifest_file = ""
+    if readiness.wsi_dir:
+        root = readiness.wsi_dir.rstrip("/").rsplit("/", 1)[0]
+        if root and root != readiness.wsi_dir:
+            manifest_file = f"{root}/dataset_manifest.json"
+    return ExecutionStep(
+        id="infer_labels",
+        skill="mil_classification",
+        title="Infer dataset labels",
+        inputs={
+            "data_role": "internal",
+            "wsi_dir": readiness.wsi_dir,
+            "dataset_manifest_file": manifest_file,
+            "label_inference_required": True,
+        },
+        outputs={
+            "labels_file": readiness.labels_file,
+            "splits_file": readiness.splits_file,
+        },
+        depends_on=[],
+        instructions=[
+            "Infer labels before any training or feature extraction metric run.",
+            f"Inspect WSI_DIR={readiness.wsi_dir} and dataset_manifest_file={manifest_file}.",
+            "Use registered PathLab metadata, dataset layout, filenames, manifests, "
+            "and public deterministic metadata sources; do not invent labels.",
+            f"Write labels.csv to {readiness.labels_file} with slide_id,label and optional case_id/split columns.",
+            f"Write splits.json to {readiness.splits_file} with non-empty train/val/test and labels entries.",
+            "Keep slide_id values exactly aligned with the mounted WSI filenames/manifest map.",
+            "This is data setup, not a metric-bearing training iteration.",
+        ],
+    )
+
+
+def _label_inference_plan(
+    *,
+    skill: str,
+    readiness: DataReadinessResult,
+    data_output_dir: str,
+    generated_features_dir: str,
+    extractor_name: str = DEFAULT_FEATURE_EXTRACTOR,
+    mil_model_name: str = DEFAULT_MIL_MODEL,
+) -> list[ExecutionStep]:
+    infer = _label_inference_step(readiness)
+    if readiness.features_dir:
+        train = _features_ready_step(
+            skill=skill,
+            readiness=DataReadinessResult(
+                status="features_ready",
+                source=readiness.source,
+                features_dir=readiness.features_dir,
+                splits_file=readiness.splits_file,
+                features_dir_host=readiness.features_dir_host,
+                splits_file_host=readiness.splits_file_host,
+            ),
+            mil_model_name=mil_model_name,
+        )
+        train = ExecutionStep(
+            id=train.id,
+            skill=train.skill,
+            title=train.title,
+            inputs=dict(train.inputs),
+            outputs=dict(train.outputs),
+            depends_on=["infer_labels"],
+            instructions=list(train.instructions) + [
+                "Do not start training until infer_labels has written labels.csv and splits.json.",
+            ],
+        )
+        return [infer, train]
+
+    steps = _raw_wsi_two_step(
+        skill=skill,
+        readiness=DataReadinessResult(
+            status="raw_wsi_ready",
+            source=readiness.source,
+            wsi_dir=readiness.wsi_dir,
+            labels_file=readiness.labels_file,
+            splits_file=readiness.splits_file,
+            wsi_dir_host=readiness.wsi_dir_host,
+            labels_file_host=readiness.labels_file_host,
+            splits_file_host=readiness.splits_file_host,
+        ),
+        data_output_dir=data_output_dir,
+        generated_features_dir=generated_features_dir,
+        extractor_name=extractor_name,
+        mil_model_name=mil_model_name,
+    )
+    steps[0] = ExecutionStep(
+        id=steps[0].id,
+        skill=steps[0].skill,
+        title=steps[0].title,
+        inputs=dict(steps[0].inputs),
+        outputs=dict(steps[0].outputs),
+        depends_on=["infer_labels"],
+        instructions=list(steps[0].instructions) + [
+            "Do not extract features until infer_labels has written labels.csv and splits.json.",
+        ],
+    )
+    return [infer, *steps]
+
+
 def _raw_wsi_two_step(
     *,
     skill: str,
@@ -610,6 +712,35 @@ def build_execution_plan(
             notes=[
                 "Existing feature tensors + splits detected; "
                 "running downstream training directly.",
+            ],
+        )))
+
+    if readiness.status == "raw_wsi_needs_labels":
+        if not readiness.features_dir and (not data_output_dir or not generated_features_dir):
+            return _wrap(ExecutionPlan(
+                status="blocked",
+                primary_skill=primary_skill,
+                missing=["data_output_dir", "generated_features_dir"],
+                notes=[
+                    "raw WSI detected but caller did not pass concrete paths "
+                    "for feature_extraction outputs",
+                ],
+            ))
+        steps = _label_inference_plan(
+            skill=skill,
+            readiness=readiness,
+            data_output_dir=data_output_dir,
+            generated_features_dir=generated_features_dir,
+            extractor_name=extractor_name,
+            mil_model_name=mil_model_name,
+        )
+        return _wrap(_with_external_test(ExecutionPlan(
+            status="ready",
+            primary_skill=primary_skill,
+            steps=steps,
+            notes=[
+                "registered raw WSI detected without labels; agent must infer "
+                "labels and splits before feature extraction/training.",
             ],
         )))
 

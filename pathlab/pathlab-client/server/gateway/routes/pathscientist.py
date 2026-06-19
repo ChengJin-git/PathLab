@@ -1139,113 +1139,6 @@ def _final_status_from_state(state: dict[str, Any]) -> tuple[str, str, str]:
     return "completed", stage, ""
 
 
-def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
-    """Resolve a PathScientist workspace from serialized research state."""
-    candidates: list[Any] = [
-        state.get("workspace_path"),
-        state.get("workspace_dir"),
-        state.get("workspace_root"),
-    ]
-    summary = state.get("persisted_summary")
-    if isinstance(summary, dict):
-        research_session = summary.get("research_session")
-        candidates.extend([
-            summary.get("workspace_path"),
-            summary.get("workspace_dir"),
-            research_session.get("workspace_path")
-            if isinstance(research_session, dict)
-            else "",
-            research_session.get("workspace_dir")
-            if isinstance(research_session, dict)
-            else "",
-        ])
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            path = Path(str(candidate)).expanduser()
-        except (TypeError, ValueError):
-            continue
-        if path.is_dir():
-            return path.resolve()
-
-    internal_session_id = str(state.get("session_id") or "").strip()
-    if internal_session_id:
-        path = _resolve_pathscientist_base_dir() / f"session_{internal_session_id}"
-        if path.is_dir():
-            return path.resolve()
-    return None
-
-
-def _load_download_progress_for_state(state: dict[str, Any]) -> dict[str, Any]:
-    workspace = _resolve_workspace_from_state(state)
-    if workspace is None:
-        return {}
-    path = workspace / ".dataset" / "download_progress.json"
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _enrich_state_with_download_progress(state: dict[str, Any]) -> dict[str, Any]:
-    progress = _load_download_progress_for_state(state)
-    if not progress:
-        return dict(state)
-    return {**state, "download_progress": progress}
-
-
-def _start_download_progress_poller(record: SessionRecord) -> Callable[[], None]:
-    """Emit progress sidecar changes while acquisition is blocked in a provider."""
-    stop_event = threading.Event()
-
-    def snapshot_state() -> tuple[dict[str, Any], str, str]:
-        assert record._condition is not None
-        with record._condition:
-            return dict(_record_state(record)), record.status, record.stage
-
-    def loop() -> None:
-        last_signature = ""
-        interval = max(0.1, DOWNLOAD_PROGRESS_POLL_SECONDS)
-        while not stop_event.wait(interval):
-            state, status, stage = snapshot_state()
-            if status not in {"queued", "running"}:
-                break
-            progress = _load_download_progress_for_state(state)
-            if not progress:
-                continue
-            signature = json.dumps(progress, sort_keys=True, default=str)
-            if signature == last_signature:
-                continue
-            last_signature = signature
-            enriched = {**state, "download_progress": progress}
-            event_stage = str(enriched.get("stage") or stage or "acquisition")
-            assert record._condition is not None
-            with record._condition:
-                record.state = enriched
-            record.add_event({
-                "kind": "state",
-                "status": "running",
-                "stage": event_stage,
-                "state": enriched,
-                "summary": "Download progress",
-            })
-
-    thread = threading.Thread(
-        target=loop,
-        name=f"pathscientist-download-progress-{record.session_id}",
-        daemon=True,
-    )
-    thread.start()
-
-    def stop() -> None:
-        stop_event.set()
-        thread.join(timeout=1.0)
-
-    return stop
-
-
 def _record_conversation_id(record: SessionRecord) -> str:
     if record.conversation_id:
         return record.conversation_id
@@ -3100,7 +2993,7 @@ def _pathlab_dataset_view_parent() -> Path:
 
 
 def _normalize_dataset_match_text(value: str) -> str:
-    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+    normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", str(value or "").lower()).strip()
     return re.sub(r"\s+", " ", normalized)
 
 
@@ -3444,6 +3337,7 @@ async def _resolve_pathlab_dataset_mounts(
                     dataset=dataset,
                     slides=slides,
                     view_dir=view_session_dir / slug,
+                    question=question,
                 )
                 mounts[str(view_dir)] = _unique_container_mount(f"/data/{slug}", used_containers)
     except HTTPException:
@@ -3573,7 +3467,160 @@ def _link_existing_pathlab_features_for_view_slide(
     return linked
 
 
-def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: Path) -> Path:
+def _question_label_intent(question: str) -> str:
+    normalized = f" {_normalize_dataset_match_text(question)} "
+    raw_question = str(question or "").lower()
+    if any(
+        token in normalized
+        for token in (" intestinal metaplasia ", " metaplasia ", " im ")
+    ) or any(token in raw_question for token in ("肠化", "肠上皮化生", "肠化生")):
+        return "intestinal_metaplasia"
+    if " atrophy " in normalized:
+        return "atrophy"
+    if " activity " in normalized or " active inflammation " in normalized:
+        return "activity"
+    if " inflammation " in normalized or " gastritis " in normalized:
+        return "inflammation"
+    return ""
+
+
+def _source_label_tables_for_pathlab_view(slides: list[Any]) -> list[Path]:
+    sources: list[Path] = []
+    seen: set[Path] = set()
+    for slide in slides:
+        if isinstance(slide, dict):
+            source_raw = str(slide.get("wsi_path") or "").strip()
+        else:
+            source_raw = str(getattr(slide, "wsi_path", "") or "").strip()
+        if not source_raw:
+            continue
+        try:
+            parent = Path(source_raw).expanduser().resolve(strict=False).parent
+        except OSError:
+            parent = Path(source_raw).expanduser().parent
+        for pattern in ("*label*.csv", "*labels*.csv", "*label*.tsv", "*labels*.tsv"):
+            for candidate in sorted(parent.glob(pattern)):
+                if not candidate.is_file():
+                    continue
+                try:
+                    resolved = candidate.resolve(strict=False)
+                except OSError:
+                    resolved = candidate
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                sources.append(candidate)
+    return sources
+
+
+def _task_column_for_label_intent(intent: str) -> str:
+    return {
+        "inflammation": "Task1",
+        "activity": "Task2",
+        "atrophy": "Task3",
+        "intestinal_metaplasia": "Task4",
+    }.get(intent, "")
+
+
+def _read_task_label_table_rows(path: Path, *, label_column: str) -> dict[str, str]:
+    rows: dict[str, str] = {}
+    try:
+        with path.open("r", newline="", encoding="utf-8-sig") as fh:
+            sample = fh.read(4096)
+            fh.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",\t")
+            except csv.Error:
+                dialect = csv.excel_tab if path.suffix.lower() == ".tsv" else csv.excel
+            reader = csv.DictReader(fh, dialect=dialect)
+            for row in reader:
+                lowered = {str(k or "").strip().lower(): v for k, v in row.items()}
+                slide = ""
+                for key in ("slide_id", "wsi_id", "image_id", "case_id", "slide", "filename", "file"):
+                    value = lowered.get(key)
+                    if value:
+                        slide = Path(str(value).strip()).stem
+                        break
+                label = lowered.get(label_column.lower())
+                if slide and label is not None and str(label).strip() != "":
+                    rows[slide] = str(label).strip()
+    except OSError:
+        return {}
+    return rows
+
+
+def _write_task_labels_from_source_tables(
+    *,
+    view_dir: Path,
+    accessible_rows: list[dict[str, str]],
+    pathlab_slide_map: list[dict[str, str]],
+    question: str,
+) -> tuple[bool, str, dict[str, int], list[dict[str, str]]]:
+    intent = _question_label_intent(question)
+    label_column = _task_column_for_label_intent(intent)
+    if not label_column:
+        return False, "", {}, []
+    sources = _source_label_tables_for_pathlab_view(pathlab_slide_map)
+    if not sources:
+        return False, "", {}, []
+
+    source_labels: dict[str, str] = {}
+    for source in sources:
+        source_labels.update(_read_task_label_table_rows(source, label_column=label_column))
+    if not source_labels:
+        return False, label_column, {}, []
+
+    original_to_view: dict[str, str] = {}
+    for item in pathlab_slide_map:
+        view_slide = str(item.get("slide_id") or "").strip()
+        original = str(item.get("original_filename") or "").strip()
+        wsi_path = str(item.get("wsi_path") or "").strip()
+        for candidate in (original, wsi_path):
+            stem = Path(candidate).stem
+            if stem and view_slide:
+                original_to_view[stem] = view_slide
+
+    labeled_rows: list[dict[str, str]] = []
+    label_counts: dict[str, int] = {}
+    for row in accessible_rows:
+        view_slide = row["slide_id"]
+        matched_label = ""
+        for original_stem, mapped_view in original_to_view.items():
+            if mapped_view == view_slide:
+                matched_label = source_labels.get(original_stem, "")
+                if matched_label:
+                    break
+        if not matched_label:
+            continue
+        out = {"slide_id": view_slide, "label": matched_label, "split": row.get("split", "")}
+        labeled_rows.append(out)
+        label_counts[matched_label] = label_counts.get(matched_label, 0) + 1
+
+    if len(labeled_rows) < 3 or len(labeled_rows) != len(accessible_rows):
+        return False, label_column, label_counts, labeled_rows
+
+    labels_path = view_dir / "labels.csv"
+    split_values = [row["split"] for row in labeled_rows]
+    use_db_splits = all(split_values)
+    with labels_path.open("w", newline="", encoding="utf-8") as fh:
+        fieldnames = ["slide_id", "label"] + (["split"] if use_db_splits else [])
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in labeled_rows:
+            writer.writerow({key: row[key] for key in fieldnames})
+    from backend.pathscientist.dataset.wsi_splits import build_classification_splits_from_labels
+
+    build_classification_splits_from_labels(labels_path, view_dir / "splits.json")
+    return True, label_column, label_counts, labeled_rows
+
+
+def _prepare_pathlab_dataset_view(
+    *,
+    dataset: Any,
+    slides: list[Any],
+    view_dir: Path,
+    question: str = "",
+) -> Path:
     view_dir.mkdir(parents=True, exist_ok=True)
     is_patch_dataset = _dataset_data_type_value(dataset) == "patch"
     wsi_dir = view_dir / "wsi_files"
@@ -3596,11 +3643,13 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         (view_dir / dirname).mkdir(exist_ok=True)
 
     rows: list[dict[str, str]] = []
+    accessible_rows: list[dict[str, str]] = []
     used_slide_ids: set[str] = set()
     missing_sources: list[str] = []
     linked_feature_count = 0
     linked_feature_extractors: set[str] = set()
     pathlab_items: list[dict[str, str]] = []
+    pathlab_slide_map: list[dict[str, str]] = []
     for slide in slides:
         source_raw = str(getattr(slide, "wsi_path", "") or "").strip()
         if not source_raw:
@@ -3610,8 +3659,6 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
             missing_sources.append(str(getattr(slide, "wsi_id", "") or source.name))
             continue
         label = str(getattr(slide, "label", "") or "").strip()
-        if not label:
-            continue
         stem_source = str(getattr(slide, "wsi_id", "") or "").strip() or source.stem
         base_slide_id = _safe_slide_id(stem_source)
         slide_id = base_slide_id
@@ -3629,7 +3676,7 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
             link_path.unlink()
         os.symlink(source, link_path)
         patch_image_path = link_path
-        if is_patch_dataset:
+        if is_patch_dataset and label:
             image_label_dir = images_dir / _safe_label_dir(label)
             image_label_dir.mkdir(parents=True, exist_ok=True)
             patch_image_path = image_label_dir / f"{slide_id}{ext}"
@@ -3645,12 +3692,27 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         linked_feature_count += len(linked_features)
         linked_feature_extractors.update(linked_features)
         split = _normalized_split(getattr(slide, "split", ""))
-        rows.append({
+        row = {
             "slide_id": slide_id,
             "label": label,
             "split": split,
-        })
-        if is_patch_dataset:
+        }
+        accessible_rows.append(row)
+        if label:
+            rows.append(row)
+        pathlab_slide_map.append(
+            {
+                "slide_id": slide_id,
+                "wsi_id": str(getattr(slide, "wsi_id", "") or ""),
+                "wsi_path": str(source),
+                "view_wsi_path": str(link_path),
+                "original_filename": original_filename or source.name,
+                "case_id": str(getattr(slide, "case_id", "") or ""),
+                "label": label,
+                "split": split,
+            }
+        )
+        if is_patch_dataset and label:
             pathlab_items.append(
                 {
                     "wsi_id": slide_id,
@@ -3662,39 +3724,80 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
                 }
             )
 
-    if len(rows) < 3:
+    if len(accessible_rows) < 3:
         raise HTTPException(
             status_code=400,
-            detail="Selected dataset needs at least 3 accessible labeled WSI files for PathScientist.",
+            detail="Selected dataset needs at least 3 accessible WSI files for PathScientist.",
         )
 
-    split_values = [row["split"] for row in rows]
-    use_db_splits = all(split_values)
-    labels_path = view_dir / "labels.csv"
-    with labels_path.open("w", newline="", encoding="utf-8") as fh:
-        fieldnames = ["slide_id", "label"] + (["split"] if use_db_splits else [])
-        writer = csv.DictWriter(fh, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: row[key] for key in fieldnames})
+    db_label_counts: dict[str, int] = {}
+    for row in rows:
+        db_label_counts[row["label"]] = db_label_counts.get(row["label"], 0) + 1
+    task_labels_ready = False
+    task_label_column = ""
+    task_label_counts: dict[str, int] = {}
+    if len(db_label_counts) <= 1:
+        try:
+            (
+                task_labels_ready,
+                task_label_column,
+                task_label_counts,
+                task_rows,
+            ) = _write_task_labels_from_source_tables(
+                view_dir=view_dir,
+                accessible_rows=accessible_rows,
+                pathlab_slide_map=pathlab_slide_map,
+                question=question,
+            )
+            if task_labels_ready:
+                rows = task_rows
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Selected dataset cannot be split for PathScientist: {exc}",
+            ) from exc
+        except Exception as exc:
+            logger.debug("PathScientist task-specific label extraction skipped: %s", exc)
 
-    try:
-        from backend.pathscientist.dataset.wsi_splits import build_classification_splits_from_labels
+    labels_ready = (
+        task_labels_ready
+        or (len(rows) >= 3 and len(rows) == len(accessible_rows) and len(db_label_counts) > 1)
+    )
+    if labels_ready:
+        labels_path = view_dir / "labels.csv"
+        if not labels_path.is_file():
+            split_values = [row["split"] for row in rows]
+            use_db_splits = all(split_values)
+            with labels_path.open("w", newline="", encoding="utf-8") as fh:
+                fieldnames = ["slide_id", "label"] + (["split"] if use_db_splits else [])
+                writer = csv.DictWriter(fh, fieldnames=fieldnames)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({key: row[key] for key in fieldnames})
 
-        build_classification_splits_from_labels(labels_path, view_dir / "splits.json")
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Selected dataset cannot be split for PathScientist: {exc}",
-        ) from exc
-    except Exception as exc:
-        raise RuntimeError(f"PathScientist split builder unavailable: {exc}") from exc
+        try:
+            from backend.pathscientist.dataset.wsi_splits import build_classification_splits_from_labels
+
+            if not (view_dir / "splits.json").is_file():
+                build_classification_splits_from_labels(labels_path, view_dir / "splits.json")
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Selected dataset cannot be split for PathScientist: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(f"PathScientist split builder unavailable: {exc}") from exc
 
     label_counts: dict[str, int] = {}
-    for row in rows:
-        label_counts[row["label"]] = label_counts.get(row["label"], 0) + 1
+    if task_labels_ready:
+        label_counts = task_label_counts
+    else:
+        for row in rows:
+            label_counts[row["label"]] = label_counts.get(row["label"], 0) + 1
+    requires_label_inference = not labels_ready
     manifest = {
         "dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
+        "pathlab_dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
         "dataset_name": str(getattr(dataset, "name", "") or ""),
         "layout": "pathlab_dataset_view",
         "data_type": "patch" if is_patch_dataset else "wsi",
@@ -3702,14 +3805,20 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
         "images_dir": "images" if is_patch_dataset else "",
         "labels_file": "labels.csv",
         "splits_file": "splits.json",
-        "num_wsi": len(rows),
-        "num_patches": len(rows) if is_patch_dataset else 0,
+        "requires_label_inference": requires_label_inference,
+        "num_wsi": len(accessible_rows),
+        "num_patches": len(accessible_rows) if is_patch_dataset else 0,
+        "num_labeled": len(rows),
+        "num_unlabeled": len(accessible_rows) - len(rows),
         "classes": sorted(label_counts),
         "label_counts": label_counts,
+        "db_label_counts": db_label_counts,
+        "task_label_column": task_label_column,
         "source_organ": getattr(dataset, "source_organ", None),
         "missing_source_count": len(missing_sources),
         "feature_link_count": linked_feature_count,
         "feature_extractors": sorted(linked_feature_extractors),
+        "pathlab_slide_map": pathlab_slide_map,
     }
     (view_dir / "dataset_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True),
@@ -3721,7 +3830,6 @@ def _prepare_pathlab_dataset_view(*, dataset: Any, slides: list[Any], view_dir: 
             encoding="utf-8",
         )
     return view_dir
-
 
 def _merge_data_mounts(data_mounts: dict[str, str], extra_data_mounts: dict[str, str]) -> None:
     used = set(data_mounts.values())
@@ -3879,9 +3987,23 @@ def _pathlab_dataset_contract_updates(host: str, container: str) -> dict[str, st
     splits_file = view_dir / "splits.json"
     if splits_file.is_file():
         updates["splits_file"] = _container_path_join(container_root, "splits.json")
+    labels_csv = view_dir / "labels.csv"
     labels_json = view_dir / "labels.json"
-    if labels_json.is_file():
+    if labels_csv.is_file():
+        updates["labels_file"] = _container_path_join(container_root, "labels.csv")
+    elif labels_json.is_file():
         updates["labels_file"] = _container_path_join(container_root, "labels.json")
+    manifest = view_dir / "dataset_manifest.json"
+    if manifest.is_file():
+        updates["dataset_manifest_file"] = _container_path_join(container_root, "dataset_manifest.json")
+        try:
+            manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            manifest_data = {}
+        if isinstance(manifest_data, dict) and manifest_data.get("requires_label_inference"):
+            updates["requires_label_inference"] = "true"
+            updates.setdefault("labels_file", _container_path_join(container_root, "labels.csv"))
+            updates.setdefault("splits_file", _container_path_join(container_root, "splits.json"))
     feature_leaf = _pathlab_view_feature_leaf(view_dir)
     if feature_leaf is not None:
         rel = feature_leaf.relative_to(view_dir).as_posix()

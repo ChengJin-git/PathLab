@@ -110,7 +110,7 @@ def find_generated_features_dir(
     """
     if (
         expected_dir
-        and contains_files_with_ext(expected_dir, FEATURE_EXTS)
+        and _contains_direct_files_with_ext(expected_dir, FEATURE_EXTS)
         and _feature_cache_is_complete_path(expected_dir)
     ):
         return Path(expected_dir)
@@ -938,6 +938,62 @@ def _assess_patch_classification_readiness(
     )
 
 
+
+def _runtime_child(root: ResolvedPath, name: str) -> ResolvedPath:
+    return ResolvedPath(
+        host_path=root.host_path / name,
+        runtime_path=_runtime_join(root.runtime_path, name),
+        source=root.source,
+    )
+
+
+def _manifest_requested_label_inference(host_root: Path) -> dict[str, Any] | None:
+    manifest_path = host_root / "dataset_manifest.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if not bool(data.get("requires_label_inference")):
+        return None
+    return data
+
+
+def _label_inference_wsi_candidate(
+    candidates: ReadinessCandidates,
+) -> tuple[ResolvedPath, dict[str, Any], ResolvedPath, ResolvedPath, str] | None:
+    for wsi in candidates.wsi_dirs:
+        if not contains_files_with_ext(wsi.host_path, WSI_EXTS):
+            continue
+        manifest = _manifest_requested_label_inference(wsi.host_path.parent)
+        if manifest is None:
+            continue
+        labels_name = str(manifest.get("labels_file") or "labels.csv").strip() or "labels.csv"
+        splits_name = str(manifest.get("splits_file") or "splits.json").strip() or "splits.json"
+        labels = _runtime_child(_data_dir_for_child(wsi), labels_name)
+        splits = _runtime_child(_data_dir_for_child(wsi), splits_name)
+        return (wsi, manifest, labels, splits, wsi.source or "pathlab_dataset_view")
+    return None
+
+
+def _first_existing_feature_leaf(
+    candidates: ReadinessCandidates,
+    *,
+    preferred_feature_extractor: str = "",
+) -> ResolvedPath | None:
+    for fdir in candidates.features_dirs:
+        leaf = _leaf_feature_dir(
+            fdir,
+            preferred_feature_extractor=preferred_feature_extractor,
+        )
+        if leaf is not None and _feature_cache_is_complete_path(leaf.host_path):
+            return leaf
+    return None
+
+
 def _first_ready_raw_wsi_pair(
     candidates: ReadinessCandidates,
     *,
@@ -1146,6 +1202,47 @@ def assess_data_readiness(
         splits_file_matches_task(p.host_path, task_type)
         for p in candidates.splits_files
     )
+    if has_raw_wsi and not has_labels_file:
+        label_inference = _label_inference_wsi_candidate(candidates)
+        if label_inference is not None:
+            wsi_dir, _manifest, labels_file, splits_file, source = label_inference
+            existing_features = _first_existing_feature_leaf(
+                candidates,
+                preferred_feature_extractor=preferred_feature_extractor,
+            )
+            missing = [
+                name
+                for name, present in (
+                    ("labels_file", labels_file.host_path.is_file()),
+                    ("splits_file", splits_file.host_path.is_file() and splits_file_matches_task(splits_file.host_path, task_type)),
+                )
+                if not present
+            ]
+            notes = [
+                "registered PathLab WSI dataset is accessible but lacks labels; "
+                "agent must infer labels from dataset metadata/layout before training",
+            ]
+            if existing_features is not None:
+                notes.append(
+                    "existing feature tensors detected; after label inference, train directly",
+                )
+            else:
+                missing.append("features_dir")
+            return DataReadinessResult(
+                status="raw_wsi_needs_labels",
+                source=source,
+                wsi_dir=wsi_dir.runtime_path,
+                labels_file=labels_file.runtime_path,
+                splits_file=splits_file.runtime_path,
+                features_dir=existing_features.runtime_path if existing_features else "",
+                wsi_dir_host=str(wsi_dir.host_path),
+                labels_file_host=str(labels_file.host_path),
+                splits_file_host=str(splits_file.host_path),
+                features_dir_host=str(existing_features.host_path) if existing_features else "",
+                missing=list(dict.fromkeys(missing)),
+                notes=notes,
+            )
+
     if has_raw_wsi and has_labels_file and not has_valid_splits:
         generated = _try_generate_splits(
             candidates,

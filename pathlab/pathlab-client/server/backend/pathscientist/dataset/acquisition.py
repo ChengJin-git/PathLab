@@ -2917,7 +2917,16 @@ class DatasetAcquisitionService:
             normalizer_name=normalizer.name,
         )
         try:
-            contract = normalizer.prepare(raw_root, prepared_root)
+            try:
+                contract = normalizer.prepare(
+                    raw_root,
+                    prepared_root,
+                    task_profile=profile.to_dict(),
+                )
+            except TypeError as exc:
+                if "task_profile" not in str(exc):
+                    raise
+                contract = normalizer.prepare(raw_root, prepared_root)
             contract, readiness_reason, readiness_payload = self._validate_prepared_contract(
                 profile=profile,
                 contract=dict(contract),
