@@ -3294,6 +3294,48 @@ def _match_pathlab_datasets_with_llm(
     return selected_ids
 
 
+def _question_requests_external_dataset_match(question: str) -> bool:
+    raw = str(question or "").lower()
+    compact = re.sub(r"\s+", "", raw)
+    if any(
+        marker in raw or marker in compact
+        for marker in (
+            "no external",
+            "without external",
+            "not external",
+            "不要external",
+            "不用external",
+            "不做external",
+            "无需external",
+        )
+    ):
+        return False
+    if any(
+        marker in raw
+        for marker in (
+            "external validation",
+            "external_test",
+            "external test",
+            "external dataset",
+            "external cohort",
+            "外部",
+            "独立验证",
+        )
+    ):
+        return True
+    normalized = f" {_normalize_dataset_match_text(question)} "
+    return any(
+        marker in normalized
+        for marker in (
+            " external validation ",
+            " external test ",
+            " external dataset ",
+            " external cohort ",
+            " independent validation ",
+        )
+    )
+
+
 async def _resolve_pathlab_dataset_mounts(
     dataset_ids: list[str],
     user: User,
@@ -3345,6 +3387,24 @@ async def _resolve_pathlab_dataset_mounts(
                 selected_ids = _match_pathlab_datasets_from_question(question, visible_datasets)
                 if not selected_ids:
                     selected_ids = _match_pathlab_datasets_with_llm(question, visible_datasets)
+                elif _question_requests_external_dataset_match(question):
+                    selected_set = set(selected_ids)
+                    remaining_datasets = [
+                        dataset_row
+                        for dataset_row in visible_datasets
+                        if str(dataset_row.get("dataset_id") or "").strip() not in selected_set
+                    ]
+                    external_question = (
+                        f"{question}\n\n"
+                        "Internal/training datasets are already selected. "
+                        "Only choose additional registered datasets that the user requested "
+                        "as external validation or external test cohorts."
+                    )
+                    for dataset_id in _match_pathlab_datasets_with_llm(external_question, remaining_datasets)[:1]:
+                        if dataset_id in selected_set:
+                            continue
+                        selected_set.add(dataset_id)
+                        selected_ids.append(dataset_id)
             if not selected_ids:
                 return {}
             for dataset_id in selected_ids:

@@ -1313,6 +1313,152 @@ def test_resolve_pathlab_dataset_mounts_uses_llm_when_dataset_name_is_unknown(
     assert (Path(host) / "images" / "MSIH").is_dir()
 
 
+def test_resolve_pathlab_dataset_mounts_uses_llm_to_add_requested_external_dataset(
+    monkeypatch,
+    tmp_path,
+):
+    route_module = load_route_module()
+    route_module._resolve_pathscientist_base_dir = lambda: tmp_path / "pathscientist-base"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    internal_id = "521c7518-f72d-5e42-a243-385b91cf7b8c"
+    external_id = "b84756e8-62ea-4d74-ba25-4829bd2060d8"
+
+    slides_by_dataset = {}
+    for dataset_id, labels in {
+        internal_id: ["LUAD", "LUSC", "LUAD", "LUSC"],
+        external_id: ["LUAD", "LUSC", "LUAD"],
+    }.items():
+        slides = []
+        for idx, label in enumerate(labels, start=1):
+            source = source_dir / f"{dataset_id}-{idx}.svs"
+            source.write_text(f"{dataset_id} {idx}", encoding="utf-8")
+            slides.append(
+                SimpleNamespace(
+                    wsi_id=f"{dataset_id}-{idx}",
+                    wsi_path=str(source),
+                    original_filename=source.name,
+                    label=label,
+                    split="train" if idx <= 2 else ("val" if idx == 3 else "test"),
+                )
+            )
+        slides_by_dataset[dataset_id] = slides
+
+    datasets = {
+        internal_id: SimpleNamespace(
+            id=1,
+            dataset_id=internal_id,
+            name="local - tcga-nsclc-subset4",
+            user_id="user-dataset",
+            is_public=False,
+            parent_dataset_id=None,
+            source_organ="lung",
+            data_type="wsi",
+        ),
+        external_id: SimpleNamespace(
+            id=2,
+            dataset_id=external_id,
+            name="synthetic - NSCLC-external-test",
+            user_id="user-dataset",
+            is_public=False,
+            parent_dataset_id=None,
+            source_organ="lung",
+            data_type="wsi",
+        ),
+    }
+    prompts: list[str] = []
+
+    class FakeSession:
+        pass
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return FakeSession()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return []
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        return datasets[dataset_id]
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_datasets(db, **kwargs):
+            if kwargs.get("data_type") != "wsi":
+                return []
+            return [
+                {
+                    "dataset_id": internal_id,
+                    "dataset_name": "local - tcga-nsclc-subset4",
+                    "data_type": "wsi",
+                    "task_type": "classification",
+                    "source_organ": "lung",
+                    "file_count": 4,
+                    "labels": {"LUAD": 2, "LUSC": 2},
+                },
+                {
+                    "dataset_id": external_id,
+                    "dataset_name": "synthetic - NSCLC-external-test",
+                    "data_type": "wsi",
+                    "task_type": "classification",
+                    "source_organ": "lung",
+                    "file_count": 2,
+                    "labels": {"LUAD": 1, "LUSC": 1},
+                },
+            ]
+
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            assert kwargs.get("data_type") == "wsi"
+            return slides_by_dataset[dataset_id]
+
+    def fake_llm(prompt):
+        prompts.append(prompt)
+        return (
+            '{"matches": ['
+            f'{{"dataset_id": "{external_id}", "confidence": "high", '
+            '"reason": "explicit nsclc_external_test external validation request"}'
+            "]}"
+        )
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.auth.dependencies":
+            return SimpleNamespace(
+                get_dataset_with_access=fake_get_dataset_with_access,
+                get_permitted_dataset_ids=fake_get_permitted_dataset_ids,
+            )
+        if name == "backend.database.repositories":
+            return SimpleNamespace(WSIRepository=FakeWSIRepository)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+    monkeypatch.setattr(route_module, "_pathscientist_dataset_match_llm_caller", lambda: fake_llm)
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    mounts = route_module.asyncio.run(
+        route_module._resolve_pathlab_dataset_mounts(
+            [],
+            SimpleNamespace(id="user-dataset", is_admin=lambda: False),
+            question=(
+                "用内部数据集 local - tcga-nsclc-subset4 训练 NSCLC LUAD vs LUSC，"
+                "然后用 nsclc_external_test 作为 external validation"
+            ),
+        )
+    )
+
+    assert prompts
+    assert "synthetic - NSCLC-external-test" in prompts[0]
+    assert len(mounts) == 2
+    containers = set(mounts.values())
+    assert "/data/local_tcga_nsclc_subset4_521c7518" in containers
+    assert "/data/synthetic_nsclc_external_test_b84756e8" in containers
+
+
 def test_prepare_pathlab_dataset_view_uses_symlinks_and_generates_contract(tmp_path):
     route_module = load_route_module()
     source_dir = tmp_path / "source"
