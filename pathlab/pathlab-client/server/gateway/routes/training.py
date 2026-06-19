@@ -37,6 +37,7 @@ from .access_control import assert_owner
 from ..utils import ensure_dataset_segmentation_contract
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
+from backend.storage import external_availability
 from backend.database.utils.training_logger import TrainingLogger
 from ..dependencies import logger, make_sse_response, storage_manager
 from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
@@ -58,6 +59,73 @@ from gateway.task_dispatch import (
 from backend.ai.task_taxonomy import normalize_task_type
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
+
+
+def _external_unavailable_detail(
+    *,
+    reason: str | None,
+    dataset_id: str | None = None,
+    wsi_ids: list[str] | None = None,
+    unavailable_count: int | None = None,
+) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "code": "EXTERNAL_DATASET_UNAVAILABLE",
+        "message": "Selected data is temporarily unavailable because its external storage cannot be reached.",
+        "reason": reason or "External storage unavailable",
+    }
+    if dataset_id:
+        detail["dataset_id"] = dataset_id
+    if wsi_ids:
+        detail["wsi_ids"] = wsi_ids
+    if unavailable_count is not None:
+        detail["unavailable_count"] = unavailable_count
+    return detail
+
+
+async def _raise_if_dataset_cached_unavailable(db: AsyncSession, dataset_id: str) -> None:
+    availability = external_availability.get_dataset_availability(dataset_id)
+    if availability.get("status") != external_availability.UNAVAILABLE:
+        return
+    refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, [dataset_id])
+    external_refs = [
+        ref
+        for ref in refs_by_dataset.get(dataset_id, [])
+        if external_availability.is_external_path(ref.get("wsi_path"))
+    ]
+    if not external_refs:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            dataset_id=dataset_id,
+            reason=availability.get("reason"),
+            unavailable_count=int(availability.get("unavailable_count") or 0),
+        ),
+    )
+
+
+def _raise_if_wsi_cached_unavailable(wsis: list[Any]) -> None:
+    unavailable: list[tuple[str, dict[str, Any]]] = []
+    for wsi in wsis:
+        wsi_path = getattr(wsi, "wsi_path", None)
+        if wsi_path is not None and not external_availability.is_external_path(wsi_path):
+            continue
+        wsi_id = str(getattr(wsi, "wsi_id", wsi))
+        availability = external_availability.get_wsi_availability(wsi_id)
+        if availability.get("status") == external_availability.UNAVAILABLE:
+            unavailable.append((wsi_id, availability))
+    if not unavailable:
+        return
+
+    first_reason = unavailable[0][1].get("reason")
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            reason=first_reason,
+            wsi_ids=[wsi_id for wsi_id, _ in unavailable],
+            unavailable_count=len(unavailable),
+        ),
+    )
 
 
 def _is_external_validation_task_id(task_id: str | None) -> bool:
@@ -347,6 +415,7 @@ async def create_training_task(
                         status_code=400,
                         detail="No WSI files found in the specified dataset",
                     )
+                await _raise_if_dataset_cached_unavailable(db, dataset_input_id)
             else:
                 wsi_map = await WSIRepository.get_by_ids_with_dataset(db, selected_wsi_ids)
                 missing_wsi_ids = [
@@ -375,6 +444,7 @@ async def create_training_task(
                 prefetched_wsis = [
                     wsi_map[wsi_id] for wsi_id in selected_wsi_ids if wsi_id in wsi_map
                 ]
+                _raise_if_wsi_cached_unavailable(prefetched_wsis)
 
             await require_no_active_batch_imports(
                 db,

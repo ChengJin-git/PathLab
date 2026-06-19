@@ -61,6 +61,67 @@ def _make_safe_session_factory(*dbs):
     return _factory
 
 
+def test_training_wsi_guard_ignores_cached_unavailable_uploaded_wsi(tmp_path, monkeypatch):
+    from gateway.routes import training
+
+    uploads_dir = tmp_path / "uploads"
+    local_wsi = SimpleNamespace(
+        wsi_id="local-1",
+        wsi_path=str(uploads_dir / "wsi_files" / "local-1.svs"),
+    )
+    monkeypatch.setattr(
+        training.external_availability.Config,
+        "get_uploads_dir",
+        lambda: uploads_dir,
+    )
+    monkeypatch.setattr(
+        training.external_availability,
+        "get_wsi_availability",
+        lambda _wsi_id: {"status": "unavailable", "reason": "stale external cache"},
+    )
+
+    training._raise_if_wsi_cached_unavailable([local_wsi])
+
+
+@pytest.mark.asyncio
+async def test_training_dataset_guard_ignores_cached_unavailable_uploaded_only_dataset(
+    tmp_path, monkeypatch
+):
+    from gateway.routes import training
+
+    uploads_dir = tmp_path / "uploads"
+    monkeypatch.setattr(
+        training.external_availability.Config,
+        "get_uploads_dir",
+        lambda: uploads_dir,
+    )
+    monkeypatch.setattr(
+        training.external_availability,
+        "get_dataset_availability",
+        lambda _dataset_id: {
+            "status": "unavailable",
+            "reason": "stale external cache",
+            "unavailable_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        training.DatasetRepository,
+        "get_wsi_path_refs_batch",
+        AsyncMock(
+            return_value={
+                "ds-local": [
+                    {
+                        "wsi_id": "local-1",
+                        "wsi_path": str(uploads_dir / "wsi_files" / "local-1.svs"),
+                    }
+                ]
+            }
+        ),
+    )
+
+    await training._raise_if_dataset_cached_unavailable(AsyncMock(), "ds-local")
+
+
 class _DetachedTrainingTask:
     task_id = "train_large_dataset"
     task_name = "large dataset"
@@ -279,6 +340,84 @@ async def test_dataset_based_training_task_enqueues_dataset_input_reference_with
     assert result["wsi_count"] == 250000
     create_reference.assert_awaited_once()
     assert create_reference.await_args.kwargs["data_type"] == "patch"
+
+
+@pytest.mark.asyncio
+async def test_dataset_based_training_rejects_cached_unavailable_dataset_before_enqueue():
+    training_module = __import__("gateway.routes.training", fromlist=[""])
+
+    req = training_module.TrainingTaskRequest(
+        task_id="train_unavailable_dataset",
+        task_name="unavailable dataset",
+        task_type="patch_classification",
+        data_type="patch",
+        dataset_id="ds_unavailable",
+        preprocessing={"tile_size": 224},
+        model={"architecture": "resnet18"},
+    )
+    user = _make_user("admin")
+    dataset = SimpleNamespace(
+        dataset_id="ds_unavailable",
+        user_id="owner_1",
+        is_public=False,
+        parent_dataset_id=None,
+    )
+    contract = SimpleNamespace(
+        task_type="patch_classification",
+        data_type="patch",
+        aggregation_level="file",
+    )
+    worker_health = AsyncMock(return_value=True)
+
+    with (
+        patch(
+            "gateway.routes.training.safe_session",
+            side_effect=_make_safe_session_factory(AsyncMock()),
+        ),
+        patch("gateway.routes.training.DatasetRepository.get_by_id", new=AsyncMock(return_value=dataset)),
+        patch(
+            "gateway.routes.training.ensure_dataset_segmentation_contract",
+            return_value=contract,
+        ),
+        patch(
+            "gateway.routes.training.DatasetStatsRepository.get_by_dataset_id",
+            new=AsyncMock(return_value=SimpleNamespace(file_count=250000)),
+        ),
+        patch(
+            "gateway.routes.training.require_no_active_batch_imports",
+            new=AsyncMock(),
+        ),
+        patch(
+            "gateway.routes.training.external_availability.get_dataset_availability",
+            return_value={
+                "status": "unavailable",
+                "reason": "External storage not responding",
+                "total_count": 250000,
+                "unavailable_count": 12,
+            },
+        ),
+        patch(
+            "gateway.routes.training.DatasetRepository.get_wsi_path_refs_batch",
+            new=AsyncMock(
+                return_value={
+                    "ds_unavailable": [
+                        {"wsi_id": "wsi-bad", "wsi_path": "/mnt/external/wsi-bad.svs"}
+                    ]
+                }
+            ),
+        ),
+        patch("gateway.routes.training.is_worker_healthy", new=worker_health),
+        patch("gateway.routes.training.enqueue_task_descriptor", new=AsyncMock()) as mock_enqueue,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await training_module.create_training_task(req=req, user=user)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "EXTERNAL_DATASET_UNAVAILABLE"
+    assert exc_info.value.detail["dataset_id"] == "ds_unavailable"
+    assert exc_info.value.detail["reason"] == "External storage not responding"
+    worker_health.assert_not_awaited()
+    mock_enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
