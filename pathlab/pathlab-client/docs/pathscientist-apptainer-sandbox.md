@@ -3,6 +3,9 @@
 This document records the portable PathScientist runtime setup used on `jhcpu5.cse.ust.hk`.
 The backend still runs on the host Python environment. The Apptainer image is only used for generated training, feature extraction, and external-test scripts.
 
+For the full server deployment order, start with
+[`pathscientist-deployment-quickstart.md`](pathscientist-deployment-quickstart.md). This file focuses only on the sandbox image.
+
 ## Files
 
 - Definition file: `server/backend/pathscientist/runtime/containers/pathlab-sandbox.def`
@@ -16,7 +19,7 @@ The backend still runs on the host Python environment. The Apptainer image is on
 Install Apptainer first, then build from the repo root:
 
 ```bash
-cd /home/yihui/PathLab_fix_pathscientist_sessions/pathlab/pathlab-client
+cd /home/<service-user>/PathLab/pathlab/pathlab-client
 mkdir -p .local/pathscientist/sandbox
 APPTAINER_TMPDIR=/tmp apptainer build --fakeroot --force \
   .local/pathscientist/sandbox/pathlab-sandbox.sif \
@@ -26,8 +29,8 @@ APPTAINER_TMPDIR=/tmp apptainer build --fakeroot --force \
 If `/tmp` is small, set `APPTAINER_TMPDIR` to a large local disk:
 
 ```bash
-mkdir -p /home/yihui/.apptainer-tmp
-APPTAINER_TMPDIR=/home/yihui/.apptainer-tmp apptainer build --fakeroot --force \
+mkdir -p /home/<service-user>/.apptainer-tmp
+APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp apptainer build --fakeroot --force \
   .local/pathscientist/sandbox/pathlab-sandbox.sif \
   server/backend/pathscientist/runtime/containers/pathlab-sandbox.def
 ```
@@ -45,13 +48,13 @@ The fix was:
 Current active runtime uses the SIF image:
 
 ```bash
-PATHSCIENTIST_SANDBOX_IMAGE=/home/yihui/PathLab_fix_pathscientist_sessions/pathlab/pathlab-client/.local/pathscientist/sandbox/pathlab-sandbox.sif
+PATHSCIENTIST_SANDBOX_IMAGE=/home/<service-user>/PathLab/pathlab/pathlab-client/.local/pathscientist/sandbox/pathlab-sandbox.sif
 ```
 
 Keep the directory sandbox as a rebuild fallback:
 
 ```bash
-APPTAINER_TMPDIR=/home/yihui/.apptainer-tmp apptainer build --fakeroot --sandbox --force \
+APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp apptainer build --fakeroot --sandbox --force \
   .local/pathscientist/sandbox/pathlab-sandbox \
   server/backend/pathscientist/runtime/containers/pathlab-sandbox.def
 ```
@@ -87,7 +90,7 @@ apptainer exec --nv .local/pathscientist/sandbox/pathlab-sandbox \
   python -c "import torch; print(torch.__version__); print(torch.cuda.is_available(), torch.cuda.device_count())"
 
 PYTHONPATH=server/backend PATHSCIENTIST_SANDBOX_IMAGE=$PWD/.local/pathscientist/sandbox/pathlab-sandbox \
-  /home/yihui/PathLab/pathlab/pathlab-client/server/backend/pathscientist/.venv/bin/python - <<'PY'
+  server/backend/pathscientist/.venv/bin/python - <<'PY'
 from pathscientist.runtime.sandbox import ApptainerSandbox
 print(ApptainerSandbox.check_available())
 PY

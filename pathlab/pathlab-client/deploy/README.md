@@ -2,6 +2,10 @@
 
 > 适用版本：`PathLab v1.0.4`
 
+如果目标是给新服务器部署完整的 PathLab + PathScientist Web 服务，先看
+[`../docs/pathscientist-deployment-quickstart.md`](../docs/pathscientist-deployment-quickstart.md)。本文档主要解释
+`deploy/` 脚本、桌面打包和固定端口部署细节。
+
 本文档分两部分：
 1. **桌面打包**（Electron AppImage / DMG / NSIS）— `scripts/` + `npm run build:linux|mac|win`
 2. **固定端口 Web 部署**（服务器运维）— `deploy/` 目录的脚本与配置

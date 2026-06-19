@@ -13,6 +13,11 @@ This README is the practical setup guide for developers. For deeper design
 notes, see `docs/architecture.md`, `docs/dataset_acquisition.md`, and
 `docs/PROJECT_SUMMARY.md`.
 
+For a deployment-server handoff, start with
+`../../../docs/pathscientist-deployment-quickstart.md`. This README is longer
+and includes developer workflows that are not required for a production-style
+PathLab web deployment.
+
 ---
 
 ## 1. Repository Locations
@@ -50,7 +55,7 @@ pathscientist/
 Run git commands from the repository root, not from this directory:
 
 ```bash
-cd /project/vcompath/storage/ywangrm/PathLab
+cd /home/<service-user>/PathLab
 ```
 
 ---
@@ -935,7 +940,7 @@ When changing behavior, update the nearest operational doc:
 Before commit, run at least:
 
 ```bash
-cd /project/vcompath/storage/ywangrm/PathLab
+cd /home/<service-user>/PathLab
 git diff --check
 
 cd pathlab/pathlab-client/server
