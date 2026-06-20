@@ -155,7 +155,10 @@ function InternalTestSummary({ summary }: { summary: PathScientistRunSummaryView
           </p>
           <p className="mt-1 text-lg font-black text-slate-950">{formatInternalMetric(summary)}</p>
         </div>
-        <div className="flex flex-wrap gap-2 text-[11px] font-bold">
+        <div
+          className="flex flex-col items-end gap-2 text-[11px] font-bold sm:items-end"
+          data-testid="pathscientist-internal-summary-badges"
+        >
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/85 px-2.5 py-1 text-sky-700 ring-1 ring-sky-200">
             <CheckCircle2 className="h-3.5 w-3.5" />
             {pathScientistStatusLabel(status, t)}
@@ -187,7 +190,10 @@ function ExternalValidationSummary({ summary }: { summary: PathScientistRunSumma
           </p>
           <p className="mt-1 text-lg font-black text-slate-950">{formatExternalMetric(summary)}</p>
         </div>
-        <div className="flex flex-wrap gap-2 text-[11px] font-bold">
+        <div
+          className="flex flex-col items-end gap-2 text-[11px] font-bold sm:items-end"
+          data-testid="pathscientist-external-summary-badges"
+        >
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/85 px-2.5 py-1 text-emerald-700 ring-1 ring-emerald-200">
             <CheckCircle2 className="h-3.5 w-3.5" />
             {pathScientistStatusLabel(status, t)}

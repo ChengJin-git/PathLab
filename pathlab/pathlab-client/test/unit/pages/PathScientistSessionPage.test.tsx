@@ -27,13 +27,22 @@ class MockEventSource {
   static instances: MockEventSource[] = []
   readyState = 1
   onerror: ((event: Event) => void) | null = null
+  listeners: Record<string, Array<(event: MessageEvent) => void>> = {}
   constructor(public url: string) {
     MockEventSource.instances.push(this)
   }
-  addEventListener = vi.fn()
+  addEventListener = vi.fn((type: string, listener: (event: MessageEvent) => void) => {
+    this.listeners[type] = [...(this.listeners[type] || []), listener]
+  })
   close = vi.fn(() => {
     this.readyState = MockEventSource.CLOSED
   })
+  emit(type: string, payload: unknown) {
+    const event = new MessageEvent(type, { data: JSON.stringify(payload) })
+    for (const listener of this.listeners[type] || []) {
+      listener(event)
+    }
+  }
 }
 
 const events: PathScientistEvent[] = [
@@ -286,6 +295,34 @@ describe('PathScientistSessionPage', () => {
     await waitFor(() => expect(getSession.mock.calls.length).toBeGreaterThanOrEqual(2))
     await waitFor(() => expect(screen.getByTestId('pathscientist-training-progress-badge')).toHaveTextContent('Epoch 8/30'))
     expect(screen.getByTestId('pathscientist-training-progress-badge')).toHaveTextContent('val AUC 0.971')
+  })
+
+  it('keeps the live detail polling timer stable when heartbeat events arrive', async () => {
+    const intervals: Array<{ handler: TimerHandler; timeout?: number }> = []
+    vi.spyOn(window, 'setInterval').mockImplementation((handler: TimerHandler, timeout?: number) => {
+      intervals.push({ handler, timeout })
+      return intervals.length as unknown as ReturnType<typeof window.setInterval>
+    })
+    vi.mocked(getPathScientistSession).mockResolvedValue({
+      ...session,
+      status: 'running',
+      stage: 'execution',
+      events: [],
+    })
+
+    renderPage()
+
+    expect(await screen.findByText('Execution console')).toBeInTheDocument()
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1))
+    await waitFor(() => expect(intervals.some((interval) => interval.timeout === 5000)).toBe(true))
+    const pollingTimerCountBeforeHeartbeat = intervals.filter((interval) => interval.timeout === 5000).length
+
+    act(() => {
+      MockEventSource.instances[0].emit('event', { seq: 1, kind: 'heartbeat', status: 'running' })
+    })
+
+    await waitFor(() => expect(screen.getByTestId('pathscientist-session-status-pill')).toHaveTextContent('running'))
+    expect(intervals.filter((interval) => interval.timeout === 5000)).toHaveLength(pollingTimerCountBeforeHeartbeat)
   })
 
   it('deletes a completed session from the detail page and returns to the list', async () => {

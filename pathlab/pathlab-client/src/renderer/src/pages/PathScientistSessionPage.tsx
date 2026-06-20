@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
@@ -78,6 +78,7 @@ export default function PathScientistSessionPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const stream = useSessionStream(id, isLiveClinicalStatus(session?.status))
+  const streamEventsRef = useRef<PathScientistEvent[]>([])
 
   useEffect(() => {
     if (!id) return
@@ -101,6 +102,10 @@ export default function PathScientistSessionPage() {
   }, [id])
 
   const events = useMemo(() => mergeEvents(session?.events || [], stream.events), [session?.events, stream.events])
+
+  useEffect(() => {
+    streamEventsRef.current = stream.events
+  }, [stream.events])
 
   const latestStage = useMemo(() => {
     const reversedEvents = [...events].reverse()
@@ -135,7 +140,11 @@ export default function PathScientistSessionPage() {
 
   const latestTitleEvent = useMemo(() => [...events].reverse().find((event) => event.kind === 'session_title'), [events])
   const latestTitle = titleEventValue(latestTitleEvent) || session?.title || ''
-  const titlePending = Boolean((latestTitleEvent ? latestTitleEvent.title_pending : session?.title_pending) && !latestTitle)
+  const titlePending = Boolean(
+    (latestTitleEvent ? latestTitleEvent.title_pending : session?.title_pending)
+    && !latestTitle
+    && isLiveClinicalStatus(latestStatus),
+  )
   const displayTitle = latestTitle || (titlePending ? t('pathScientist.generatingTitle') : t('pathScientist.sessionsPage.untitledSession'))
   const canStop = Boolean(id && isLiveClinicalStatus(latestStatus))
   const canResume = Boolean(id && session?.resume_available && !isLiveClinicalStatus(latestStatus))
@@ -155,7 +164,7 @@ export default function PathScientistSessionPage() {
           return {
             ...current,
             ...detail,
-            events: mergeEvents(detail.events || [], stream.events),
+            events: mergeEvents(detail.events || [], streamEventsRef.current),
           }
         })
       } catch {
@@ -170,7 +179,7 @@ export default function PathScientistSessionPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [id, latestStatus, stream.events])
+  }, [id, latestStatus])
 
   const handleStop = async () => {
     if (!id || isStopping) return

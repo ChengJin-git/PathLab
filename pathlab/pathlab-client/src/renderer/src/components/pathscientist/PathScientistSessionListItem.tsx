@@ -48,7 +48,7 @@ export default function PathScientistSessionListItem({
   const location = useLocation()
   const navigate = useNavigate()
   const toast = useToast()
-  const titlePending = Boolean(session.title_pending && !session.title)
+  const titlePending = Boolean(session.title_pending && !session.title && isLiveSessionStatus(session.status))
   const title = titlePending
     ? t('pathScientist.generatingTitle')
     : session.title || t('pathScientist.untitledSession')

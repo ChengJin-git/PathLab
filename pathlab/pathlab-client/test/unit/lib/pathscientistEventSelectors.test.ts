@@ -998,6 +998,69 @@ describe('pathscientist event selectors', () => {
     })
   })
 
+  it('extracts internal test metrics from current training metrics.test records', () => {
+    const session = {
+      session_id: 'aa15b0a18b04',
+      title: 'Chronic gastritis with external validation',
+      question: 'Use Chronic-gastritis as internal and PWH-GC-IM as external.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'auc' },
+        best_run_id: 'run_36962082',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_36962082',
+            metric_name: 'auc',
+            metric_value: 0.9757,
+            committed: true,
+            model_path: '/workspace/model_artifacts/run_36962082/best_model.pth',
+            run_dir: 'output/runs/run_36962082',
+            metrics: {
+              best_val_auc: 0.9825,
+              test: {
+                loss: 0.329,
+                accuracy: 0.8947,
+                auc: 0.9757,
+                f1: 0.8123,
+                precision: 0.7732,
+                recall: 0.9294,
+              },
+              data_coverage: {
+                usable_counts: { train: 568, val: 111, test: 114 },
+                missing_feature_counts: { train: 4, val: 3, test: 0 },
+              },
+              split_counts: { train: 568, val: 111, test: 114 },
+            },
+          },
+        ],
+        external_test_history: [
+          {
+            run_id: 'run_70546e4d',
+            status: 'completed',
+            metrics: {
+              auc: 0.7256,
+              accuracy: 0.7838,
+              coverage: { n_external_evaluated: 2697 },
+            },
+          },
+        ],
+      },
+      events: [],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, [])
+
+    expect(view.runSummary.internalTest).toMatchObject({
+      runId: 'run_36962082',
+      primaryMetric: { name: 'auc', value: 0.9757 },
+      sampleCount: 114,
+      missingFeatureCount: 0,
+    })
+    expect(view.runSummary.externalTest?.primaryMetric).toEqual({ name: 'auc', value: 0.7256 })
+  })
+
   it('keeps internal classification display on AUC when objective metric is external AUC', () => {
     const session = {
       session_id: 'f79dee7f81b0',

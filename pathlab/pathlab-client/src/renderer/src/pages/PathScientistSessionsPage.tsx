@@ -224,7 +224,7 @@ export default function PathScientistSessionsPage() {
       ) : (
         <div className="grid gap-3">
           {visibleSessions.map((session) => {
-            const titlePending = Boolean(session.title_pending && !session.title)
+            const titlePending = Boolean(session.title_pending && !session.title && isLiveSessionStatus(session.status))
             const title = titlePending ? t('pathScientist.generatingTitle') : session.title || t('pathScientist.sessionsPage.untitledSession')
             const showQuestionPreview = Boolean(session.question && (titlePending || !session.title || session.title !== session.question))
             const sessionStatus = displayStatus(session.status)

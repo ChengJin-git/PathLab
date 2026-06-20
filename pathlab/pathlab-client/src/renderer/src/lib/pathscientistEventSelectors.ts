@@ -1010,6 +1010,11 @@ function externalSampleCount(metrics: Record<string, unknown>, record: Record<st
     const value = asNumber(metrics[key] ?? record[key])
     if (typeof value === 'number' && value >= 0) return value
   }
+  const coverage = asRecord(metrics.coverage)
+  for (const key of EXTERNAL_SAMPLE_COUNT_KEYS) {
+    const value = asNumber(coverage[key])
+    if (typeof value === 'number' && value >= 0) return value
+  }
   return null
 }
 
@@ -1062,7 +1067,9 @@ function internalRecordFromRunHistory(state: Record<string, unknown>): Record<st
 
   const recordWithInternal = (record: Record<string, unknown>): Record<string, unknown> => {
     const metrics = asRecord(record.metrics)
-    const internalMetrics = asRecord(metrics.internal_test)
+    const explicitInternalMetrics = asRecord(metrics.internal_test)
+    const testMetrics = asRecord(metrics.test)
+    const internalMetrics = Object.keys(explicitInternalMetrics).length > 0 ? explicitInternalMetrics : testMetrics
     if (Object.keys(internalMetrics).length === 0) return {}
     const pathlab = asRecord(record.pathlab)
     const committed = Boolean(record.committed)
@@ -1072,7 +1079,11 @@ function internalRecordFromRunHistory(state: Record<string, unknown>): Record<st
       committed,
       model_path: asString(record.model_path || pathlab.model_path).trim(),
       run_dir: asString(record.run_dir).trim(),
-      metrics: internalMetrics,
+      metrics: {
+        ...internalMetrics,
+        data_coverage: metrics.data_coverage,
+        split_counts: metrics.split_counts,
+      },
     }
   }
 
@@ -1104,6 +1115,19 @@ function internalSampleCount(metrics: Record<string, unknown>, record: Record<st
     const value = asNumber(metrics[key] ?? record[key])
     if (typeof value === 'number' && value >= 0) return value
   }
+  const splitCounts = asRecord(metrics.split_counts)
+  const splitTestCount = asNumber(splitCounts.test)
+  if (typeof splitTestCount === 'number' && splitTestCount >= 0) return splitTestCount
+
+  const dataCoverage = asRecord(metrics.data_coverage)
+  const usableCounts = asRecord(dataCoverage.usable_counts)
+  const usableTestCount = asNumber(usableCounts.test)
+  if (typeof usableTestCount === 'number' && usableTestCount >= 0) return usableTestCount
+
+  const rawCounts = asRecord(dataCoverage.raw_counts)
+  const rawTestCount = asNumber(rawCounts.test)
+  if (typeof rawTestCount === 'number' && rawTestCount >= 0) return rawTestCount
+
   return null
 }
 
@@ -1112,6 +1136,10 @@ function internalMissingFeatureCount(metrics: Record<string, unknown>): number |
     const value = asNumber(metrics[key])
     if (typeof value === 'number' && value >= 0) return value
   }
+  const dataCoverage = asRecord(metrics.data_coverage)
+  const missingFeatureCounts = asRecord(dataCoverage.missing_feature_counts)
+  const testMissingCount = asNumber(missingFeatureCounts.test)
+  if (typeof testMissingCount === 'number' && testMissingCount >= 0) return testMissingCount
   return null
 }
 

@@ -161,6 +161,73 @@ describe('PathScientistExecutionConsole', () => {
     expect(externalCard).not.toHaveTextContent('Run dir')
   })
 
+  it('renders current internal test metrics alongside external validation', () => {
+    const completedSession: PathScientistSessionDetail = {
+      ...session,
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        ...session.state,
+        objective: { success_metric: 'auc' },
+        best_run_id: 'run_36962082',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_36962082',
+            metric_name: 'auc',
+            metric_value: 0.9757,
+            committed: true,
+            model_path: '/workspace/model_artifacts/run_36962082/best_model.pth',
+            run_dir: 'output/runs/run_36962082',
+            metrics: {
+              best_val_auc: 0.9825,
+              test: {
+                loss: 0.329,
+                accuracy: 0.8947,
+                auc: 0.9757,
+                f1: 0.8123,
+              },
+              data_coverage: {
+                usable_counts: { train: 568, val: 111, test: 114 },
+                missing_feature_counts: { train: 4, val: 3, test: 0 },
+              },
+            },
+          },
+        ],
+        external_test_history: [
+          {
+            run_id: 'run_70546e4d',
+            status: 'completed',
+            committed: true,
+            metrics: {
+              auc: 0.7256,
+              accuracy: 0.7838,
+              coverage: { n_external_evaluated: 2697 },
+            },
+          },
+        ],
+      },
+    }
+
+    render(<PathScientistExecutionConsole session={completedSession} events={events} streamStatus="closed" />)
+
+    const internalCard = screen.getByTestId('pathscientist-internal-summary')
+    expect(internalCard).toHaveTextContent('Internal test')
+    expect(internalCard).toHaveTextContent('AUC 0.976')
+    expect(internalCard).toHaveTextContent('114 samples')
+    expect(internalCard).toHaveTextContent('completed')
+    expect(screen.getByTestId('pathscientist-internal-summary-badges')).toHaveClass('items-end')
+    expect(screen.getByTestId('pathscientist-internal-summary-badges')).toHaveClass('sm:items-end')
+
+    const externalCard = screen.getByTestId('pathscientist-external-summary')
+    expect(externalCard).toHaveTextContent('External validation')
+    expect(externalCard).toHaveTextContent('AUC 0.726')
+    expect(externalCard).toHaveTextContent('2697 samples')
+    expect(externalCard).toHaveTextContent('completed')
+    expect(screen.getByTestId('pathscientist-external-summary-badges')).toHaveClass('items-end')
+    expect(screen.getByTestId('pathscientist-external-summary-badges')).toHaveClass('sm:items-end')
+  })
+
   it('renders internal test and external validation summaries when both results exist', () => {
     const completedSession: PathScientistSessionDetail = {
       ...session,
