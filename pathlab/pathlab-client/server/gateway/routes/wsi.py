@@ -442,9 +442,9 @@ async def list_wsi(
     ),
     page_size: int = Query(
         10,
-        ge=0,
+        ge=1,
         le=10000,
-        description="Number of case groups per page. 0 = return all (no pagination).",
+        description="Number of case groups per page.",
     ),
     sort_by: Optional[str] = Query(
         None,
@@ -481,44 +481,6 @@ async def list_wsi(
     is_admin = user.is_admin()
 
     if dataset_id is not None:
-        if page_size == 0:
-            # ---- No pagination: return ALL files in this dataset ----
-            wsi_slides = await WSIRepository.get_by_dataset(
-                db,
-                dataset_id,
-                skip=0,
-                limit=0,
-                user_id=user_id_filter,
-                data_type=data_type,
-                search=search,
-                elevated_dataset_ids=elevated_dataset_ids,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-            total = await WSIRepository.count_by_dataset(
-                db,
-                dataset_id,
-                user_id=user_id_filter,
-                data_type=data_type,
-                search=search,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-            items = await _serialize_dataset_wsi_items(
-                db,
-                dataset_id,
-                wsi_slides,
-                is_admin=is_admin,
-                user_id_str=user_id_str,
-            )
-            return {
-                "items": items,
-                "total": total,
-                "total_cases": 0,
-                "page": 1,
-                "page_size": 0,
-                "has_multi_slide_cases": False,
-            }
-
         # ---- Case-level pagination (dataset view) ----
         case_meta = await WSIRepository.count_cases_by_dataset(
             db,
@@ -559,39 +521,22 @@ async def list_wsi(
             "has_multi_slide_cases": case_meta["has_multi_slide_cases"],
         }
     else:
-        if page_size == 0:
-            # ---- No pagination: return ALL files ----
-            wsi_slides = await WSIRepository.get_all_with_dataset(
-                db,
-                skip=0,
-                limit=0,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-            total = await WSIRepository.count(
-                db,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-        else:
-            # ---- File-level pagination (all-datasets view) ----
-            skip = (page - 1) * page_size
-            wsi_slides = await WSIRepository.get_all_with_dataset(
-                db,
-                skip=skip,
-                limit=page_size,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-            total = await WSIRepository.count(
-                db,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
+        # ---- File-level pagination (all-datasets view) ----
+        skip = (page - 1) * page_size
+        wsi_slides = await WSIRepository.get_all_with_dataset(
+            db,
+            skip=skip,
+            limit=page_size,
+            user_id=user_id_filter,
+            data_type=data_type,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        total = await WSIRepository.count(
+            db,
+            user_id=user_id_filter,
+            data_type=data_type,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
 
         items = []
         for wsi in wsi_slides:
@@ -663,13 +608,13 @@ async def list_datasets(
         None, description="Filter by dataset visibility"
     ),
     page: int = Query(
-        1, ge=1, description="Page number (1-based). Ignored when page_size=0."
+        1, ge=1, description="Page number (1-based)."
     ),
     page_size: int = Query(
-        0,
-        ge=0,
+        20,
+        ge=1,
         le=100,
-        description="Datasets per page. 0 = return all (legacy behavior).",
+        description="Datasets per page.",
     ),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
@@ -687,8 +632,8 @@ async def list_datasets(
     Args:
         data_type: Optional filter - "wsi" for WSI files, "patch" for image files
         search: Optional dataset name search
-        page: 1-based page number when pagination is enabled
-        page_size: page size, 0 keeps legacy all-in-one behavior
+        page: 1-based page number
+        page_size: page size
 
     Returns:
         {
@@ -703,7 +648,7 @@ async def list_datasets(
     """
     # Get elevated dataset IDs for non-admin users
     elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
-    skip = 0 if page_size == 0 else (page - 1) * page_size
+    skip = (page - 1) * page_size
 
     datasets, total = await WSIRepository.get_datasets_with_total(
         db,
@@ -758,9 +703,40 @@ async def list_datasets(
     return {
         "items": items,
         "total": total,
-        "page": 1 if page_size == 0 else page,
+        "page": page,
         "page_size": page_size,
     }
+
+
+@router.get("/dataset-source-options")
+async def list_dataset_source_options(
+    data_type: Optional[str] = Query(
+        None,
+        description="Filter by data type: 'wsi' for WSI files, 'patch' for image files",
+    ),
+    task_type: Optional[str] = Query(None, description="Filter by task type"),
+    aggregation_level: Optional[str] = Query(
+        None, description="Filter by aggregation level"
+    ),
+    is_public: Optional[bool] = Query(
+        None, description="Filter by dataset visibility"
+    ),
+    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return distinct visible dataset source organs for filter dropdowns."""
+    elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
+    items = await WSIRepository.get_dataset_source_options(
+        db,
+        data_type=data_type,
+        user_id=user_id_filter,
+        elevated_dataset_ids=elevated_dataset_ids,
+        task_type=task_type,
+        aggregation_level=aggregation_level,
+        is_public=is_public,
+    )
+    return {"items": items}
 
 
 @router.get("/datasets/{dataset_id}")

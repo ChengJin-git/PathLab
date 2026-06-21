@@ -1,9 +1,11 @@
 import types
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from backend.database.models import WSISlide
 from backend.database.repositories.dataset import (
     DatasetNameConflictError,
     DatasetRepository,
@@ -24,6 +26,15 @@ class _AsyncNullContext:
 class _DummyDB:
     def begin_nested(self):
         return _AsyncNullContext()
+
+
+def _make_wsi_app(user_role: str = "admin") -> FastAPI:
+    app = FastAPI()
+    app.dependency_overrides[wsi_routes.current_active_user] = lambda: _make_user(user_role)
+    app.dependency_overrides[wsi_routes.get_user_id_filter] = lambda: None
+    app.dependency_overrides[wsi_routes.get_db] = lambda: object()
+    app.include_router(wsi_routes.router)
+    return app
 
 
 @pytest.mark.asyncio
@@ -225,3 +236,112 @@ async def test_list_datasets_passes_public_visibility_filter(monkeypatch):
 
     assert response.status_code == 200
     assert captured_filters == [True]
+
+
+@pytest.mark.asyncio
+async def test_list_datasets_rejects_unbounded_page_size(monkeypatch):
+    async def _fake_get_datasets_with_total(*_args, **_kwargs):
+        return [], 0
+
+    async def _fake_get_permitted_dataset_ids(*_args):
+        return []
+
+    monkeypatch.setattr(
+        WSIRepository,
+        "get_datasets_with_total",
+        staticmethod(_fake_get_datasets_with_total),
+    )
+    monkeypatch.setattr(wsi_routes, "get_permitted_dataset_ids", _fake_get_permitted_dataset_ids)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_wsi_app()), base_url="http://test"
+    ) as client:
+        response = await client.get("/wsi/datasets?page_size=0")
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_wsi_rejects_unbounded_page_size(monkeypatch):
+    async def _fake_get_all_with_dataset(*_args, **_kwargs):
+        return []
+
+    async def _fake_count(*_args, **_kwargs):
+        return 0
+
+    async def _fake_get_permitted_dataset_ids(*_args):
+        return []
+
+    monkeypatch.setattr(
+        WSIRepository,
+        "get_all_with_dataset",
+        staticmethod(_fake_get_all_with_dataset),
+    )
+    monkeypatch.setattr(WSIRepository, "count", staticmethod(_fake_count))
+    monkeypatch.setattr(wsi_routes, "get_permitted_dataset_ids", _fake_get_permitted_dataset_ids)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_wsi_app()), base_url="http://test"
+    ) as client:
+        response = await client.get("/wsi?page_size=0")
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_dataset_source_options_uses_lightweight_repository(monkeypatch):
+    async def _fake_get_dataset_source_options(_db, **kwargs):
+        assert kwargs["user_id"] is None
+        assert kwargs["elevated_dataset_ids"] == []
+        assert kwargs["data_type"] == "wsi"
+        return ["Breast", "Lung", "__unknown__"]
+
+    async def _fake_get_permitted_dataset_ids(*_args):
+        return []
+
+    async def _forbid_availability_lookup(*_args, **_kwargs):
+        raise AssertionError("source options must not load WSI path refs")
+
+    monkeypatch.setattr(
+        WSIRepository,
+        "get_dataset_source_options",
+        staticmethod(_fake_get_dataset_source_options),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        DatasetRepository,
+        "get_wsi_path_refs_batch",
+        staticmethod(_forbid_availability_lookup),
+    )
+    monkeypatch.setattr(wsi_routes, "get_permitted_dataset_ids", _fake_get_permitted_dataset_ids)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_make_wsi_app()), base_url="http://test"
+    ) as client:
+        response = await client.get("/wsi/dataset-source-options?data_type=wsi")
+
+    assert response.status_code == 200
+    assert response.json() == {"items": ["Breast", "Lung", "__unknown__"]}
+
+
+def test_wsi_model_has_case_pagination_indexes():
+    index_columns_by_name = {
+        index.name: tuple(column.name for column in index.columns)
+        for index in WSISlide.__table__.indexes
+    }
+
+    assert index_columns_by_name["idx_wsi_dataset_case"] == ("dataset_id", "case_id")
+    assert index_columns_by_name["idx_wsi_dataset_type_case"] == (
+        "dataset_id",
+        "data_type",
+        "case_id",
+    )
+
+
+def test_startup_ddl_creates_case_pagination_indexes_for_existing_tables():
+    database_source = (
+        Path(__file__).parents[1] / "backend" / "database" / "database.py"
+    ).read_text()
+
+    assert "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_case" in database_source
+    assert "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_type_case" in database_source

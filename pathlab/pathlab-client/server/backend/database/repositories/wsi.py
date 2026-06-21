@@ -1182,6 +1182,50 @@ class WSIRepository(BaseRepository[WSISlide]):
         return datasets, total
 
     @staticmethod
+    async def get_dataset_source_options(
+        db: AsyncSession,
+        data_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+        task_type: Optional[str] = None,
+        aggregation_level: Optional[str] = None,
+        is_public: Optional[bool] = None,
+    ) -> List[str]:
+        """Return distinct visible dataset source organs without loading datasets or WSIs."""
+        source_expr = func.coalesce(
+            func.nullif(func.trim(Dataset.source_organ), ""), "__unknown__"
+        ).label("source_organ")
+
+        query = (
+            select(source_expr)
+            .select_from(Dataset)
+            .join(DataGroup, Dataset.group_id == DataGroup.group_id)
+            .distinct()
+        )
+
+        if user_id is not None:
+            conditions = [Dataset.user_id == user_id, Dataset.is_public.is_(True)]
+            if elevated_dataset_ids:
+                conditions.append(Dataset.dataset_id.in_(elevated_dataset_ids))
+            query = query.where(or_(*conditions))
+
+        if data_type in {"wsi", "patch"}:
+            query = query.where(DataGroup.data_type == data_type)
+
+        canonical_task_type = _canonical_task_type_for_filter(task_type, data_type)
+        if canonical_task_type:
+            query = query.where(DataGroup.task_type == canonical_task_type)
+
+        if aggregation_level:
+            query = query.where(DataGroup.aggregation_level == aggregation_level)
+
+        if is_public is not None:
+            query = query.where(Dataset.is_public.is_(is_public))
+
+        result = await db.execute(query.order_by(source_expr))
+        return [row.source_organ for row in result.all()]
+
+    @staticmethod
     async def get_by_filename_in_dataset(
         db: AsyncSession,
         dataset_id: str,

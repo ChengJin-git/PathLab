@@ -218,6 +218,19 @@ async def init_db():
             logger.info("All tables created/verified successfully")
             await conn.execute(
                 text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_case "
+                    "ON wsi_slides(dataset_id, case_id)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_type_case "
+                    "ON wsi_slides(dataset_id, data_type, case_id)"
+                )
+            )
+            logger.info("WSI case pagination indexes ensured")
+            await conn.execute(
+                text(
                     "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
                     "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
                 )

@@ -279,6 +279,8 @@ class WSISlide(TimestampMixin, Base):
         Index("idx_wsi_dataset_created", "dataset_id", "created_at"),
         Index("idx_wsi_user_type", "user_id", "data_type"),
         Index("idx_wsi_dataset_type", "dataset_id", "data_type"),
+        Index("idx_wsi_dataset_case", "dataset_id", "case_id"),
+        Index("idx_wsi_dataset_type_case", "dataset_id", "data_type", "case_id"),
     )
 
     def _get_file_extension(self) -> str:
