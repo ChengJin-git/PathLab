@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import {
   fetchWSIDetail,
   fetchAvailableHeatmaps,
-  fetchWSIList,
+  fetchAllWSIList,
   fetchWSIIds,
   deleteWSIResults,
   HeatmapData,
@@ -477,7 +477,7 @@ export default function WSIViewerPage() {
       }
     }
 
-    fetchWSIList(fromDataset ? datasetId : undefined)
+    fetchAllWSIList(fromDataset ? datasetId : undefined)
       .then((res) => {
         if (!cancelled) {
           setAllWSIs(res?.items ?? [])

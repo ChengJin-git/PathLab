@@ -8,7 +8,7 @@
 import React, { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { uploadWSIFile, uploadWSIByPath, fetchDatasets, uploadDatasetSplits, invalidateWSIListCache } from '../../api/wsi'
+import { uploadWSIFile, uploadWSIByPath, fetchAllDatasets, uploadDatasetSplits, invalidateWSIListCache } from '../../api/wsi'
 import { deleteTrainingTask } from '../../api/training'
 import { checkUploadSpace, cancelStorageTask, startMigration, getMigrationStatus, startDeleteWSIsTask } from '../../api/storage'
 import { cancelQueueTask } from '../../api/queue'
@@ -602,7 +602,7 @@ export function useTaskActions(params: TaskActionsParams) {
 
           attempts++
           try {
-            const data = await fetchDatasets()
+            const data = await fetchAllDatasets()
             const found = data.items.find(d =>
               d.dataset_name === config.datasetName && d.dataset_id
             )
