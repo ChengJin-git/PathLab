@@ -3,7 +3,7 @@ import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-quer
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSourceOptions, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
 import { ApiError } from '../api/client'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
@@ -429,10 +429,8 @@ export default function ListPage() {
   const sourceOptionsQuery = useQuery({
     queryKey: [DATASET_REPOSITORY_QUERY_KEYS.sourceOptions],
     queryFn: async () => {
-      const response = await fetchDatasets(undefined, { page_size: 0 })
-      return Array.from(new Set(
-        (response.items ?? []).map(d => getDatasetSourceOrganFilterValue(d.source_organ))
-      ))
+      const items = await fetchDatasetSourceOptions()
+      return items.map((sourceOrgan) => getDatasetSourceOrganFilterValue(sourceOrgan))
     },
     enabled: !selectedDatasetId,
     staleTime: 10 * 60 * 1000,

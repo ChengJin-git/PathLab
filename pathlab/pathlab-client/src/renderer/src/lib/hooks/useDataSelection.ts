@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { fetchDatasets, fetchWSIList } from '../../api/wsi'
+import { fetchAllDatasets, fetchAllWSIList } from '../../api/wsi'
 import type { DatasetSummary } from '../../api/wsi'
 import { getFileType } from '../../constants/fileTypes'
 import { DataLevel, TaskType, getTaskFamily, getTaskMetadata } from '../../constants/training'
@@ -117,7 +117,7 @@ export function useDataSelection({
   const loadDatasets = useCallback(async () => {
     setDatasetsLoading(true)
     try {
-      const data = await fetchDatasets(dataLevel)
+      const data = await fetchAllDatasets(dataLevel)
       setDatasets(data.items || [])
     } catch (e) {
       console.error('Failed to load datasets:', e)
@@ -130,7 +130,7 @@ export function useDataSelection({
   const loadWSIList = useCallback(async (datasetId: string) => {
     setLoading(true)
     try {
-      const data = await fetchWSIList(datasetId, dataLevel)
+      const data = await fetchAllWSIList(datasetId, dataLevel)
       setItems((data.items || []) as WSIItem[])
     } catch (e) {
       console.error('Failed to load WSI list:', e)

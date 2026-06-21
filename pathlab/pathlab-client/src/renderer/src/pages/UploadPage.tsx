@@ -37,7 +37,7 @@ import { Checkbox } from '../components/ui/checkbox'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
-import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
+import { checkDuplicateFilenames, fetchAllDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
 
 export const DUPLICATE_CHECK_BATCH_SIZE = 1000
 import { ApiError } from '../api/client'
@@ -148,7 +148,7 @@ export default function RegisterPage() {
   const { data: datasetsData } = useQuery({
     queryKey: ['datasets'],
     queryFn: async () => {
-      const data = await fetchDatasets()
+      const data = await fetchAllDatasets()
       const sortedDatasetNames = data.items
         .map((dataset, index) => ({ dataset, index }))
         .sort((a, b) => {
