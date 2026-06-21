@@ -16,9 +16,12 @@ vi.mock('@renderer/api/heatmap', () => ({
 import {
   checkDuplicateFilenames,
   fetchWSIList,
+  fetchAllWSIList,
   fetchWSIIds,
   invalidateWSIListCache,
   fetchDatasets,
+  fetchAllDatasets,
+  fetchDatasetSourceOptions,
   fetchDatasetSummary,
   renameDataset,
   updateDatasetType,
@@ -92,17 +95,19 @@ describe('checkDuplicateFilenames', () => {
 })
 
 describe('fetchWSIList', () => {
-  it('fetches all items when called without options (page_size=0)', async () => {
-    const mockResponse = { items: [MOCK_WSI_SUMMARY], total: 1, total_cases: 1, page: 1, page_size: 0, has_multi_slide_cases: false }
+  it('fetches with bounded defaults when called without options (page=1, page_size=20)', async () => {
+    const mockResponse = { items: [MOCK_WSI_SUMMARY], total: 1, total_cases: 1, page: 1, page_size: 20, has_multi_slide_cases: false }
     mockFetch.mockResolvedValueOnce(ok(mockResponse))
     const result = await fetchWSIList()
     const [url] = mockFetch.mock.calls[0]
-    expect(url).toContain('page_size=0')
+    expect(url).toContain('page=1')
+    expect(url).toContain('page_size=20')
+    expect(url).not.toContain('page_size=0')
     expect(result.items).toHaveLength(1)
   })
 
   it('filters by dataset_id when provided', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
     await fetchWSIList('ds_1')
     const [url] = mockFetch.mock.calls[0]
     expect(url).toContain('dataset_id=ds_1')
@@ -124,21 +129,21 @@ describe('fetchWSIList', () => {
   })
 
   it('caches results and does not call fetch twice for the same params', async () => {
-    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
     await fetchWSIList()
     await fetchWSIList()
     expect(mockFetch).toHaveBeenCalledOnce()
   })
 
   it('forceRefresh bypasses cache', async () => {
-    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
-    await fetchWSIList(undefined, undefined, { page: 1, page_size: 0, forceRefresh: true })
-    await fetchWSIList(undefined, undefined, { page: 1, page_size: 0, forceRefresh: true })
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
+    await fetchWSIList(undefined, undefined, { page: 1, page_size: 20, forceRefresh: true })
+    await fetchWSIList(undefined, undefined, { page: 1, page_size: 20, forceRefresh: true })
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
   it('filters by data_type (patch)', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
     await fetchWSIList(undefined, 'patch')
     const [url] = mockFetch.mock.calls[0]
     expect(url).toContain('data_type=patch')
@@ -160,7 +165,7 @@ describe('fetchWSIIds', () => {
 
 describe('invalidateWSIListCache', () => {
   it('clears cache so next fetch calls the API again', async () => {
-    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
     await fetchWSIList()
     invalidateWSIListCache()
     await fetchWSIList()
@@ -169,11 +174,14 @@ describe('invalidateWSIListCache', () => {
 })
 
 describe('fetchDatasets', () => {
-  it('fetches all datasets', async () => {
+  it('fetches datasets with bounded defaults when called without options (page=1, page_size=20)', async () => {
     mockFetch.mockResolvedValueOnce(ok({ items: [MOCK_DATASET], total: 1 }))
     const result = await fetchDatasets()
     const [url] = mockFetch.mock.calls[0]
     expect(url).toContain('/wsi/datasets')
+    expect(url).toContain('page=1')
+    expect(url).toContain('page_size=20')
+    expect(url).not.toContain('page_size=0')
     expect(result.items).toHaveLength(1)
   })
 
@@ -259,6 +267,22 @@ describe('fetchDatasets', () => {
   })
 })
 
+describe('fetchDatasetSourceOptions', () => {
+  it('requests /wsi/dataset-source-options and returns the items array', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: ['Lung', 'Breast', 'Liver'] }))
+    const result = await fetchDatasetSourceOptions()
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('/wsi/dataset-source-options')
+    expect(result).toEqual(['Lung', 'Breast', 'Liver'])
+  })
+
+  it('returns empty array when backend returns empty items', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [] }))
+    const result = await fetchDatasetSourceOptions()
+    expect(result).toEqual([])
+  })
+})
+
 describe('fetchDatasetSummary', () => {
   it('fetches a single dataset by ID', async () => {
     mockFetch.mockResolvedValueOnce(ok(MOCK_DATASET))
@@ -284,7 +308,7 @@ describe('renameDataset', () => {
 
   it('invalidates WSI list cache after rename', async () => {
     mockFetch.mockResolvedValueOnce(ok({ message: 'ok', dataset: { dataset_id: 'ds_1', name: 'New Name' } }))
-    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
     await fetchWSIList()
     await renameDataset('ds_1', 'New Name')
     await fetchWSIList()
@@ -401,7 +425,7 @@ describe('deleteWSI', () => {
       wsi_id: 'wsi_001',
       storage_cleanup: { deleted_files: [], deleted_dirs: [], failed: [], total_size: 0, summary: '' },
     }))
-    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
     await fetchWSIList()
     await deleteWSI('wsi_001')
     await fetchWSIList()
@@ -425,7 +449,7 @@ describe('updateWSIMetadata', () => {
 
   it('invalidates cache after metadata update', async () => {
     mockFetch.mockResolvedValueOnce(ok({ message: 'updated', wsi: MOCK_WSI_SUMMARY }))
-    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 0, has_multi_slide_cases: false }))
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 20, has_multi_slide_cases: false }))
     await fetchWSIList()
     await updateWSIMetadata('wsi_001', { label: 'LUSC' })
     await fetchWSIList()
@@ -464,8 +488,8 @@ describe('downloadCSVTemplate', () => {
   it('fetches classification template by default', async () => {
     const origURL = globalThis.URL
     vi.stubGlobal('URL', { createObjectURL: vi.fn().mockReturnValue('blob:url'), revokeObjectURL: vi.fn() })
-    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
-    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n) => n)
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n: Node) => n)
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n: Node) => n)
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -483,8 +507,8 @@ describe('downloadCSVTemplate', () => {
   it('fetches survival template when task_type is canonical wsi_survival', async () => {
     const origURL = globalThis.URL
     vi.stubGlobal('URL', { createObjectURL: vi.fn().mockReturnValue('blob:url'), revokeObjectURL: vi.fn() })
-    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
-    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n) => n)
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n: Node) => n)
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n: Node) => n)
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -502,8 +526,8 @@ describe('downloadCSVTemplate', () => {
   it('fetches segmentation template when task_type is canonical patch_segmentation', async () => {
     const origURL = globalThis.URL
     vi.stubGlobal('URL', { createObjectURL: vi.fn().mockReturnValue('blob:url'), revokeObjectURL: vi.fn() })
-    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
-    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n) => n)
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n: Node) => n)
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n: Node) => n)
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -521,8 +545,8 @@ describe('downloadCSVTemplate', () => {
   it('maps canonical survival task_type to survival template filename', async () => {
     const origURL = globalThis.URL
     vi.stubGlobal('URL', { createObjectURL: vi.fn().mockReturnValue('blob:url'), revokeObjectURL: vi.fn() })
-    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
-    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n) => n)
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n: Node) => n)
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n: Node) => n)
     const downloadSpy = vi.spyOn(clientApi, 'downloadBlobFile')
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -541,5 +565,123 @@ describe('downloadCSVTemplate', () => {
     appendSpy.mockRestore()
     removeSpy.mockRestore()
     downloadSpy.mockRestore()
+  })
+})
+
+describe('fetchAllDatasets', () => {
+  it('walks pages until all items are fetched', async () => {
+    const ds1 = { ...MOCK_DATASET, dataset_id: 'ds_1', dataset_name: 'DS1' }
+    const ds2 = { ...MOCK_DATASET, dataset_id: 'ds_2', dataset_name: 'DS2' }
+    mockFetch
+      .mockResolvedValueOnce(ok({ items: [ds1], total: 2, page: 1, page_size: 1 }))
+      .mockResolvedValueOnce(ok({ items: [ds2], total: 2, page: 2, page_size: 1 }))
+    const result = await fetchAllDatasets(undefined, { page_size: 1 })
+    expect(result.items).toHaveLength(2)
+    expect(result.items[0].dataset_name).toBe('DS1')
+    expect(result.items[1].dataset_name).toBe('DS2')
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    const [url1] = mockFetch.mock.calls[0]
+    const [url2] = mockFetch.mock.calls[1]
+    expect(url1).toContain('page=1')
+    expect(url1).toContain('page_size=1')
+    expect(url2).toContain('page=2')
+    expect(url2).toContain('page_size=1')
+  })
+
+  it('returns single page when total fits in one page', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [MOCK_DATASET], total: 1, page: 1, page_size: 100 }))
+    const result = await fetchAllDatasets()
+    expect(result.items).toHaveLength(1)
+    expect(mockFetch).toHaveBeenCalledOnce()
+  })
+
+  it('stops when a page returns empty items', async () => {
+    mockFetch
+      .mockResolvedValueOnce(ok({ items: [MOCK_DATASET], total: 2, page: 1, page_size: 1 }))
+      .mockResolvedValueOnce(ok({ items: [], total: 2, page: 2, page_size: 1 }))
+    const result = await fetchAllDatasets(undefined, { page_size: 1 })
+    expect(result.items).toHaveLength(1)
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves filters across pages', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0, page: 1, page_size: 100 }))
+    await fetchAllDatasets(undefined, { task_type: 'wsi_survival', aggregation_level: 'file' })
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('task_type=wsi_survival')
+    expect(url).toContain('aggregation_level=file')
+  })
+
+  it('never sends page_size=0', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [MOCK_DATASET], total: 1, page: 1, page_size: 100 }))
+    await fetchAllDatasets()
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).not.toContain('page_size=0')
+  })
+})
+
+describe('fetchAllWSIList', () => {
+  it('walks pages using total_cases when present', async () => {
+    const wsi1 = { ...MOCK_WSI_SUMMARY, wsi_id: 'w1' }
+    const wsi2 = { ...MOCK_WSI_SUMMARY, wsi_id: 'w2' }
+    mockFetch
+      .mockResolvedValueOnce(ok({ items: [wsi1], total: 2, total_cases: 2, page: 1, page_size: 1, has_multi_slide_cases: false }))
+      .mockResolvedValueOnce(ok({ items: [wsi2], total: 2, total_cases: 2, page: 2, page_size: 1, has_multi_slide_cases: false }))
+    const result = await fetchAllWSIList('ds_1', undefined, { page_size: 1 })
+    expect(result.items).toHaveLength(2)
+    expect(result.items[0].wsi_id).toBe('w1')
+    expect(result.items[1].wsi_id).toBe('w2')
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to total when total_cases is zero', async () => {
+    const wsi1 = { ...MOCK_WSI_SUMMARY, wsi_id: 'w1' }
+    mockFetch
+      .mockResolvedValueOnce(ok({ items: [wsi1], total: 1, total_cases: 0, page: 1, page_size: 1, has_multi_slide_cases: false }))
+    const result = await fetchAllWSIList(undefined, undefined, { page_size: 1 })
+    expect(result.items).toHaveLength(1)
+    expect(mockFetch).toHaveBeenCalledOnce()
+  })
+
+  it('stops when a page returns empty items', async () => {
+    mockFetch
+      .mockResolvedValueOnce(ok({ items: [MOCK_WSI_SUMMARY], total: 2, total_cases: 2, page: 1, page_size: 1, has_multi_slide_cases: false }))
+      .mockResolvedValueOnce(ok({ items: [], total: 2, total_cases: 2, page: 2, page_size: 1, has_multi_slide_cases: false }))
+    const result = await fetchAllWSIList(undefined, undefined, { page_size: 1 })
+    expect(result.items).toHaveLength(1)
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves dataset_id and data_type filters across pages', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0, total_cases: 0, page: 1, page_size: 100, has_multi_slide_cases: false }))
+    await fetchAllWSIList('ds_1', 'patch')
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('dataset_id=ds_1')
+    expect(url).toContain('data_type=patch')
+  })
+
+  it('never sends page_size=0', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [MOCK_WSI_SUMMARY], total: 1, total_cases: 1, page: 1, page_size: 100, has_multi_slide_cases: false }))
+    await fetchAllWSIList()
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).not.toContain('page_size=0')
+  })
+
+  it('does not stop early when first-page slide rows exceed total_cases in case-level pagination', async () => {
+    const firstPageItems = Array.from({ length: 201 }, (_, i) => ({
+      ...MOCK_WSI_SUMMARY,
+      wsi_id: `w${i + 1}`,
+    }))
+    const secondPageItems = [{ ...MOCK_WSI_SUMMARY, wsi_id: 'w202' }]
+    mockFetch
+      .mockResolvedValueOnce(ok({ items: firstPageItems, total: 202, total_cases: 200, page: 1, page_size: 100, has_multi_slide_cases: true }))
+      .mockResolvedValueOnce(ok({ items: secondPageItems, total: 202, total_cases: 200, page: 2, page_size: 100, has_multi_slide_cases: true }))
+    const result = await fetchAllWSIList('ds_1', undefined, { page_size: 100 })
+    expect(result.items).toHaveLength(202)
+    expect(result.items[0].wsi_id).toBe('w1')
+    expect(result.items[201].wsi_id).toBe('w202')
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    const [url2] = mockFetch.mock.calls[1]
+    expect(url2).toContain('page=2')
   })
 })

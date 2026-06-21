@@ -81,6 +81,10 @@ export interface WSIListResponse extends PaginatedResponse<WSISummary> {
   has_multi_slide_cases: boolean
 }
 
+export interface DatasetSourceOptionsResponse {
+  items: string[]
+}
+
 /**
  * Lightweight WSI ID list response for bulk selection.
  */
@@ -154,12 +158,6 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
 const wsiListCache = createKeyedCache<WSIListResponse>(ACTIVITY_CACHE_TTL)
 const datasetsListCache = createKeyedCache<DatasetsListResponse>(ACTIVITY_CACHE_TTL)
 
-/**
- * Pagination options for fetchWSIList.
- * When provided, the request uses an explicit no-cache query.
- * `page_size=0` means return all matching items.
- * When omitted, all items are returned with caching (page_size=0).
- */
 export interface WSIListPaginationOptions {
   page: number
   page_size: number
@@ -177,26 +175,14 @@ function buildWSIListCacheKey(
   return JSON.stringify({
     datasetId: datasetId ?? null,
     dataLevel: dataLevel ?? null,
-    page: options?.page ?? null,
-    page_size: options?.page_size ?? 0,
+    page: options?.page ?? 1,
+    page_size: options?.page_size ?? 20,
     search: options?.search ?? null,
     sort_by: options?.sort_by ?? null,
     sort_order: options?.sort_order ?? null,
   })
 }
 
-/**
- * Fetch WSI list from database via Gateway API.
- *
- * Without `options`: returns ALL items (page_size=0) with caching.
- * With `options`: performs a parameterized query with keyed caching.
- * Use `page_size=0` to return all matching items while still honoring `search`.
- *
- * @param datasetId - Optional dataset UUID to filter by
- * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
- * @param options - Optional pagination/search params for server-side pagination
- * @throws {ApiError} If the request fails
- */
 export async function fetchWSIList(
   datasetId?: string,
   dataLevel?: string,
@@ -207,28 +193,22 @@ export async function fetchWSIList(
     data_type: dataLevel,
   })
 
-  if (options) {
-    if (options.search) {
-      params.set('search', options.search)
-    }
+  const page = options?.page ?? 1
+  const pageSize = options?.page_size ?? 20
 
-    if (options.sort_by) {
-      params.set('sort_by', options.sort_by)
-    }
-    if (options.sort_order) {
-      params.set('sort_order', options.sort_order)
-    }
-
-    if (options.page_size === 0) {
-      params.set('page_size', '0')
-    } else {
-      params.set('page', String(options.page))
-      params.set('page_size', String(options.page_size))
-    }
-  } else {
-    // Non-paginated request — return all items with caching
-    params.set('page_size', '0')
+  if (options?.search) {
+    params.set('search', options.search)
   }
+
+  if (options?.sort_by) {
+    params.set('sort_by', options.sort_by)
+  }
+  if (options?.sort_order) {
+    params.set('sort_order', options.sort_order)
+  }
+
+  params.set('page', String(page))
+  params.set('page_size', String(pageSize))
 
   const cacheKey = buildWSIListCacheKey(datasetId, dataLevel, options)
   const queryString = params.toString()
@@ -239,6 +219,51 @@ export async function fetchWSIList(
     () => apiFetch<WSIListResponse>(url, undefined, 'Failed to load WSI list from database'),
     options?.forceRefresh === true
   )
+}
+
+export async function fetchAllWSIList(
+  datasetId?: string,
+  dataLevel?: string,
+  options?: Omit<WSIListPaginationOptions, 'page'>
+): Promise<WSIListResponse> {
+  const pageSize = options?.page_size ?? 100
+  const allItems: WSISummary[] = []
+  let page = 1
+  let totalUnits = 0
+  let hasMultiSlideCases = false
+
+  while (true) {
+    const response = await fetchWSIList(datasetId, dataLevel, {
+      ...options,
+      page,
+      page_size: pageSize,
+      forceRefresh: true,
+    })
+
+    if (!allItems.length) {
+      totalUnits = (response.total_cases ?? 0) > 0 ? (response.total_cases ?? 0) : (response.total ?? 0)
+      hasMultiSlideCases = response.has_multi_slide_cases ?? false
+    }
+
+    allItems.push(...response.items)
+
+    const pageUnitCount = (response.total_cases ?? 0) > 0 ? (response.total_cases ?? 0) : (response.total ?? 0)
+    const totalPages = Math.ceil(pageUnitCount / pageSize)
+    if (response.items.length === 0 || page >= totalPages) {
+      break
+    }
+
+    page++
+  }
+
+  return {
+    items: allItems,
+    total: allItems.length,
+    total_cases: totalUnits,
+    page: 1,
+    page_size: pageSize,
+    has_multi_slide_cases: hasMultiSlideCases,
+  }
 }
 
 export async function prefetchWSIList(
@@ -338,20 +363,18 @@ function buildDatasetListCacheKey(dataLevel?: string, options?: DatasetListQuery
     aggregation_level: options?.aggregation_level ?? null,
     source_organ: options?.source_organ ?? null,
     is_public: options?.is_public ?? null,
-    page_size: options?.page_size ?? null,
-    page: options?.page_size !== undefined ? (options.page ?? 1) : null,
+    page_size: options?.page_size ?? 20,
+    page: options?.page ?? 1,
   })
 }
 
-/**
- * Fetch all datasets from database via Gateway API
- * @param dataLevel - Optional filter: "wsi" for WSI files, "patch" for image files
- * @throws {ApiError} If the request fails
- */
 export async function fetchDatasets(
   dataLevel?: string,
   options?: DatasetListQueryOptions
 ): Promise<DatasetsListResponse> {
+  const page = options?.page ?? 1
+  const pageSize = options?.page_size ?? 20
+
   const params = buildSearchParams({
     data_type: dataLevel,
     search: options?.search || undefined,
@@ -359,8 +382,8 @@ export async function fetchDatasets(
     aggregation_level: options?.aggregation_level,
     source_organ: options?.source_organ,
     is_public: options?.is_public,
-    page_size: options?.page_size,
-    page: options?.page_size !== undefined ? (options.page ?? 1) : undefined,
+    page_size: pageSize,
+    page: page,
   })
   const queryString = params.toString()
   const url = queryString ? `${API_BASE}/wsi/datasets?${queryString}` : `${API_BASE}/wsi/datasets`
@@ -373,6 +396,44 @@ export async function fetchDatasets(
   )
 }
 
+export async function fetchAllDatasets(
+  dataLevel?: string,
+  options?: Omit<DatasetListQueryOptions, 'page'>
+): Promise<DatasetsListResponse> {
+  const pageSize = options?.page_size ?? 100
+  const allItems: DatasetSummary[] = []
+  let page = 1
+  let total = 0
+
+  while (true) {
+    const response = await fetchDatasets(dataLevel, {
+      ...options,
+      page,
+      page_size: pageSize,
+      forceRefresh: true,
+    })
+
+    if (!allItems.length) {
+      total = response.total ?? 0
+    }
+
+    allItems.push(...response.items)
+
+    if (response.items.length === 0 || allItems.length >= total) {
+      break
+    }
+
+    page++
+  }
+
+  return {
+    items: allItems,
+    total: allItems.length,
+    page: 1,
+    page_size: pageSize,
+  }
+}
+
 export async function prefetchDatasets(
   dataLevel?: string,
   options?: DatasetListQueryOptions
@@ -382,6 +443,12 @@ export async function prefetchDatasets(
   } catch {
     // Ignore prefetch failures so they don't affect the active page.
   }
+}
+
+export async function fetchDatasetSourceOptions(): Promise<string[]> {
+  const url = `${API_BASE}/wsi/dataset-source-options`
+  const response = await apiFetch<DatasetSourceOptionsResponse>(url, undefined, 'Failed to load dataset source options')
+  return response.items ?? []
 }
 
 export async function fetchDatasetSummary(datasetId: string): Promise<DatasetSummary> {
