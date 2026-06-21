@@ -374,9 +374,13 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **`fetchWSIList()`**
 
-- 默认 `page_size=0`（获取全部）
+- 默认 `page=1&page_size=20`（分页获取）
 - 按 `dataset_id` 过滤
 - 带 TTL 的缓存，`invalidateWSIListCache()` 清除后重新请求
+
+**`fetchAllWSIList()` / `fetchAllDatasets()`**
+
+- 使用有界分页逐页获取完整列表，不发送 `page_size=0`
 
 **`fetchWSIIds()`**
 
