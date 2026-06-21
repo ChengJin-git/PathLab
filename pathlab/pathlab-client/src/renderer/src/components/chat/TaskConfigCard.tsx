@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, UploadCloud, ThumbsUp, ThumbsDown } from 'lucide-react'
-import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
+import { createTrainingTask, fetchAllDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import { useAuth } from '../../contexts/AuthContext'
 import { Select } from '../ui/select'
@@ -439,7 +439,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const loadDatasets = async () => {
     setIsLoadingDatasets(true)
     try {
-      const result = await fetchDatasets()
+      const result = await fetchAllDatasets()
       setAvailableDatasets(result.items)
       // If agent provided a dataset_id, verify it exists and set split info
       if (initialConfig.dataset_id) {

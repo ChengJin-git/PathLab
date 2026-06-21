@@ -5,7 +5,7 @@ import {
   Loader2, Database, AlertTriangle, Download,
   ThumbsUp, ThumbsDown
 } from 'lucide-react'
-import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
+import { fetchAllDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
 import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTaskContext'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 import { Select } from '../ui/select'
@@ -187,7 +187,7 @@ export function DatasetRegistrationCard({
   const loadDatasets = async () => {
     try {
       setLoadingDatasets(true)
-      const data = await fetchDatasets()
+      const data = await fetchAllDatasets()
       setDatasets(data.items)
     } catch (err) {
       console.error('Failed to load datasets', err)

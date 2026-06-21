@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
 import {
-  fetchWSIList,
+  fetchAllWSIList,
   fetchWSIIds,
   fetchWSIDetail,
   fetchAllResults,
@@ -698,7 +698,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
    * Extracted to avoid duplication between the normal path and the fallback path.
    */
   const fetchAndFilterWSIList = async (rec: ImageRecommendation): Promise<WSISummary[]> => {
-    const result = await fetchWSIList(rec.filters?.dataset_id)
+    const result = await fetchAllWSIList(rec.filters?.dataset_id)
     let filtered = result.items
 
     // Apply label filter - use exact match to avoid substring issues
@@ -798,7 +798,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
         const requiresFullWsiScan = recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null
         if (requiresFullWsiScan) {
-          const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
+          const wsiResult = await fetchAllWSIList(recommendation.filters?.dataset_id)
           const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
           let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
           filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
