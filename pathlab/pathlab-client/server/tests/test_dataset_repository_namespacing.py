@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from backend.database.models import WSISlide
+from backend.database.models import Base, WSISlide
 from backend.database.repositories.dataset import (
     DatasetNameConflictError,
     DatasetRepository,
@@ -336,6 +337,59 @@ def test_wsi_model_has_case_pagination_indexes():
         "data_type",
         "case_id",
     )
+
+
+@pytest.mark.asyncio
+async def test_external_wsi_path_refs_filters_upload_root_in_database(monkeypatch):
+    uploads_dir = "/tmp/Path_lab/uploads"
+    monkeypatch.setattr(
+        "backend.database.repositories.dataset.Config.get_uploads_dir",
+        lambda: uploads_dir,
+    )
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as db:
+            await db.execute(
+                WSISlide.__table__.insert(),
+                [
+                    {
+                        "wsi_id": "internal",
+                        "dataset_id": "ds-1",
+                        "wsi_path": f"{uploads_dir}/wsi_files/internal.svs",
+                    },
+                    {
+                        "wsi_id": "external",
+                        "dataset_id": "ds-1",
+                        "wsi_path": "/mnt/external/external.svs",
+                    },
+                    {
+                        "wsi_id": "sibling-with-like-wildcard",
+                        "dataset_id": "ds-1",
+                        "wsi_path": "/tmp/PathXlab/uploads/external.svs",
+                    },
+                    {
+                        "wsi_id": "other-dataset",
+                        "dataset_id": "ds-2",
+                        "wsi_path": "/mnt/external/other.svs",
+                    },
+                ]
+            )
+            await db.commit()
+
+            refs = await DatasetRepository.get_external_wsi_path_refs_batch(
+                db, ["ds-1"]
+            )
+
+        assert {ref["wsi_id"] for ref in refs["ds-1"]} == {
+            "external",
+            "sibling-with-like-wildcard",
+        }
+    finally:
+        await engine.dispose()
 
 
 def test_startup_ddl_creates_case_pagination_indexes_for_existing_tables():
