@@ -125,17 +125,15 @@ async def _attach_dataset_availability(
 ) -> None:
     dataset_ids = [str(item["dataset_id"]) for item in datasets if item.get("dataset_id")]
     refs_by_dataset = (
-        await DatasetRepository.get_wsi_path_refs_batch(db, dataset_ids) if dataset_ids else {}
+        await DatasetRepository.get_external_wsi_path_refs_batch(db, dataset_ids)
+        if dataset_ids
+        else {}
     )
 
     for item in datasets:
         dataset_id = item.get("dataset_id")
         refs = refs_by_dataset.get(str(dataset_id), []) if dataset_id else []
-        external_wsi_ids = [
-            str(ref["wsi_id"])
-            for ref in refs
-            if external_availability.is_external_path(ref.get("wsi_path"))
-        ]
+        external_wsi_ids = [str(ref["wsi_id"]) for ref in refs]
         if not external_wsi_ids:
             continue
         item["availability"] = external_availability.roll_up_dataset_availability(

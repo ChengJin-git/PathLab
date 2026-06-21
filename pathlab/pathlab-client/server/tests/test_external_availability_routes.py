@@ -77,16 +77,13 @@ async def test_wsi_route_rolls_up_external_dataset_availability_without_file_che
     ]
     monkeypatch.setattr(
         wsi_routes.DatasetRepository,
-        "get_wsi_path_refs_batch",
+        "get_external_wsi_path_refs_batch",
         AsyncMock(
             return_value={
                 "ds-1": [
                     {"wsi_id": "wsi-1", "wsi_path": "/mnt/external/wsi-1.svs"},
-                    {"wsi_id": "wsi-2", "wsi_path": "/uploads/wsi_files/wsi-2.svs"},
                 ],
-                "ds-local": [
-                    {"wsi_id": "local-1", "wsi_path": "/uploads/wsi_files/local-1.svs"}
-                ],
+                "ds-local": [],
             }
         ),
     )
@@ -109,5 +106,47 @@ async def test_wsi_route_rolls_up_external_dataset_availability_without_file_che
 
     assert datasets[0]["availability"]["status"] == "unavailable"
     assert datasets[0]["availability"]["unavailable_count"] == 1
+    assert datasets[0]["availability"]["external_count"] == 1
+    assert "availability" not in datasets[1]
+
+
+@pytest.mark.asyncio
+async def test_wsi_route_requests_external_only_dataset_refs(monkeypatch):
+    from gateway.routes import wsi as wsi_routes
+
+    datasets = [
+        {"dataset_id": "ds-external", "dataset_name": "External"},
+        {"dataset_id": "ds-local", "dataset_name": "Uploaded"},
+    ]
+    all_refs = AsyncMock(side_effect=AssertionError("must not bulk-load all WSI refs"))
+    external_refs = AsyncMock(
+        return_value={
+            "ds-external": [
+                {"wsi_id": "wsi-external", "wsi_path": "/mnt/external/a.svs"}
+            ],
+            "ds-local": [],
+        }
+    )
+    monkeypatch.setattr(
+        wsi_routes.DatasetRepository,
+        "get_wsi_path_refs_batch",
+        all_refs,
+    )
+    monkeypatch.setattr(
+        wsi_routes.DatasetRepository,
+        "get_external_wsi_path_refs_batch",
+        external_refs,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        wsi_routes.external_availability,
+        "roll_up_dataset_availability",
+        lambda wsi_ids: {"status": "available", "total_count": len(wsi_ids)},
+    )
+
+    await wsi_routes._attach_dataset_availability(None, datasets)
+
+    external_refs.assert_awaited_once_with(None, ["ds-external", "ds-local"])
+    all_refs.assert_not_awaited()
     assert datasets[0]["availability"]["external_count"] == 1
     assert "availability" not in datasets[1]
