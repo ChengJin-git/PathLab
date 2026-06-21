@@ -189,6 +189,52 @@ def test_collector_captures_untracked_files(tmp_path):
     assert loaded.untracked_files["config.yaml"] == "lr: 0.001"
 
 
+def test_collector_copies_pre_revert_external_core_artifacts(tmp_path):
+    """External-test core outputs must survive revert even when large."""
+    ws_dir = _make_workspace(tmp_path)
+    store = EvidenceStore(ws_dir / ".evidence")
+
+    run_dir = ws_dir / "output" / "runs" / "run_external"
+    run_dir.mkdir(parents=True)
+    predictions = run_dir / "predictions.csv"
+    predictions.write_text("sample_id,score\n" + "s,0.5\n" * 10000, encoding="utf-8")
+    assert predictions.stat().st_size > 50_000
+    expected_predictions = predictions.read_text(encoding="utf-8")
+
+    collector = EvidenceCollector(
+        workspace_root=ws_dir, store=store, session_id="s1", primary_metric="auc"
+    )
+    collector.record_experiment_output(
+        run_id="run_external",
+        run_dir="output/runs/run_external",
+        exit_code=0,
+        stdout="",
+        stderr="",
+        metrics={"auc": 0.72},
+        duration=5.0,
+        run_kind="external_test",
+    )
+    staged = tmp_path / "pre_revert_artifacts" / "run_external" / "predictions.csv"
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(predictions.read_bytes())
+    collector._experiment["_pre_revert_artifacts"] = [str(staged)]
+
+    # Simulate workspace.revert() removing the original untracked run output before
+    # evidence finalization. The durable pre-revert copy must still be captured.
+    predictions.unlink()
+
+    result = collector.finalize(committed=False, iteration=0)
+    assert result.skipped is False
+
+    loaded = store.load("run_external")
+    prediction_artifact = next(
+        artifact for artifact in loaded.artifacts if artifact.name == "predictions.csv"
+    )
+    assert prediction_artifact.storage_mode == "copy"
+    copied = ws_dir / ".evidence" / "runs" / "run_external" / "artifacts" / "predictions.csv"
+    assert copied.read_text(encoding="utf-8") == expected_predictions
+
+
 def test_collector_deduplicates_same_directory_artifacts(tmp_path):
     """DATA_OUTPUT_DIR pointing at the same directory as run_dir should not duplicate artifacts."""
     ws_dir = _make_workspace(tmp_path)

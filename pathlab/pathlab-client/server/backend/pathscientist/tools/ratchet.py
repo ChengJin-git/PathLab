@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
+from pathlib import Path
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Self
 from uuid import uuid4
@@ -25,6 +28,63 @@ if TYPE_CHECKING:
     from ..runtime.workspace import Workspace
 
 logger = logging.getLogger(__name__)
+
+
+_EXTERNAL_TEST_CORE_ARTIFACT_NAMES = (
+    "metrics.json",
+    "external_test_report.json",
+    "predictions.csv",
+    "run_metadata.json",
+)
+
+
+def _resolve_workspace_path(workspace: "Workspace", path_text: str) -> Path:
+    path = Path(str(path_text or ""))
+    if not path.is_absolute():
+        path = workspace.root / path
+    return path.resolve(strict=False)
+
+
+def _safe_pre_revert_staging_run_id(exp: dict) -> str:
+    run_id = str(exp.get("run_id") or "external_test").strip()
+    safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in run_id)
+    return safe[:80] or "external_test"
+
+
+def _pre_revert_external_core_artifacts(workspace: "Workspace", exp: dict) -> list[str]:
+    """Copy external-test core outputs to temp storage before workspace revert."""
+    if str(exp.get("run_kind") or "").strip().lower() != "external_test":
+        return []
+    candidates: list[Path] = []
+    for key in ("run_dir", "data_output_dir"):
+        value = str(exp.get(key) or "").strip()
+        if not value:
+            continue
+        base = _resolve_workspace_path(workspace, value)
+        candidates.extend(base / name for name in _EXTERNAL_TEST_CORE_ARTIFACT_NAMES)
+
+    staging_dir: Path | None = None
+    artifacts: list[str] = []
+    seen: set[Path] = set()
+    staged_names: set[str] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if not resolved.is_file() or resolved.name in staged_names:
+            continue
+        if staging_dir is None:
+            staging_dir = Path(
+                tempfile.mkdtemp(
+                    prefix=f"pathscientist-pre-revert-{_safe_pre_revert_staging_run_id(exp)}-"
+                )
+            )
+        target = staging_dir / resolved.name
+        shutil.copy2(resolved, target)
+        staged_names.add(resolved.name)
+        artifacts.append(str(target.resolve(strict=False)))
+    return artifacts
 
 
 def _collect_recent_terminal_logs(conversation, limit: int = 6) -> list[str]:
@@ -320,6 +380,8 @@ def _finalize_iteration(
                     collector._experiment["_pre_revert_diff"] = exp["_pre_revert_diff"]
                 if "_pre_revert_untracked" in exp:
                     collector._experiment["_pre_revert_untracked"] = exp["_pre_revert_untracked"]
+                if "_pre_revert_artifacts" in exp:
+                    collector._experiment["_pre_revert_artifacts"] = exp["_pre_revert_artifacts"]
                 result = collector.finalize(
                     committed=committed, iteration=pre_increment_iteration
                 )
@@ -949,6 +1011,12 @@ class RatchetRevertExecutor(ToolExecutor):
                                 pass
                     if untracked:
                         deps.last_experiment["_pre_revert_untracked"] = untracked
+                pre_revert_artifacts = _pre_revert_external_core_artifacts(
+                    self._workspace,
+                    deps.last_experiment,
+                )
+                if pre_revert_artifacts:
+                    deps.last_experiment["_pre_revert_artifacts"] = pre_revert_artifacts
             except Exception:
                 pass
 

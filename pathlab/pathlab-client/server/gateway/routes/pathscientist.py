@@ -12,6 +12,7 @@ import itertools
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import stat
@@ -184,11 +185,15 @@ class SessionRecord:
             self._condition.notify_all()
 
     def summary(self) -> dict[str, Any]:
+        title_pending = bool(self.title_pending and self.status in {"queued", "running"})
+        title = self.title
+        if not title and not title_pending:
+            title = _fallback_session_title(self.question)
         payload = {
             "session_id": self.session_id,
             "conversation_id": self.conversation_id,
-            "title": self.title,
-            "title_pending": self.title_pending,
+            "title": title,
+            "title_pending": title_pending,
             "question": self.question,
             "model": self.model,
             "user_id": self.user_id,
@@ -1521,6 +1526,10 @@ def _load_gateway_session_records() -> list[SessionRecord]:
                 status = "interrupted"
                 stage = "interrupted"
                 error = error or "Gateway restarted before this session reached a final state."
+        title_pending = bool(item.get("title_pending")) and status in {"queued", "running"}
+        title = str(item.get("title") or "")
+        if not title and not title_pending:
+            title = _fallback_session_title(str(item.get("question") or ""))
         try:
             created_at = float(item.get("created_at") or time.time())
         except (TypeError, ValueError):
@@ -1535,8 +1544,8 @@ def _load_gateway_session_records() -> list[SessionRecord]:
             question=str(item.get("question") or "(PathScientist session)")[:280],
             model=str(item.get("model") or ""),
             user_id=str(item.get("user_id") or ""),
-            title=str(item.get("title") or ""),
-            title_pending=bool(item.get("title_pending")),
+            title=title,
+            title_pending=title_pending,
             status=status,
             stage=stage,
             created_at=created_at,
@@ -3001,13 +3010,26 @@ def _dataset_match_aliases(value: str) -> set[str]:
     normalized = _normalize_dataset_match_text(value)
     if not normalized:
         return set()
-    aliases = {normalized, normalized.replace(" ", "")}
+    aliases: set[str] = set()
+    token_stop = {"dataset", "local", "pathscientist"}
+
+    def add_phrase(phrase: str) -> None:
+        phrase = " ".join(str(phrase or "").split())
+        if not phrase:
+            return
+        aliases.add(phrase)
+        aliases.add(phrase.replace(" ", ""))
+        aliases.add(phrase.replace(" ", "-"))
+        aliases.add(phrase.replace(" ", "_"))
+
+    add_phrase(normalized)
     tokens = [token for token in normalized.split() if token]
-    stop = {"dataset", "local"}
-    meaningful = [token for token in tokens if token not in stop]
+    meaningful = [token for token in tokens if token not in token_stop]
     if meaningful:
-        aliases.add(" ".join(meaningful))
-        aliases.add("".join(meaningful))
+        add_phrase(" ".join(meaningful))
+    for start in range(len(meaningful)):
+        for end in range(start + 2, len(meaningful) + 1):
+            add_phrase(" ".join(meaningful[start:end]))
     return {alias for alias in aliases if alias}
 
 
@@ -3025,33 +3047,44 @@ def _match_pathlab_datasets_from_question(
 ) -> list[str]:
     normalized_question = f" {_normalize_dataset_match_text(question)} "
     raw_question = str(question or "").lower()
-    matches: list[tuple[int, str]] = []
+    matches: list[tuple[int, int, str]] = []
     seen: set[str] = set()
     for dataset in datasets:
         dataset_id = str(dataset.get("dataset_id") or "").strip()
         if not dataset_id or dataset_id in seen:
             continue
         dataset_name = str(dataset.get("dataset_name") or dataset.get("name") or "").strip()
-        normalized_name = _normalize_dataset_match_text(dataset_name)
         normalized_id = _normalize_dataset_match_text(dataset_id)
         matched = False
         score = 0
-        if dataset_id.lower() in raw_question:
+        first_pos = len(normalized_question)
+        raw_pos = raw_question.find(dataset_id.lower())
+        if raw_pos >= 0:
             matched = True
+            first_pos = min(first_pos, raw_pos)
             score = max(score, len(dataset_id) + 1000)
-        if normalized_id and f" {normalized_id} " in normalized_question:
-            matched = True
-            score = max(score, len(normalized_id) + 900)
+        if normalized_id:
+            id_token = f" {normalized_id} "
+            id_pos = normalized_question.find(id_token)
+            if id_pos >= 0:
+                matched = True
+                first_pos = min(first_pos, id_pos)
+                score = max(score, len(normalized_id) + 900)
         name_aliases = _dataset_match_aliases(dataset_name)
         for alias in name_aliases:
-            if alias and f" {alias} " in normalized_question:
-                matched = True
-                score = max(score, _dataset_alias_score(alias))
+            if not alias:
+                continue
+            alias_pos = normalized_question.find(f" {alias} ")
+            if alias_pos < 0:
+                continue
+            matched = True
+            first_pos = min(first_pos, alias_pos)
+            score = max(score, _dataset_alias_score(alias))
         if matched:
             seen.add(dataset_id)
-            matches.append((score, dataset_id))
-    matches.sort(key=lambda item: item[0], reverse=True)
-    return [dataset_id for _score, dataset_id in matches]
+            matches.append((first_pos, -score, dataset_id))
+    matches.sort(key=lambda item: (item[0], item[1]))
+    return [dataset_id for _pos, _score, dataset_id in matches]
 
 
 def _pathscientist_dataset_match_llm_caller() -> Callable[[str], str] | None:
@@ -3100,6 +3133,38 @@ def _pathlab_dataset_llm_candidates(datasets: list[dict[str, Any]]) -> list[dict
             }
         )
     return candidates
+
+
+def _call_dataset_match_llm_with_timeout(caller: Callable[[str], str], prompt: str) -> str | None:
+    timeout_seconds = max(
+        0.1,
+        float(os.environ.get("PATHSCIENTIST_DATASET_LLM_MATCH_TIMEOUT_SEC", "3")),
+    )
+    result_queue: queue.Queue[tuple[bool, str | BaseException]] = queue.Queue(maxsize=1)
+
+    def run() -> None:
+        try:
+            result_queue.put_nowait((True, caller(prompt)))
+        except BaseException as exc:  # pragma: no cover - surfaced below when possible
+            try:
+                result_queue.put_nowait((False, exc))
+            except queue.Full:
+                pass
+
+    thread = threading.Thread(
+        target=run,
+        name="pathscientist-dataset-match",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        ok, value = result_queue.get(timeout=timeout_seconds)
+    except queue.Empty:
+        logger.debug("PathScientist dataset semantic match timed out after %.1fs", timeout_seconds)
+        return None
+    if ok:
+        return str(value or "")
+    raise value
 
 
 def _parse_pathlab_dataset_llm_matches(raw_text: str, allowed_ids: set[str]) -> list[str]:
@@ -3177,9 +3242,11 @@ def _match_pathlab_datasets_with_llm(
     )
 
     try:
-        raw_text = caller(prompt)
+        raw_text = _call_dataset_match_llm_with_timeout(caller, prompt)
     except Exception as exc:
         logger.debug("PathScientist dataset semantic match failed: %s", exc)
+        return []
+    if raw_text is None:
         return []
     selected_ids = _parse_pathlab_dataset_llm_matches(raw_text, allowed_ids)
     if selected_ids:
@@ -3280,7 +3347,7 @@ async def _resolve_pathlab_dataset_mounts(
                 selected_ids = _match_pathlab_datasets_from_question(question, visible_datasets)
                 if not selected_ids:
                     selected_ids = _match_pathlab_datasets_with_llm(question, visible_datasets)
-                elif _question_requests_external_dataset_match(question):
+                elif len(selected_ids) < 2 and _question_requests_external_dataset_match(question):
                     selected_set = set(selected_ids)
                     remaining_datasets = [
                         dataset_row
@@ -3333,6 +3400,22 @@ async def _resolve_pathlab_dataset_mounts(
                         detail=f"Dataset has no accessible files: {dataset_id}",
                     )
                 slug = _pathlab_dataset_slug(getattr(dataset, "name", ""), dataset_id)
+                if dataset_data_type == "wsi":
+                    data_container = _unique_container_mount(f"/data/{slug}", used_containers)
+                    contract_container = _unique_container_mount(f"{data_container}_contract", used_containers)
+                    direct_mount = _prepare_pathlab_registered_wsi_dataset_root(
+                        dataset=dataset,
+                        slides=slides,
+                        sidecar_dir=view_session_dir / f"{slug}_contract",
+                        data_container=data_container,
+                        contract_container=contract_container,
+                        question=question,
+                    )
+                    if direct_mount is not None:
+                        data_root, contract_dir = direct_mount
+                        mounts[str(data_root)] = data_container
+                        mounts[str(contract_dir)] = contract_container
+                        continue
                 view_dir = _prepare_pathlab_dataset_view(
                     dataset=dataset,
                     slides=slides,
@@ -3439,17 +3522,47 @@ def _discover_tcga_patches_feature_files(
     return found
 
 
+def _pathscientist_registered_feature_files(associated_files: Any) -> dict[str, Path]:
+    if not isinstance(associated_files, dict):
+        return {}
+    registered = associated_files.get("pathscientist_features")
+    if not isinstance(registered, dict):
+        return {}
+
+    found: dict[str, Path] = {}
+    for role_info in registered.values():
+        if not isinstance(role_info, dict):
+            continue
+        raw_path = str(role_info.get("feature_path") or "").strip()
+        if not raw_path:
+            continue
+        feature_path = Path(raw_path).expanduser()
+        if not feature_path.is_file() or feature_path.suffix.lower() not in _FEATURE_TENSOR_EXTS:
+            continue
+        extractor = str(role_info.get("extractor_name") or "").strip()
+        if not extractor:
+            raw_features_dir = str(role_info.get("features_dir") or "").strip()
+            extractor = Path(raw_features_dir).name if raw_features_dir else feature_path.parent.name
+        extractor = extractor.strip()
+        if extractor and extractor not in found:
+            found[extractor] = feature_path
+    return found
+
+
 def _link_existing_pathlab_features_for_view_slide(
     *,
     view_dir: Path,
     slide_id: str,
     source: Path,
     original_filename: str,
+    associated_files: Any = None,
 ) -> dict[str, Path]:
-    feature_files = _discover_tcga_patches_feature_files(
+    feature_files = _pathscientist_registered_feature_files(associated_files)
+    for extractor, feature_path in _discover_tcga_patches_feature_files(
         source=source,
         original_filename=original_filename,
-    )
+    ).items():
+        feature_files.setdefault(extractor, feature_path)
     linked: dict[str, Path] = {}
     for extractor, feature_path in feature_files.items():
         link_path = view_dir / "features" / extractor / f"{slide_id}{feature_path.suffix.lower()}"
@@ -3465,6 +3578,68 @@ def _link_existing_pathlab_features_for_view_slide(
             continue
         linked[extractor] = link_path
     return linked
+
+
+def _remap_pathscientist_extraction_meta_for_view(
+    *,
+    view_dir: Path,
+    pathlab_slide_map: list[dict[str, str]],
+) -> None:
+    """Copy extraction status metadata into a dataset view using view slide IDs."""
+    original_roots: dict[Path, dict[str, str]] = {}
+    for item in pathlab_slide_map:
+        slide_id = str(item.get("slide_id") or "").strip()
+        wsi_path = str(item.get("wsi_path") or "").strip()
+        original_filename = str(item.get("original_filename") or "").strip()
+        if not slide_id or not wsi_path:
+            continue
+        source = Path(wsi_path).expanduser()
+        root = source.parent.parent if source.parent.name.lower() in {"wsis", "wsi_files", "slides"} else source.parent
+        key_map = original_roots.setdefault(root, {})
+        for candidate in (
+            slide_id,
+            str(item.get("wsi_id") or "").strip(),
+            source.stem,
+            source.name,
+            Path(original_filename).stem if original_filename else "",
+            original_filename,
+            str(source),
+        ):
+            if candidate:
+                key_map[candidate] = slide_id
+
+    remapped_results: dict[str, Any] = {}
+    meta_template: dict[str, Any] | None = None
+    for root, key_map in original_roots.items():
+        meta_path = root / "extraction_meta.json"
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        results = meta.get("results")
+        if not isinstance(results, dict):
+            continue
+        if meta_template is None:
+            meta_template = {key: value for key, value in meta.items() if key != "results"}
+        for raw_key, record in results.items():
+            slide_id = key_map.get(str(raw_key))
+            if not slide_id:
+                slide_id = key_map.get(Path(str(raw_key)).stem)
+            if slide_id:
+                remapped_results[slide_id] = record
+
+    if not remapped_results:
+        return
+    out = dict(meta_template or {})
+    out["results"] = remapped_results
+    (view_dir / "extraction_meta.json").write_text(
+        json.dumps(out, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
 
 
 def _question_label_intent(question: str) -> str:
@@ -3498,18 +3673,22 @@ def _source_label_tables_for_pathlab_view(slides: list[Any]) -> list[Path]:
             parent = Path(source_raw).expanduser().resolve(strict=False).parent
         except OSError:
             parent = Path(source_raw).expanduser().parent
-        for pattern in ("*label*.csv", "*labels*.csv", "*label*.tsv", "*labels*.tsv"):
-            for candidate in sorted(parent.glob(pattern)):
-                if not candidate.is_file():
-                    continue
-                try:
-                    resolved = candidate.resolve(strict=False)
-                except OSError:
-                    resolved = candidate
-                if resolved in seen:
-                    continue
-                seen.add(resolved)
-                sources.append(candidate)
+        search_roots = [parent]
+        if parent.name.lower() in {"wsis", "wsi_files", "slides"} and parent.parent != parent:
+            search_roots.append(parent.parent)
+        for root in search_roots:
+            for pattern in ("*label*.csv", "*labels*.csv", "*label*.tsv", "*labels*.tsv"):
+                for candidate in sorted(root.glob(pattern)):
+                    if not candidate.is_file():
+                        continue
+                    try:
+                        resolved = candidate.resolve(strict=False)
+                    except OSError:
+                        resolved = candidate
+                    if resolved in seen:
+                        continue
+                    seen.add(resolved)
+                    sources.append(candidate)
     return sources
 
 
@@ -3555,6 +3734,8 @@ def _write_task_labels_from_source_tables(
     accessible_rows: list[dict[str, str]],
     pathlab_slide_map: list[dict[str, str]],
     question: str,
+    labels_file_name: str = "labels.csv",
+    splits_file_name: str = "splits.json",
 ) -> tuple[bool, str, dict[str, int], list[dict[str, str]]]:
     intent = _question_label_intent(question)
     label_column = _task_column_for_label_intent(intent)
@@ -3599,7 +3780,7 @@ def _write_task_labels_from_source_tables(
     if len(labeled_rows) < 3 or len(labeled_rows) != len(accessible_rows):
         return False, label_column, label_counts, labeled_rows
 
-    labels_path = view_dir / "labels.csv"
+    labels_path = view_dir / labels_file_name
     split_values = [row["split"] for row in labeled_rows]
     use_db_splits = all(split_values)
     with labels_path.open("w", newline="", encoding="utf-8") as fh:
@@ -3610,7 +3791,7 @@ def _write_task_labels_from_source_tables(
             writer.writerow({key: row[key] for key in fieldnames})
     from backend.pathscientist.dataset.wsi_splits import build_classification_splits_from_labels
 
-    build_classification_splits_from_labels(labels_path, view_dir / "splits.json")
+    build_classification_splits_from_labels(labels_path, view_dir / splits_file_name)
     return True, label_column, label_counts, labeled_rows
 
 
@@ -3688,6 +3869,7 @@ def _prepare_pathlab_dataset_view(
             slide_id=slide_id,
             source=source,
             original_filename=original_filename,
+            associated_files=getattr(slide, "associated_files", None),
         )
         linked_feature_count += len(linked_features)
         linked_feature_extractors.update(linked_features)
@@ -3736,7 +3918,8 @@ def _prepare_pathlab_dataset_view(
     task_labels_ready = False
     task_label_column = ""
     task_label_counts: dict[str, int] = {}
-    if len(db_label_counts) <= 1:
+    has_task_label_intent = bool(_task_column_for_label_intent(_question_label_intent(question)))
+    if has_task_label_intent or len(db_label_counts) <= 1:
         try:
             (
                 task_labels_ready,
@@ -3824,6 +4007,10 @@ def _prepare_pathlab_dataset_view(
         json.dumps(manifest, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    _remap_pathscientist_extraction_meta_for_view(
+        view_dir=view_dir,
+        pathlab_slide_map=pathlab_slide_map,
+    )
     if is_patch_dataset:
         (view_dir / "pathlab_training_manifest.json").write_text(
             json.dumps({"items": pathlab_items}, indent=2, sort_keys=True),
@@ -3834,7 +4021,15 @@ def _prepare_pathlab_dataset_view(
 def _merge_data_mounts(data_mounts: dict[str, str], extra_data_mounts: dict[str, str]) -> None:
     used = set(data_mounts.values())
     for host, container in (extra_data_mounts or {}).items():
-        _add_data_mount(data_mounts, used, host, container)
+        host_path = str(host or "").strip()
+        if not host_path:
+            continue
+        container_root = str(container or "").strip()
+        if container_root and container_root not in used:
+            data_mounts[host_path] = container_root
+            used.add(container_root)
+            continue
+        _add_data_mount(data_mounts, used, host_path, container_root or None)
 
 
 def _container_path_join(root: str, *parts: str) -> str:
@@ -3846,14 +4041,25 @@ def _pathlab_view_feature_leaf(view_dir: Path) -> Path | None:
     features_root = view_dir / "features"
     if not features_root.is_dir():
         return None
-    for candidate in [features_root, *sorted(features_root.rglob("*"))]:
-        if not candidate.is_dir():
-            continue
+
+    def has_feature_file(path: Path) -> bool:
         try:
-            if any(path.is_file() and path.suffix.lower() in _FEATURE_TENSOR_EXTS for path in candidate.iterdir()):
-                return candidate
+            return any(
+                item.is_file() and item.suffix.lower() in _FEATURE_TENSOR_EXTS
+                for item in path.iterdir()
+            )
         except OSError:
-            continue
+            return False
+
+    if has_feature_file(features_root):
+        return features_root
+    try:
+        children = sorted(path for path in features_root.iterdir() if path.is_dir())
+    except OSError:
+        return None
+    for child in children:
+        if has_feature_file(child):
+            return child
     return None
 
 
@@ -3977,6 +4183,22 @@ def _pathlab_dataset_contract_updates(host: str, container: str) -> dict[str, st
         "pathlab_uploads_dir": container_root,
         "data_layout": "pathlab_uploads",
     }
+    manifest_data: dict[str, Any] = {}
+    manifest = view_dir / "dataset_manifest.json"
+    if manifest.is_file():
+        updates["dataset_manifest_file"] = _container_path_join(container_root, "dataset_manifest.json")
+        try:
+            loaded_manifest = json.loads(manifest.read_text(encoding="utf-8"))
+        except Exception:
+            loaded_manifest = {}
+        if isinstance(loaded_manifest, dict):
+            manifest_data = loaded_manifest
+        manifest_uploads_dir = str(manifest_data.get("pathlab_uploads_dir") or "").strip()
+        if manifest_uploads_dir:
+            updates["pathlab_uploads_dir"] = manifest_uploads_dir.rstrip("/")
+        if manifest_data.get("requires_label_inference"):
+            updates["requires_label_inference"] = "true"
+
     wsi_dir = view_dir / "wsi_files"
     if wsi_dir.is_dir():
         updates["wsi_dir"] = _container_path_join(container_root, "wsi_files")
@@ -3993,24 +4215,40 @@ def _pathlab_dataset_contract_updates(host: str, container: str) -> dict[str, st
         updates["labels_file"] = _container_path_join(container_root, "labels.csv")
     elif labels_json.is_file():
         updates["labels_file"] = _container_path_join(container_root, "labels.json")
-    manifest = view_dir / "dataset_manifest.json"
-    if manifest.is_file():
-        updates["dataset_manifest_file"] = _container_path_join(container_root, "dataset_manifest.json")
-        try:
-            manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
-        except Exception:
-            manifest_data = {}
-        if isinstance(manifest_data, dict) and manifest_data.get("requires_label_inference"):
-            updates["requires_label_inference"] = "true"
-            updates.setdefault("labels_file", _container_path_join(container_root, "labels.csv"))
-            updates.setdefault("splits_file", _container_path_join(container_root, "splits.json"))
+
+    for manifest_key, update_key in (
+        ("wsi_dir", "wsi_dir"),
+        ("images_dir", "images_dir"),
+        ("features_dir", "features_dir"),
+        ("labels_file", "labels_file"),
+        ("splits_file", "splits_file"),
+    ):
+        value = str(manifest_data.get(manifest_key) or "").strip()
+        if not value:
+            continue
+        if Path(value).is_absolute():
+            updates[update_key] = value.rstrip("/") if update_key.endswith("dir") else value
+        else:
+            host_path = view_dir / value
+            if update_key in {"wsi_dir", "images_dir", "features_dir"} and not host_path.is_dir():
+                continue
+            if update_key in {"labels_file", "splits_file"} and not host_path.is_file():
+                continue
+            updates[update_key] = _container_path_join(container_root, value)
+        if update_key == "wsi_dir":
+            updates["pathlab_wsi_files_dir"] = updates["wsi_dir"]
+    if manifest_data.get("requires_label_inference"):
+        updates.setdefault("labels_file", _container_path_join(container_root, "labels.csv"))
+        updates.setdefault("splits_file", _container_path_join(container_root, "splits.json"))
+
     feature_leaf = _pathlab_view_feature_leaf(view_dir)
     if feature_leaf is not None:
         rel = feature_leaf.relative_to(view_dir).as_posix()
         updates["features_dir"] = _container_path_join(container_root, rel)
         updates["external_features_ready"] = "true"
+    elif updates.get("features_dir"):
+        updates["external_features_ready"] = "true"
     return updates
-
 
 def _set_contract_dataset_paths(contract: dict[str, Any], role: str, path: str) -> None:
     path_text = str(path or "").strip()
@@ -5274,6 +5512,131 @@ def _load_evidence_record(workspace: Path, run_id: str) -> tuple[dict[str, Any],
     return data if isinstance(data, dict) else {}, run_dir
 
 
+def _model_path_for_run_record(record_data: dict[str, Any], history_entry: dict[str, Any]) -> str:
+    pathlab = history_entry.get("pathlab") if isinstance(history_entry.get("pathlab"), dict) else {}
+    candidates = [
+        record_data.get("model_path"),
+        history_entry.get("model_path"),
+        pathlab.get("model_path"),
+    ]
+    metrics = history_entry.get("metrics")
+    if isinstance(metrics, dict):
+        candidates.append(metrics.get("model_path"))
+    record_metrics = record_data.get("metrics")
+    if isinstance(record_metrics, dict):
+        candidates.append(record_metrics.get("model_path"))
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _same_model_path(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    try:
+        return Path(left).expanduser().resolve(strict=False) == Path(right).expanduser().resolve(strict=False)
+    except OSError:
+        return left == right
+
+
+def _external_run_model_path(entry: dict[str, Any], record_data: dict[str, Any]) -> str:
+    pathlab = entry.get("pathlab") if isinstance(entry.get("pathlab"), dict) else {}
+    candidates = [
+        entry.get("model_path"),
+        pathlab.get("model_path"),
+        record_data.get("model_path"),
+    ]
+    for metrics_key in ("metrics",):
+        metrics = entry.get(metrics_key)
+        if isinstance(metrics, dict):
+            candidates.append(metrics.get("model_path"))
+    record_metrics = record_data.get("metrics")
+    if isinstance(record_metrics, dict):
+        candidates.append(record_metrics.get("model_path"))
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _external_run_entries_for_zip(state: dict[str, Any], run_id: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    external = state.get("external_test")
+    if isinstance(external, dict):
+        entries.append(external)
+    history = state.get("external_test_history")
+    if isinstance(history, list):
+        entries.extend(entry for entry in history if isinstance(entry, dict))
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        external_run_id = str(entry.get("run_id") or "").strip()
+        if not external_run_id or external_run_id == run_id or not _is_safe_run_id(external_run_id):
+            continue
+        if external_run_id in seen:
+            continue
+        seen.add(external_run_id)
+        deduped.append(entry)
+    return deduped
+
+
+def _add_external_run_files_to_zip(
+    archive: zipfile.ZipFile,
+    existing: set[str],
+    *,
+    workspace: Path,
+    external_run_id: str,
+    record_data: dict[str, Any],
+    evidence_run_dir: Path,
+) -> None:
+    prefix = f"external_test/{_safe_zip_component(external_run_id, 'external_run')}"
+    _zip_writestr_json(archive, f"{prefix}/record.json", record_data)
+
+    for filename in (
+        "external_test_report.json",
+        "predictions.csv",
+        "metrics.json",
+        "run_metadata.json",
+    ):
+        candidates = [
+            workspace / "output" / "runs" / external_run_id / filename,
+            evidence_run_dir / "untracked" / "output" / "runs" / external_run_id / filename,
+        ]
+        for source in candidates:
+            if _add_file_to_zip(archive, existing, source, f"{prefix}/{filename}"):
+                break
+
+    artifacts = record_data.get("artifacts")
+    if isinstance(artifacts, list):
+        for item in artifacts:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("storage_mode") or "") == "cache_summary":
+                continue
+            source = _resolve_artifact_source(
+                workspace=workspace,
+                evidence_run_dir=evidence_run_dir,
+                record_data=record_data,
+                artifact=item,
+            )
+            if source is None:
+                continue
+            name = _safe_zip_component(item.get("name"), source.name)
+            if name in {
+                "external_test_report.json",
+                "predictions.csv",
+                "metrics.json",
+                "run_metadata.json",
+            }:
+                _add_file_to_zip(archive, existing, source, f"{prefix}/{name}")
+            else:
+                _add_file_to_zip(archive, existing, source, f"{prefix}/artifacts/{name}")
+
+
 def _zip_writestr_json(archive: zipfile.ZipFile, name: str, value: Any) -> None:
     archive.writestr(
         name,
@@ -5407,6 +5770,7 @@ def _build_run_artifact_zip(record: SessionRecord, workspace: Path, run_id: str)
     evidence_run_dir = workspace / ".evidence" / "runs" / run_id
     if loaded is not None:
         record_data, evidence_run_dir = loaded
+    model_path = _model_path_for_run_record(record_data, history_entry)
 
     tmp = tempfile.NamedTemporaryFile(
         prefix=f"pathscientist-{run_id}-",
@@ -5452,9 +5816,213 @@ def _build_run_artifact_zip(record: SessionRecord, workspace: Path, run_id: str)
                     continue
                 name = _safe_zip_component(item.get("name"), source.name)
                 _add_file_to_zip(archive, existing, source, f"artifacts/{name}")
+
+        for external_entry in _external_run_entries_for_zip(state, run_id):
+            external_run_id = str(external_entry.get("run_id") or "").strip()
+            external_loaded = _load_evidence_record(workspace, external_run_id)
+            if external_loaded is None:
+                external_record_data: dict[str, Any] = {}
+                external_evidence_dir = workspace / ".evidence" / "runs" / external_run_id
+            else:
+                external_record_data, external_evidence_dir = external_loaded
+            external_model_path = _external_run_model_path(external_entry, external_record_data)
+            if model_path and external_model_path and not _same_model_path(model_path, external_model_path):
+                continue
+            _add_external_run_files_to_zip(
+                archive,
+                existing,
+                workspace=workspace,
+                external_run_id=external_run_id,
+                record_data=external_record_data or external_entry,
+                evidence_run_dir=external_evidence_dir,
+            )
     return tmp.name
 
 
 def _format_sse(event: dict[str, Any]) -> str:
     event_name = "state" if event.get("kind") == "state" else "event"
     return f"event: {event_name}\ndata: {json.dumps(event, default=str)}\n\n"
+_DIRECT_WSI_DATASET_SUBDIRS = {"wsis", "wsi_files", "slides"}
+
+
+def _pathlab_direct_wsi_root_for_source(source: Path) -> tuple[Path, Path] | None:
+    parent = Path(source).expanduser().parent
+    if parent.name.lower() not in _DIRECT_WSI_DATASET_SUBDIRS or parent.parent == parent:
+        return None
+    return parent.parent, parent
+
+
+def _pathlab_dataset_feature_summary(root: Path) -> tuple[int, list[str]]:
+    features_root = Path(root) / "features"
+    extractors: list[str] = []
+    try:
+        children = sorted(path for path in features_root.iterdir() if path.is_dir())
+    except OSError:
+        return 0, []
+    for child in children:
+        extractors.append(child.name)
+    return 0, extractors
+
+
+def _write_pathscientist_labels_and_splits(
+    *,
+    root: Path,
+    rows: list[dict[str, str]],
+    labels_file_name: str,
+    splits_file_name: str,
+) -> None:
+    labels_path = root / labels_file_name
+    split_values = [row.get("split", "") for row in rows]
+    use_db_splits = all(split_values)
+    with labels_path.open("w", newline="", encoding="utf-8") as fh:
+        fieldnames = ["slide_id", "label"] + (["split"] if use_db_splits else [])
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row[key] for key in fieldnames})
+
+    from backend.pathscientist.dataset.wsi_splits import build_classification_splits_from_labels
+
+    build_classification_splits_from_labels(labels_path, root / splits_file_name)
+
+
+def _prepare_pathlab_registered_wsi_dataset_root(
+    *,
+    dataset: Any,
+    slides: list[Any],
+    sidecar_dir: Path,
+    data_container: str,
+    contract_container: str,
+    question: str = "",
+) -> tuple[Path, Path] | None:
+    """Prepare a registered WSI dataset without writing into its durable root."""
+    roots: set[Path] = set()
+    wsi_dirs: set[Path] = set()
+    rows: list[dict[str, str]] = []
+    accessible_rows: list[dict[str, str]] = []
+    pathlab_slide_map: list[dict[str, str]] = []
+    used_slide_ids: set[str] = set()
+    missing_sources: list[str] = []
+
+    data_container = str(data_container).rstrip("/")
+    contract_container = str(contract_container).rstrip("/")
+    for slide in slides:
+        source_raw = str(getattr(slide, "wsi_path", "") or "").strip()
+        if not source_raw:
+            continue
+        source = Path(source_raw).expanduser()
+        root_pair = _pathlab_direct_wsi_root_for_source(source)
+        if root_pair is None:
+            return None
+        root, wsi_dir = root_pair
+        roots.add(root.absolute())
+        wsi_dirs.add(wsi_dir.absolute())
+        slide_id = _safe_slide_id(source.stem)
+        if slide_id in used_slide_ids:
+            return None
+        used_slide_ids.add(slide_id)
+        label = str(getattr(slide, "label", "") or "").strip()
+        split = _normalized_split(getattr(slide, "split", ""))
+        row = {"slide_id": slide_id, "label": label, "split": split}
+        accessible_rows.append(row)
+        if label:
+            rows.append(row)
+        original_filename = str(getattr(slide, "original_filename", "") or "").strip()
+        pathlab_slide_map.append(
+            {
+                "slide_id": slide_id,
+                "wsi_id": str(getattr(slide, "wsi_id", "") or ""),
+                "wsi_path": str(source),
+                "view_wsi_path": _container_path_join(data_container, wsi_dir.name, source.name),
+                "original_filename": original_filename or source.name,
+                "case_id": str(getattr(slide, "case_id", "") or ""),
+                "label": label,
+                "split": split,
+            }
+        )
+
+    if len(accessible_rows) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected dataset needs at least 3 accessible WSI files for PathScientist.",
+        )
+    if len(roots) != 1 or len(wsi_dirs) != 1:
+        return None
+
+    root = next(iter(roots))
+    wsi_dir = next(iter(wsi_dirs))
+    try:
+        wsi_dir.relative_to(root)
+    except ValueError:
+        return None
+
+    labels_file_name = "pathscientist_labels.csv"
+    splits_file_name = "pathscientist_splits.json"
+    sidecar_dir = Path(sidecar_dir)
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+
+    db_label_counts: dict[str, int] = {}
+    for row in rows:
+        db_label_counts[row["label"]] = db_label_counts.get(row["label"], 0) + 1
+
+    task_labels_ready = False
+    task_label_column = ""
+    task_label_counts: dict[str, int] = {}
+    labels_ready = (
+        task_labels_ready
+        or (len(rows) >= 3 and len(rows) == len(accessible_rows) and len(db_label_counts) > 1)
+    )
+    if labels_ready and not task_labels_ready:
+        try:
+            _write_pathscientist_labels_and_splits(
+                root=sidecar_dir,
+                rows=rows,
+                labels_file_name=labels_file_name,
+                splits_file_name=splits_file_name,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Selected dataset cannot be split for PathScientist: {exc}",
+            ) from exc
+        except Exception as exc:
+            raise RuntimeError(f"PathScientist split builder unavailable: {exc}") from exc
+
+    label_counts: dict[str, int] = {}
+    if task_labels_ready:
+        label_counts = task_label_counts
+    else:
+        for row in rows:
+            label_counts[row["label"]] = label_counts.get(row["label"], 0) + 1
+
+    manifest = {
+        "dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
+        "pathlab_dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
+        "dataset_name": str(getattr(dataset, "name", "") or ""),
+        "layout": "pathlab_registered_dataset_root",
+        "data_type": "wsi",
+        "pathlab_uploads_dir": data_container,
+        "wsi_dir": _container_path_join(data_container, wsi_dir.name),
+        "features_dir": _container_path_join(data_container, "features", "virchow2"),
+        "labels_file": _container_path_join(contract_container, labels_file_name),
+        "splits_file": _container_path_join(contract_container, splits_file_name),
+        "requires_label_inference": not labels_ready,
+        "num_wsi": len(accessible_rows),
+        "num_patches": 0,
+        "num_labeled": len(rows),
+        "num_unlabeled": len(accessible_rows) - len(rows),
+        "classes": sorted(label_counts),
+        "label_counts": label_counts,
+        "db_label_counts": db_label_counts,
+        "task_label_column": task_label_column,
+        "source_organ": getattr(dataset, "source_organ", None),
+        "missing_source_count": len(missing_sources),
+        "feature_link_count": 0,
+        "feature_extractors": ["virchow2"],
+        "pathlab_slide_map": pathlab_slide_map,
+    }
+    (sidecar_dir / "dataset_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return root, sidecar_dir

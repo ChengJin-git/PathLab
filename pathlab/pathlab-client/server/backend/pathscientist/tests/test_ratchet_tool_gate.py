@@ -42,6 +42,7 @@ from pathscientist.tools.ratchet import (
     RatchetCommitExecutor,
     RatchetRevertAction,
     RatchetRevertExecutor,
+    _pre_revert_external_core_artifacts,
 )
 
 
@@ -79,6 +80,38 @@ def _register_session(tmp_path: Path, *, last_experiment: dict | None = None):
         remove_session(session_id)
 
     return session_id, deps, _cleanup
+
+
+def test_pre_revert_external_core_artifacts_collects_large_predictions(tmp_path):
+    session_id, deps, cleanup = _register_session(tmp_path)
+    try:
+        run_dir = deps.workspace.root / "output" / "runs" / "run_ext"
+        run_dir.mkdir(parents=True)
+        (run_dir / "metrics.json").write_text("{}", encoding="utf-8")
+        (run_dir / "external_test_report.json").write_text("{}", encoding="utf-8")
+        predictions = run_dir / "predictions.csv"
+        predictions.write_text("sample_id,score\n" + "s,0.5\n" * 10000, encoding="utf-8")
+        (run_dir / "debug.tmp").write_text("ignore", encoding="utf-8")
+
+        artifacts = _pre_revert_external_core_artifacts(
+            deps.workspace,
+            {"run_kind": "external_test", "run_dir": "output/runs/run_ext"},
+        )
+
+        artifact_paths = {Path(path).name: Path(path) for path in artifacts}
+        assert {"metrics.json", "external_test_report.json", "predictions.csv"} <= set(artifact_paths)
+        assert "debug.tmp" not in artifact_paths
+
+        staged_predictions = artifact_paths["predictions.csv"]
+        assert staged_predictions.resolve(strict=False) != predictions.resolve(strict=False)
+        assert not str(staged_predictions.resolve(strict=False)).startswith(
+            str(deps.workspace.root.resolve(strict=False))
+        )
+        assert staged_predictions.read_text(encoding="utf-8") == predictions.read_text(encoding="utf-8")
+        predictions.unlink()
+        assert staged_predictions.is_file()
+    finally:
+        cleanup()
 
 
 # ---------- gate: refuse commit when last_experiment is None ----------

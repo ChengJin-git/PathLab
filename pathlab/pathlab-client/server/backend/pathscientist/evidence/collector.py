@@ -154,8 +154,13 @@ class EvidenceCollector:
                 artifacts.extend(self._scan_explicit_artifacts(data_output_artifacts))
         artifacts = self._dedupe_artifacts(artifacts)
 
-        # Extract pre-revert untracked files if present
+        # Extract pre-revert snapshots if present. External-test core outputs
+        # may be larger than the generic untracked text cap; keep them as
+        # copied artifacts so they survive workspace revert.
         untracked_files = exp.pop("_pre_revert_untracked", {}) or {}
+        pre_revert_artifacts = exp.pop("_pre_revert_artifacts", []) or []
+        copied_pre_revert_artifacts = self._scan_pre_revert_artifacts(pre_revert_artifacts)
+        artifacts = self._dedupe_artifacts(copied_pre_revert_artifacts + artifacts)
 
         record = EvidenceRecord(
             run_id=exp["run_id"],
@@ -347,7 +352,25 @@ class EvidenceCollector:
                 artifacts.append(artifact)
         return artifacts
 
-    def _build_artifact_ref(self, file_path: Path, prefer_copy: bool = False) -> ArtifactRef | None:
+    def _scan_pre_revert_artifacts(self, files: list[str]) -> list[ArtifactRef]:
+        """Build copied artifact entries captured before workspace revert."""
+        artifacts = []
+        for file_path in files:
+            artifact = self._build_artifact_ref(
+                self._resolve_path(file_path),
+                prefer_copy=True,
+                force_copy=True,
+            )
+            if artifact is not None:
+                artifacts.append(artifact)
+        return artifacts
+
+    def _build_artifact_ref(
+        self,
+        file_path: Path,
+        prefer_copy: bool = False,
+        force_copy: bool = False,
+    ) -> ArtifactRef | None:
         """Create a manifest entry for an artifact file."""
         try:
             if not file_path.is_file():
@@ -371,9 +394,12 @@ class EvidenceCollector:
         except (TypeError, ValueError):
             max_copy_bytes = _DEFAULT_COPY_MAX_BYTES
         should_copy = (
-            prefer_copy
-            and file_path.name in _COPY_ARTIFACT_NAMES
-            and size <= max(0, max_copy_bytes)
+            force_copy
+            or (
+                prefer_copy
+                and file_path.name in _COPY_ARTIFACT_NAMES
+                and size <= max(0, max_copy_bytes)
+            )
         )
         mode = "copy" if should_copy else "manifest"
         return ArtifactRef(

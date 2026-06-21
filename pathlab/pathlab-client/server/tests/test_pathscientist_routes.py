@@ -1313,6 +1313,209 @@ def test_resolve_pathlab_dataset_mounts_uses_llm_when_dataset_name_is_unknown(
     assert (Path(host) / "images" / "MSIH").is_dir()
 
 
+def test_resolve_pathlab_wsi_dataset_mounts_durable_root_without_session_view(
+    monkeypatch,
+    tmp_path,
+):
+    route_module = load_route_module()
+    route_module._resolve_pathscientist_base_dir = lambda: tmp_path / "pathscientist-base"
+    durable_root = tmp_path / "durable" / "Chronic-gastritis"
+    wsi_dir = durable_root / "WSIs"
+    wsi_dir.mkdir(parents=True)
+    slides = []
+    for idx, label in enumerate(["0", "1", "0", "1"], start=1):
+        source = wsi_dir / f"slide-{idx}.svs"
+        source.write_text(f"slide {idx}", encoding="utf-8")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=f"slide-{idx}",
+                wsi_path=str(source),
+                original_filename=source.name,
+                label=label,
+                split="train" if idx <= 2 else ("val" if idx == 3 else "test"),
+            )
+        )
+    dataset = SimpleNamespace(
+        id=1,
+        dataset_id="dataset-im",
+        name="Chronic-gastritis",
+        user_id="user-dataset",
+        is_public=False,
+        parent_dataset_id=None,
+        source_organ="stomach",
+        data_type="wsi",
+    )
+
+    class FakeSession:
+        pass
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return FakeSession()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return []
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        assert dataset_id == "dataset-im"
+        return dataset
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_datasets(db, **kwargs):
+            if kwargs.get("data_type") != "wsi":
+                return []
+            return [
+                {
+                    "dataset_id": "dataset-im",
+                    "dataset_name": "Chronic-gastritis",
+                    "data_type": "wsi",
+                    "task_type": "classification",
+                    "source_organ": "stomach",
+                    "file_count": 4,
+                    "labels": {"0": 2, "1": 2},
+                }
+            ]
+
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            assert dataset_id == "dataset-im"
+            assert kwargs.get("data_type") == "wsi"
+            return slides
+
+    def fail_prepare_view(**kwargs):
+        raise AssertionError("registered WSI datasets should not create session view symlinks")
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.auth.dependencies":
+            return SimpleNamespace(
+                get_dataset_with_access=fake_get_dataset_with_access,
+                get_permitted_dataset_ids=fake_get_permitted_dataset_ids,
+            )
+        if name == "backend.database.repositories":
+            return SimpleNamespace(WSIRepository=FakeWSIRepository)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+    monkeypatch.setattr(route_module, "_prepare_pathlab_dataset_view", fail_prepare_view)
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    mounts = route_module.asyncio.run(
+        route_module._resolve_pathlab_dataset_mounts(
+            [],
+            SimpleNamespace(id="user-dataset", is_admin=lambda: False),
+            question="Use Chronic-gastritis as the internal training dataset.",
+        )
+    )
+
+    assert len(mounts) == 2
+    data_container = mounts[str(durable_root)]
+    assert data_container.startswith("/data/chronic_gastritis")
+    contract_hosts = [
+        Path(host)
+        for host, container in mounts.items()
+        if container == f"{data_container}_contract"
+    ]
+    assert len(contract_hosts) == 1
+    contract_dir = contract_hosts[0]
+    assert contract_dir.name.startswith("chronic_gastritis")
+    assert contract_dir.name.endswith("_contract")
+    assert not (
+        tmp_path / "pathscientist-base" / "pathlab_datasets" / "session_inputs" / "chronic_gastritis" / "WSIs"
+    ).exists()
+    assert not (durable_root / "dataset_manifest.json").exists()
+    assert not (durable_root / "pathscientist_labels.csv").exists()
+    assert not (durable_root / "pathscientist_splits.json").exists()
+    manifest = json.loads((contract_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["layout"] == "pathlab_registered_dataset_root"
+    assert manifest["pathlab_uploads_dir"] == data_container
+    assert manifest["wsi_dir"] == f"{data_container}/WSIs"
+    assert manifest["labels_file"] == f"{data_container}_contract/pathscientist_labels.csv"
+    assert manifest["splits_file"] == f"{data_container}_contract/pathscientist_splits.json"
+    assert (contract_dir / "pathscientist_labels.csv").is_file()
+    assert (contract_dir / "pathscientist_splits.json").is_file()
+
+
+def test_pathlab_dataset_contract_updates_uses_direct_root_manifest(tmp_path):
+    route_module = load_route_module()
+    contract_dir = tmp_path / "PWH-GC-IM_contract"
+    contract_dir.mkdir(parents=True)
+    (contract_dir / "pathscientist_labels.csv").write_text("slide_id,label\nslide-1,1\n", encoding="utf-8")
+    (contract_dir / "pathscientist_splits.json").write_text("{}", encoding="utf-8")
+    (contract_dir / "dataset_manifest.json").write_text(
+        json.dumps(
+            {
+                "layout": "pathlab_registered_dataset_root",
+                "pathlab_uploads_dir": "/data/pwh_gc_im",
+                "wsi_dir": "/data/pwh_gc_im/WSIs",
+                "features_dir": "/data/pwh_gc_im/features/virchow2",
+                "labels_file": "/data/pwh_gc_im_contract/pathscientist_labels.csv",
+                "splits_file": "/data/pwh_gc_im_contract/pathscientist_splits.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    updates = route_module._pathlab_dataset_contract_updates(str(contract_dir), "/data/pwh_gc_im_contract")
+
+    assert updates["pathlab_uploads_dir"] == "/data/pwh_gc_im"
+    assert updates["data_layout"] == "pathlab_uploads"
+    assert updates["dataset_manifest_file"] == "/data/pwh_gc_im_contract/dataset_manifest.json"
+    assert updates["wsi_dir"] == "/data/pwh_gc_im/WSIs"
+    assert updates["pathlab_wsi_files_dir"] == "/data/pwh_gc_im/WSIs"
+    assert updates["labels_file"] == "/data/pwh_gc_im_contract/pathscientist_labels.csv"
+    assert updates["splits_file"] == "/data/pwh_gc_im_contract/pathscientist_splits.json"
+    assert updates["features_dir"] == "/data/pwh_gc_im/features/virchow2"
+
+
+def test_match_pathlab_datasets_from_question_matches_prefixed_hyphenated_names():
+    route_module = load_route_module()
+    datasets = [
+        {
+            "dataset_id": "internal-id",
+            "dataset_name": "PathScientist Chronic-gastritis",
+            "data_type": "wsi",
+        },
+        {
+            "dataset_id": "external-id",
+            "dataset_name": "PathScientist PWH-GC-IM",
+            "data_type": "wsi",
+        },
+    ]
+
+    matches = route_module._match_pathlab_datasets_from_question(
+        "Use Chronic-gastritis as internal and PWH-GC-IM as external validation.",
+        datasets,
+    )
+
+    assert matches == ["internal-id", "external-id"]
+
+
+def test_match_pathlab_datasets_with_llm_times_out(monkeypatch):
+    route_module = load_route_module()
+
+    def slow_caller(_prompt):
+        time.sleep(1)
+        return '{"matches":[{"dataset_id":"dataset-id","confidence":"high"}]}'
+
+    monkeypatch.setenv("PATHSCIENTIST_DATASET_LLM_MATCH_TIMEOUT_SEC", "0.05")
+    monkeypatch.setattr(route_module, "_pathscientist_dataset_match_llm_caller", lambda: slow_caller)
+
+    started = time.time()
+    matches = route_module._match_pathlab_datasets_with_llm(
+        "unknown request",
+        [{"dataset_id": "dataset-id", "dataset_name": "Unknown dataset"}],
+    )
+
+    assert matches == []
+    assert time.time() - started < 0.5
+
+
 def test_resolve_pathlab_dataset_mounts_uses_llm_to_add_requested_external_dataset(
     monkeypatch,
     tmp_path,
@@ -1504,6 +1707,58 @@ def test_prepare_pathlab_dataset_view_uses_symlinks_and_generates_contract(tmp_p
     assert all(splits[key] for key in ("train", "val", "test"))
 
 
+def test_prepare_pathlab_dataset_view_prefers_task4_for_intestinal_metaplasia_question(tmp_path):
+    route_module = load_route_module()
+    source_dir = tmp_path / "source" / "WSIs"
+    source_dir.mkdir(parents=True)
+    labels_path = source_dir.parent / "labels.csv"
+    labels_path.write_text(
+        "slide_id,Task1,Task4\n"
+        "slide-1,0,Intestinal metaplasia\n"
+        "slide-2,1,Not Intestinal metaplasia\n"
+        "slide-3,2,Intestinal metaplasia\n"
+        "slide-4,3,Not Intestinal metaplasia\n",
+        encoding="utf-8",
+    )
+    slides = []
+    for idx, db_label in enumerate(["0", "1", "2", "3"], start=1):
+        source = source_dir / f"slide-{idx}.svs"
+        source.write_text(f"slide {idx}", encoding="utf-8")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=f"slide-{idx}",
+                wsi_path=str(source),
+                original_filename=source.name,
+                label=db_label,
+                split="",
+            )
+        )
+    dataset = SimpleNamespace(
+        dataset_id="dataset-im",
+        name="PathScientist Chronic-gastritis",
+        source_organ="stomach",
+    )
+
+    view_dir = route_module._prepare_pathlab_dataset_view(
+        dataset=dataset,
+        slides=slides,
+        view_dir=tmp_path / "view-im",
+        question=(
+            "Use Chronic-gastritis as the internal training dataset and "
+            "PWH-GC-IM as the external validation dataset."
+        ),
+    )
+
+    manifest = json.loads((view_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
+    labels_text = (view_dir / "labels.csv").read_text(encoding="utf-8")
+
+    assert manifest["task_label_column"] == "Task4"
+    assert manifest["classes"] == ["Intestinal metaplasia", "Not Intestinal metaplasia"]
+    assert "s1" not in labels_text
+    assert "Intestinal metaplasia" in labels_text
+    assert "Not Intestinal metaplasia" in labels_text
+
+
 def test_prepare_pathlab_patch_dataset_view_is_patch_readiness_ready(tmp_path):
     route_module = load_route_module()
     source_dir = tmp_path / "source"
@@ -1573,6 +1828,109 @@ def test_prepare_pathlab_patch_dataset_view_is_patch_readiness_ready(tmp_path):
     assert readiness.status == "patch_images_ready"
     assert readiness.data_dir == "/data/crc_msi_100patches"
     assert readiness.images_dir == "/data/crc_msi_100patches/images"
+
+
+def test_prepare_pathlab_dataset_view_links_registered_pathscientist_features(tmp_path):
+    route_module = load_route_module()
+    source_dir = tmp_path / "registered" / "WSIs"
+    source_dir.mkdir(parents=True)
+    feature_dir = tmp_path / "registered" / "features" / "virchow2"
+    feature_dir.mkdir(parents=True)
+    slides = []
+    for idx, label in enumerate(["0", "1", "0"], start=1):
+        source = source_dir / f"slide-{idx}.svs"
+        source.write_text(f"slide {idx}", encoding="utf-8")
+        feature = feature_dir / f"slide-{idx}.pt"
+        feature.write_bytes(b"feature")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=f"uuid-slide-{idx}",
+                wsi_path=str(source),
+                original_filename=source.name,
+                label=label,
+                split="train" if idx == 1 else ("val" if idx == 2 else "test"),
+                associated_files={
+                    "pathscientist_features": {
+                        "internal": {
+                            "feature_path": str(feature),
+                            "features_dir": str(feature_dir),
+                            "extractor_name": "virchow2",
+                        }
+                    }
+                },
+            )
+        )
+    dataset = SimpleNamespace(
+        dataset_id="dataset-registered-features",
+        name="PathScientist Registered Features",
+        source_organ="stomach",
+    )
+
+    view_dir = route_module._prepare_pathlab_dataset_view(
+        dataset=dataset,
+        slides=slides,
+        view_dir=tmp_path / "view",
+    )
+
+    for idx in range(1, 4):
+        linked = view_dir / "features" / "virchow2" / f"uuid-slide-{idx}.pt"
+        assert linked.is_symlink()
+        assert linked.resolve() == (feature_dir / f"slide-{idx}.pt").resolve()
+    manifest = json.loads((view_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["feature_link_count"] == 3
+    assert manifest["feature_extractors"] == ["virchow2"]
+
+
+def test_prepare_pathlab_dataset_view_remaps_no_tissue_feature_metadata(tmp_path):
+    route_module = load_route_module()
+    source_dir = tmp_path / "registered" / "WSIs"
+    source_dir.mkdir(parents=True)
+    feature_dir = tmp_path / "registered" / "features" / "virchow2"
+    feature_dir.mkdir(parents=True)
+    (tmp_path / "registered" / "extraction_meta.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "extractor": "virchow2",
+                "results": {
+                    "slide-1": {"status": "success"},
+                    "slide-2": {"status": "no_tissue", "reason": "No detectable tissue"},
+                    "slide-3": {"status": "success"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    slides = []
+    for idx, label in enumerate(["0", "1", "0"], start=1):
+        source = source_dir / f"slide-{idx}.svs"
+        source.write_text(f"slide {idx}", encoding="utf-8")
+        if idx != 2:
+            (feature_dir / f"slide-{idx}.pt").write_bytes(b"feature")
+        slides.append(
+            SimpleNamespace(
+                wsi_id=f"uuid-slide-{idx}",
+                wsi_path=str(source),
+                original_filename=source.name,
+                label=label,
+                split="train" if idx == 1 else ("val" if idx == 2 else "test"),
+            )
+        )
+    dataset = SimpleNamespace(
+        dataset_id="dataset-no-tissue-features",
+        name="PathScientist no tissue metadata",
+        source_organ="stomach",
+    )
+
+    view_dir = route_module._prepare_pathlab_dataset_view(
+        dataset=dataset,
+        slides=slides,
+        view_dir=tmp_path / "view",
+    )
+
+    remapped = json.loads((view_dir / "extraction_meta.json").read_text(encoding="utf-8"))
+    assert set(remapped["results"]) == {"uuid-slide-1", "uuid-slide-2", "uuid-slide-3"}
+    assert remapped["results"]["uuid-slide-2"]["status"] == "no_tissue"
 
 
 def test_prepare_pathlab_dataset_view_links_tcga_patches_features_by_view_slide_id(tmp_path):
@@ -4143,6 +4501,138 @@ def test_downloads_run_artifacts_as_zip(tmp_path):
         assert archive.read("artifacts/best_model.pth") == b"model-bytes"
 
 
+def test_run_zip_for_model_run_includes_linked_external_test_artifacts(tmp_path, monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(route_module, "_resolve_pathscientist_base_dir", lambda: tmp_path)
+    workspace = tmp_path / "workspace"
+    model_path = workspace / "model_artifacts" / "s1" / "run_best" / "best_model.pth"
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(b"model-bytes")
+
+    best_evidence = workspace / ".evidence" / "runs" / "run_best"
+    (best_evidence / "artifacts").mkdir(parents=True)
+    (best_evidence / "artifacts" / "best_model.pth").write_bytes(b"model-bytes")
+    (best_evidence / "record.json").write_text(
+        json.dumps({
+            "run_id": "run_best",
+            "run_dir": "output/runs/run_best",
+            "metrics": {"auc": 0.976},
+            "committed": True,
+            "model_path": str(model_path),
+            "artifacts": [
+                {
+                    "name": "best_model.pth",
+                    "path": "output/runs/run_best/best_model.pth",
+                    "storage_mode": "copy",
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    external_run_dir = workspace / "output" / "runs" / "run_external"
+    external_run_dir.mkdir(parents=True)
+    (external_run_dir / "external_test_report.json").write_text(
+        json.dumps({"external_test": {"auc": 0.726, "accuracy": 0.784}}),
+        encoding="utf-8",
+    )
+    (external_run_dir / "metrics.json").write_text(
+        json.dumps({"auc": 0.726, "external": {"auc": 0.726}}),
+        encoding="utf-8",
+    )
+    external_evidence = workspace / ".evidence" / "runs" / "run_external"
+    external_evidence.mkdir(parents=True)
+    external_artifacts = external_evidence / "artifacts"
+    external_artifacts.mkdir()
+    (external_artifacts / "predictions.csv").write_text(
+        "sample_id,prediction\nslide-1,1\n",
+        encoding="utf-8",
+    )
+    (external_evidence / "record.json").write_text(
+        json.dumps({
+            "run_id": "run_external",
+            "run_dir": "output/runs/run_external",
+            "metrics": {"auc": 0.726, "external": {"auc": 0.726}},
+            "committed": False,
+            "model_path": str(model_path),
+            "artifacts": [
+                {
+                    "name": "external_test_report.json",
+                    "path": "output/runs/run_external/external_test_report.json",
+                    "storage_mode": "manifest",
+                },
+                {
+                    "name": "predictions.csv",
+                    "path": "output/runs/run_external/predictions.csv",
+                    "storage_mode": "copy",
+                },
+                {
+                    "name": "metrics.json",
+                    "path": "output/runs/run_external/metrics.json",
+                    "storage_mode": "manifest",
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    record = route_module.SessionRecord(
+        session_id="s1",
+        conversation_id="",
+        question="q",
+        model="gpt-5.5",
+        status="completed",
+        stage="completed",
+        state={
+            "best_run_id": "run_best",
+            "run_history": [
+                {
+                    "run_id": "run_best",
+                    "committed": True,
+                    "model_path": str(model_path),
+                    "metrics": {"auc": 0.976},
+                }
+            ],
+            "external_test": {
+                "run_id": "run_external",
+                "run_dir": "output/runs/run_external",
+                "status": "completed",
+                "metrics": {
+                    "auc": 0.726,
+                    "model_path": str(model_path),
+                    "external": {"auc": 0.726},
+                },
+            },
+            "external_test_history": [
+                {
+                    "run_id": "run_external",
+                    "run_dir": "output/runs/run_external",
+                    "status": "completed",
+                    "metrics": {
+                        "auc": 0.726,
+                        "model_path": str(model_path),
+                        "external": {"auc": 0.726},
+                    },
+                }
+            ],
+        },
+    )
+
+    zip_path = route_module._build_run_artifact_zip(record, workspace, "run_best")
+
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            names = set(archive.namelist())
+            assert "external_test/run_external/external_test_report.json" in names
+            assert "external_test/run_external/predictions.csv" in names
+            assert "external_test/run_external/metrics.json" in names
+            assert json.loads(archive.read("external_test/run_external/external_test_report.json")) == {
+                "external_test": {"auc": 0.726, "accuracy": 0.784}
+            }
+    finally:
+        Path(zip_path).unlink(missing_ok=True)
+
+
 def test_run_artifact_zip_rejects_workspace_outside_base_dir(tmp_path, monkeypatch):
     route_module = load_route_module()
     base_dir = tmp_path / "pathscientist-base"
@@ -4613,6 +5103,45 @@ def test_gateway_running_session_allows_long_epoch_training_log_gap(tmp_path, mo
     assert record.status == "running"
     assert record.stage == "execution"
     assert record.summary()["training_progress"]["current_epoch"] == 9
+
+
+def test_stale_gateway_session_clears_pending_title(tmp_path, monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
+    monkeypatch.setattr(route_module.time, "time", lambda: 2_000.0)
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    registry_path = registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    registry_path.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "session_id": "stale-title",
+                        "conversation_id": "conv-stale-title",
+                        "question": "Use Chronic-gastritis as the internal training dataset.",
+                        "model": "gpt-5.5",
+                        "title": "",
+                        "title_pending": True,
+                        "status": "running",
+                        "stage": "intake",
+                        "created_at": 100.0,
+                        "updated_at": 1_000.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(route_module, "_gateway_session_registry_path", lambda: registry_path)
+
+    [record] = route_module._load_gateway_session_records()
+    summary = record.summary()
+
+    assert record.status == "interrupted"
+    assert summary["status"] == "interrupted"
+    assert summary["title_pending"] is False
+    assert summary["title"]
 
 
 def test_events_stream_replays_db_events_when_jsonl_missing(monkeypatch):
