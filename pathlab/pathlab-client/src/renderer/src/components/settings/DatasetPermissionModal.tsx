@@ -9,7 +9,7 @@ import { Checkbox } from '../ui/checkbox'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Select } from '../ui/select'
-import { fetchDatasets } from '../../api/wsi'
+import { fetchAllDatasets } from '../../api/wsi'
 import {
   grantDatasetGrant,
   listDatasetGrants,
@@ -79,7 +79,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
     setLoadingData(true)
     setError(null)
     try {
-      const [userList, datasetResponse] = await Promise.all([listUsers(), fetchDatasets()])
+      const [userList, datasetResponse] = await Promise.all([listUsers(), fetchAllDatasets()])
       const permissionDatasets = datasetResponse.items
         .filter((dataset) => dataset.dataset_id !== null)
         .map((dataset) => ({

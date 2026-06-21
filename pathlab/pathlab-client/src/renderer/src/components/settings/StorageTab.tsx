@@ -45,7 +45,7 @@ import type {
   CheckExternalFilesResponse,
   ExternalDatasetInfo,
 } from '../../api/storage'
-import { fetchDatasets } from '../../api/wsi'
+import { fetchAllDatasets } from '../../api/wsi'
 import type { DatasetSummary } from '../../api/wsi'
 import { formatFileSize } from '../../lib/utils'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
@@ -186,7 +186,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
 
   const loadBatchDatasets = async () => {
     try {
-      const response = await fetchDatasets()
+      const response = await fetchAllDatasets()
       setBatchDatasets(response.items)
     } catch (err) {
       console.error('Failed to load datasets for batch registration:', err)
