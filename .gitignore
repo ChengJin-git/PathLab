@@ -5,7 +5,7 @@
 .codex
 **/.codex
 .worktrees/
-.agent
+.agents
 
 # Runtime outputs and caches
 __pycache__/
