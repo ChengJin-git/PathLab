@@ -68,7 +68,7 @@ dataset:
     default_feature_dim: 1024
 
 inputs:
-  features_dir: /data/features/{extractor}/{params_hash}     # {wsi_id}.pt files, shape (N_patches, D)
+  features_dir: /data/features/{extractor}     # {wsi_id}.pt files, shape (N_patches, D)
   splits_file: /data/splits.json   # {train:[], val:[], test:[], labels:{}}
 
 outputs:
@@ -91,7 +91,7 @@ constraints:
   - "Do NOT generate synthetic/mock/demo/dummy features, labels, or metrics when data is missing; fail with a data-readiness error instead."
   - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
   - "Honor PATHSCIENTIST_MIL_MODEL from the execution plan. Do NOT switch ABMIL/CLAM/DSMIL/TransMIL/DTFD-MIL across iterations unless the user explicitly requests architecture exploration."
-  - "PathLab uploads layout: when DATA_DIR points at PathLab's upload repository, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/<params_hash>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/<params_hash>/{wsi_id}_coords.h5, slide metadata in metadata/{wsi_id}.json, masks in masks/, progress in progress/, and logs in logs/."
+  - "PathLab uploads layout: when DATA_DIR points at PathLab's upload repository, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/{wsi_id}_coords.h5, slide metadata in metadata/{wsi_id}.json, masks in masks/, progress in progress/, and logs in logs/."
 
 reference_code:
   aggregator: server/backend/ai/aggregators/abmil.py
@@ -108,7 +108,7 @@ upstream_skill: feature_extraction
 
 readiness_guidance:
   feature_ready_contract:
-    features_dir: /data/features/{extractor}/{params_hash}
+    features_dir: /data/features/{extractor}
     splits_file: /data/splits.json
   raw_wsi_contract:
     wsi_dir: /data/wsi_files
@@ -118,5 +118,5 @@ readiness_guidance:
     do not rerun feature extraction. If only raw WSI and labels are provided,
     run feature_extraction first via feature_extraction_launcher.sh
     (script_type=bash, run_kind=feature_extraction), then point FEATURES_DIR at
-    the generated PathLab feature leaf features/{extractor}/{params_hash}
+    the generated PathLab feature leaf features/{extractor}
     for MIL training.

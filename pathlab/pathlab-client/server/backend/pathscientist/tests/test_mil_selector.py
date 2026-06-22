@@ -150,6 +150,8 @@ def test_runner_contract_honors_explicit_abmil_question(tmp_path, monkeypatch):
     assert train_step["inputs"]["mil_model_name"] == "abmil"
     assert "Set PATHSCIENTIST_MIL_MODEL=abmil" in train_step["instructions"]
     assert config.planned_mil_model == "abmil"
+    assert config.planned_features_dir == train_step["inputs"]["features_dir"]
+    assert config.planned_splits_file == train_step["inputs"]["splits_file"]
 
 
 def _write_pathlab_uploads_for_runner_test(root: Path) -> None:
@@ -580,6 +582,147 @@ def test_internal_readiness_mounts_exclude_manifest_cache_when_internal_path_is_
     assert str(external_uploads) not in filtered
 
 
+def test_pre_execution_readiness_keeps_pathlab_sidecar_mount_for_internal_splits(tmp_path, monkeypatch):
+    import pathscientist.orchestrator.runner as runner
+    from pathscientist.dataset.manifests import save_manifest
+    from pathscientist.dataset.types import DatasetManifest
+    from pathscientist.orchestrator.types import ResearchObjective, ResearchSessionState
+
+    monkeypatch.delenv("PATHSCIENTIST_FEATURE_EXTRACTOR", raising=False)
+    monkeypatch.delenv("PATHSCIENTIST_MIL_MODEL", raising=False)
+    internal_root = tmp_path / "Nanfang-GC-IM"
+    internal_features = internal_root / "features" / "virchow2"
+    external_root = tmp_path / "PWH-GC-IM"
+    external_features = external_root / "features" / "virchow2"
+    sidecar_root = tmp_path / "workspace" / ".dataset" / "pathlab_registered" / "nanfang_contract"
+    internal_features.mkdir(parents=True)
+    external_features.mkdir(parents=True)
+    sidecar_root.mkdir(parents=True)
+    for slide_id in ("nf_001", "nf_002", "nf_003"):
+        (internal_features / f"{slide_id}.pt").write_bytes(b"feature")
+    for slide_id in ("pwh_001", "pwh_002", "pwh_003"):
+        (external_features / f"{slide_id}.pt").write_bytes(b"feature")
+    (external_root / "splits.json").write_text(
+        json.dumps(
+            {
+                "train": ["pwh_001"],
+                "val": ["pwh_002"],
+                "test": ["pwh_003"],
+                "labels": {"pwh_001": 0, "pwh_002": 1, "pwh_003": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sidecar_root / "pathscientist_splits.json").write_text(
+        json.dumps(
+            {
+                "train": ["nf_001"],
+                "val": ["nf_002"],
+                "test": ["nf_003"],
+                "labels": {"nf_001": 0, "nf_002": 1, "nf_003": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    manifest_path = workspace / ".dataset" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    save_manifest(
+        manifest_path,
+        DatasetManifest(
+            dataset_id="pathlab:nanfang-gc-im",
+            provider="pathlab",
+            selected_for_task="mil_classification",
+            raw_root=str(internal_root),
+            prepared_root=str(sidecar_root),
+            data_mounts={
+                str(internal_root): "/data/pathscientist_nanfang_gc_im",
+                str(sidecar_root): "/data/pathscientist_nanfang_gc_im_contract",
+            },
+            prepared_contract={
+                "task_type": "mil_classification",
+                "features_dir": "/data/pathscientist_nanfang_gc_im/features/virchow2",
+                "splits_file": "/data/pathscientist_nanfang_gc_im_contract/pathscientist_splits.json",
+                "pathlab_uploads_dir": "/data/pathscientist_nanfang_gc_im",
+            },
+            status="prepared",
+        ),
+    )
+
+    state = ResearchSessionState.create(
+        session_id="s",
+        conversation_id="c",
+        objective=ResearchObjective(
+            question=(
+                "Use Nanfang-GC-IM as internal and PWH-GC-IM as external. "
+                "Train ABMIL with virchow2 features."
+            )
+        ),
+    )
+    state.dataset_manifest_path = str(manifest_path)
+    state.acquisition_status = "prepared"
+    state.task_profile = {
+        "task_type": "mil_classification",
+        "asset_level": "slide",
+        "input_modality": "wsi",
+        "label_granularity": "slide",
+        "organ": "stomach",
+        "prediction_target": "intestinal_metaplasia",
+        "preferred_skill": "mil_classification",
+    }
+    state.grounding = {
+        "selected_skill": "mil_classification",
+        "external_test_request": {
+            "requested": True,
+            "enabled": True,
+            "status": "missing_external_data",
+            "contract": {
+                "model_source": "best_run",
+                "external_task_type": "mil_classification",
+                "datasets": [
+                    {
+                        "role": "internal",
+                        "dataset_name": "Nanfang-GC-IM",
+                        "paths": ["/data/pathscientist_nanfang_gc_im"],
+                    },
+                    {
+                        "role": "external",
+                        "dataset_name": "PWH-GC-IM",
+                        "paths": ["/data/pathscientist_pwh_gc_im"],
+                    },
+                ],
+                "external_features_dir": "/data/pathscientist_pwh_gc_im/features/virchow2",
+                "external_splits_file": "/data/pathscientist_pwh_gc_im/splits.json",
+            },
+        },
+    }
+    session = SimpleNamespace(workspace_dir=workspace, persistence_root=tmp_path)
+    config = SimpleNamespace(
+        data_mounts={
+            str(internal_root): "/data/pathscientist_nanfang_gc_im",
+            str(sidecar_root): "/data/pathscientist_nanfang_gc_im_contract",
+            str(external_root): "/data/pathscientist_pwh_gc_im",
+        },
+        auto_acquire_data=True,
+        external_test_enabled=True,
+        external_test_contract={},
+    )
+
+    runner._prepare_data_readiness_and_execution_plan(state, session, config)
+
+    assert state.data_readiness["status"] == "features_ready"
+    assert (
+        state.data_readiness["splits_file"]
+        == "/data/pathscientist_nanfang_gc_im_contract/pathscientist_splits.json"
+    )
+    assert state.data_readiness["splits_file_host"] == str(
+        sidecar_root / "pathscientist_splits.json"
+    )
+    assert state.execution_plan["status"] == "ready"
+
+
 def test_cache_readiness_resolves_named_internal_and_external_cache_datasets(tmp_path, monkeypatch):
     import pathscientist.orchestrator.runner as runner
     from pathscientist.orchestrator.external_request import ExternalRequestInference
@@ -789,3 +932,150 @@ def test_cache_readiness_persists_named_role_mounts_when_internal_needs_feature_
     runner._prepare_data_readiness_and_execution_plan(state, session, config)
     assert state.execution_plan["status"] == "ready"
     assert state.data_readiness["wsi_dir_host"].startswith(str(requested_internal))
+
+
+
+def _write_gc_im_dataset(root: Path, prefix: str) -> None:
+    wsi_dir = root / "WSIs"
+    wsi_dir.mkdir(parents=True, exist_ok=True)
+    slide_ids = [f"{prefix}_{idx:03d}" for idx in range(1, 5)]
+    for slide_id in slide_ids:
+        (wsi_dir / f"{slide_id}.svs").write_text("wsi", encoding="utf-8")
+    (root / "labels.csv").write_text(
+        "slide_id,Task4\n"
+        f"{slide_ids[0]},0\n"
+        f"{slide_ids[1]},1\n"
+        f"{slide_ids[2]},0\n"
+        f"{slide_ids[3]},1\n",
+        encoding="utf-8",
+    )
+    (root / "splits.json").write_text(
+        json.dumps(
+            {
+                "train": slide_ids[:2],
+                "val": [slide_ids[2]],
+                "test": [slide_ids[3]],
+                "labels": {
+                    slide_ids[0]: 0,
+                    slide_ids[1]: 1,
+                    slide_ids[2]: 0,
+                    slide_ids[3]: 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_acquisition_uses_llm_internal_dataset_name_not_external_dataset(tmp_path, monkeypatch):
+    import pathscientist.orchestrator.runner as runner
+    from pathscientist.dataset.types import DatasetRecord, DownloadSpec
+    from pathscientist.orchestrator.types import ResearchObjective, ResearchSessionState
+
+    cache_root = tmp_path / "tmp_test_data"
+    nanfang_root = cache_root / "Nanfang-GC-IM"
+    pwh_root = cache_root / "PWH-GC-IM"
+    _write_gc_im_dataset(nanfang_root, "NF")
+    _write_gc_im_dataset(pwh_root, "PWH")
+
+    def record(name: str) -> DatasetRecord:
+        slug = name.lower()
+        return DatasetRecord(
+            dataset_id=f"pathlab:{slug}",
+            name=name,
+            provider="pathlab",
+            access="manual",
+            task_types=["mil_classification"],
+            asset_types=["wsi"],
+            organs=["stomach"],
+            tags=[name, "intestinal_metaplasia", "IM", "Task4"],
+            download=DownloadSpec(kind="manual"),
+        )
+
+    monkeypatch.setattr(
+        runner,
+        "_pathlab_dataset_records_from_db",
+        lambda _config=None: [record("PWH-GC-IM"), record("Nanfang-GC-IM")],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_skip_acquisition_if_cache_features_ready",
+        lambda *_args, **_kwargs: None,
+    )
+
+    state = ResearchSessionState.create(
+        session_id="s",
+        conversation_id="c",
+        objective=ResearchObjective(
+            question=(
+                "Use Nanfang-GC-IM as the internal training dataset and "
+                "PWH-GC-IM as the external validation dataset. Train ABMIL."
+            )
+        ),
+    )
+    state.task_profile = {
+        "task_type": "mil_classification",
+        "asset_level": "slide",
+        "input_modality": "wsi",
+        "label_granularity": "slide",
+        "organ": "stomach",
+        "prediction_target": "intestinal_metaplasia",
+        "required_label_keywords": ["intestinal_metaplasia", "IM", "Task4"],
+        "dataset_keywords": [
+            "Nanfang-GC-IM",
+            "PWH-GC-IM",
+            "intestinal_metaplasia",
+            "IM",
+            "Task4",
+        ],
+        "preferred_skill": "mil_classification",
+    }
+    state.grounding = {
+        "selected_skill": "mil_classification",
+        "external_test_request": {
+            "requested": True,
+            "enabled": True,
+            "status": "missing_external_data",
+            "missing": ["external_data_path"],
+            "training_data": {
+                "dataset_name": "Nanfang-GC-IM",
+                "paths": [],
+                "data_role": "internal",
+            },
+            "external_data": {
+                "dataset_name": "PWH-GC-IM",
+                "paths": [],
+                "data_role": "external",
+            },
+            "contract": {
+                "model_source": "best_run",
+                "external_task_type": "mil_classification",
+                "datasets": [
+                    {"role": "internal", "dataset_name": "Nanfang-GC-IM"},
+                    {"role": "external", "dataset_name": "PWH-GC-IM"},
+                ],
+            },
+            "source": "llm",
+        },
+    }
+    session = SimpleNamespace(workspace_dir=tmp_path / "ws", persistence_root=tmp_path)
+    session.workspace_dir.mkdir(parents=True)
+    config = SimpleNamespace(
+        data_mounts={},
+        dataset_cache_dir=str(cache_root),
+        auto_acquire_data=True,
+        external_test_enabled=True,
+        external_test_contract=state.grounding["external_test_request"]["contract"],
+        download_policy="all",
+        max_download_size_gb=20.0,
+        allow_large_downloads=False,
+        planned_data_output_dir="",
+    )
+
+    runner._run_acquisition_stage(state, session, config)
+
+    assert state.acquisition_status == "prepared"
+    assert state.selected_dataset["name"] == "Nanfang-GC-IM"
+    manifest = json.loads(Path(state.dataset_manifest_path).read_text())
+    assert manifest["raw_root"] == str(nanfang_root)
+    assert manifest["dataset_id"] == "pathlab:nanfang-gc-im"

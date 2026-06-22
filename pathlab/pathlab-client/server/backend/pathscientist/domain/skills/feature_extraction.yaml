@@ -53,8 +53,8 @@ dataset:
       output: "features.pt with shape (N_patches, D)"
   structure:
     wsi_files: "wsi_files/{wsi_id}.svs"
-    coordinates: "coordinates/{params_hash}/{wsi_id}_coords.h5"
-    features: "features/{extractor_name}/{params_hash}/{wsi_id}.pt"
+    coordinates: "coordinates/{wsi_id}_coords.h5"
+    features: "features/{extractor_name}/{wsi_id}.pt"
   supported_formats: [svs, ndpi, tiff, tif, mrxs, scn, bif]
   csv_format:
     required_columns: [filename]
@@ -69,16 +69,16 @@ inputs:
   output_dir: /results
 
 outputs:
-  features: /results/features/{extractor_name}/{params_hash}/{wsi_id}.pt
-  coordinates: /results/coordinates/{params_hash}/{wsi_id}_coords.h5
+  features: /results/features/{extractor_name}/{wsi_id}.pt
+  coordinates: /results/coordinates/{wsi_id}_coords.h5
   metadata: /results/extraction_meta.json
   metrics: /results/metrics.json
 
 output_convention: >
   When DATA_OUTPUT_DIR is a PathLab uploads repository, features and coordinates
   are saved following PathLab's canonical cache convention:
-    {output_dir}/features/{extractor_name}/{params_hash}/{wsi_id}.pt
-    {output_dir}/coordinates/{params_hash}/{wsi_id}_coords.h5
+    {output_dir}/features/{extractor_name}/{wsi_id}.pt
+    {output_dir}/coordinates/{wsi_id}_coords.h5
   Non-PathLab standalone datasets may still use the legacy fallback
   {output_dir}/pt_files/{extractor_name} and {output_dir}/patches.
 
@@ -88,8 +88,8 @@ evaluation:
 
 constraints:
   - "Before extraction, check if output already has matching feature and coordinate files for all WSIs — skip entirely if counts match"
-  - "For PathLab uploads repositories, save features to {output_dir}/features/{extractor_name}/{params_hash}/{wsi_id}.pt"
-  - "For PathLab uploads repositories, save coordinates to {output_dir}/coordinates/{params_hash}/{wsi_id}_coords.h5"
+  - "For PathLab uploads repositories, save features to {output_dir}/features/{extractor_name}/{wsi_id}.pt"
+  - "For PathLab uploads repositories, save coordinates to {output_dir}/coordinates/{wsi_id}_coords.h5"
   - "Feature tensor shape must be (N_patches, D) where D is extractor output_dim"
   - "Must save extraction_meta.json and metrics.json in output_dir"
   - "Must use torch.no_grad() during extraction (frozen encoder, no training)"
@@ -105,7 +105,7 @@ constraints:
   - "Default feature extraction to one Python worker on the first visible GPU; use slide-level sharding only when PATHSCIENTIST_FEATURE_GPUS is explicitly set to all or a GPU list."
   - "Do not use pgrep or log-tail success detection; use worker status JSON plus process exit codes."
   - "Use atomic writes for .pt and .h5 artifacts to avoid stale partial caches."
-  - "PathLab uploads layout: when DATA_DIR points at PathLab's upload repository, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/<params_hash>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/<params_hash>/{wsi_id}_coords.h5, and slide metadata in metadata/{wsi_id}.json."
+  - "PathLab uploads layout: when DATA_DIR points at PathLab's upload repository, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/{wsi_id}_coords.h5, and slide metadata in metadata/{wsi_id}.json."
 
 reference_code:
   tissue_segmenter: common/preprocessing/tiling.py

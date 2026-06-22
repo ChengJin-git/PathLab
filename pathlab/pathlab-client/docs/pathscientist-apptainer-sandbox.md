@@ -11,7 +11,7 @@ For the full server deployment order, start with
 - Definition file: `server/backend/pathscientist/runtime/containers/pathlab-sandbox.def`
 - jhcpu5 active image path: `.local/pathscientist/sandbox/pathlab-sandbox.sif`
 - Directory sandbox fallback path: `.local/pathscientist/sandbox/pathlab-sandbox`
-- PathScientist config file: `server/backend/pathscientist/.env.local`
+- PathScientist sandbox config file: `server/backend/pathscientist/.env.local` or the service environment
 - Runtime selector: `server/backend/pathscientist/runtime/sandbox.py`
 
 ## Build On A New Server
@@ -120,7 +120,7 @@ This is why local execution can fail on `/data/...` paths while Apptainer execut
 1. Install Apptainer and confirm `apptainer --version` works for the service user.
 2. Confirm the service user has fakeroot mappings in `/etc/subuid` and `/etc/subgid`, or build the SIF as root/admin once.
 3. Build `pathlab-sandbox.sif` from `pathlab-sandbox.def`.
-4. Copy or recreate `.env.local` values for sandbox, LLM, HF, and Kaggle credentials.
+4. Copy or recreate `.env.local` values for sandbox settings. Web LLM and Hugging Face credentials come from PathLab Settings; copy `PATHSCIENTIST_LLM_*` or set `HF_TOKEN` only for standalone CLI/headless fallback. Put Kaggle credentials in `server/.env` or the service environment.
 5. Restart the backend process so `PATHSCIENTIST_SANDBOX_IMAGE` is loaded.
 6. Run the two verification commands above.
 7. Start a small PathScientist session and confirm logs show `[apptainer] python ...` instead of local `python ...`.

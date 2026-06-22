@@ -16,6 +16,10 @@ os.environ["OPENHANDS_SUPPRESS_BANNER"] = "1"
 
 # Canonical pathscientist-prefix path matches the rest of the test suite.
 from pathscientist.dataset.task_profile import infer_task_profile
+from pathscientist.dataset.llm_task_profile import (
+    LLMTaskProfileEnrichment,
+    merge_task_profile_enrichment,
+)
 
 # pathscientist-prefix path matches tests/test_grounding_target_integration.py.
 from pathscientist.orchestrator.grounding import ground_objective
@@ -61,6 +65,36 @@ def test_infer_task_profile_default_skill_when_unspecified():
     assert patch_p.preferred_skill == "patch_classification"
     mil_p = infer_task_profile("WSI-level MIL training")
     assert mil_p.preferred_skill == "mil_classification"
+
+
+def test_infer_task_profile_targets_intestinal_metaplasia_for_pwh_gc_im_external():
+    prompt = (
+        "Use Chronic-gastritis as the internal training dataset and PWH-GC-IM "
+        "as the external validation dataset. Train a slide-level MIL "
+        "classification model with ABMIL."
+    )
+
+    profile = infer_task_profile(prompt, selected_skill="mil_classification")
+
+    assert profile.prediction_target == "intestinal_metaplasia"
+    assert "intestinal metaplasia" in profile.required_label_keywords
+
+
+def test_llm_merge_does_not_generalize_intestinal_metaplasia_target():
+    profile = infer_task_profile(
+        "Use Chronic-gastritis as internal and PWH-GC-IM as external",
+        selected_skill="mil_classification",
+    )
+    enrichment = LLMTaskProfileEnrichment(
+        prediction_target="chronic_gastritis_grading",
+        prediction_target_confidence="high",
+        required_label_keywords=["gastritis", "inflammation", "activity"],
+    )
+
+    merged, sources = merge_task_profile_enrichment(profile, enrichment)
+
+    assert merged.prediction_target == "intestinal_metaplasia"
+    assert sources.get("prediction_target") != "llm_override"
 
 
 # --- Integration: grounding emits task_profile ---

@@ -14,7 +14,7 @@ PathScientist needs **six** things wired together:
 |---|---|---|---|
 | 1 | **Code** | the repo on the active branch | git (carry) |
 | 2 | **Python venv** | uv venv, py3.12, torch(cuXXX) + OpenHands SDK + ML stack | **rebuild per host** (CUDA-specific) |
-| 3 | **LLM endpoint** | `.env.local` → `PATHSCIENTIST_LLM_*` (relay/model/key) | copy `.env.local` (secret) |
+| 3 | **LLM/HF credentials** | Web/Gateway inherits PathLab global Settings (`openrouter_*`, `huggingface_token`); standalone CLI can use `.env.local` `PATHSCIENTIST_LLM_*` and env `HF_TOKEN` | migrate PathLab settings/DB; copy CLI fallback secrets only if used |
 | 4 | **Sandbox** | apptainer binary + `pathlab-sandbox.sif` image | **rebuild per host** (or copy sif if same arch) |
 | 5 | **Env config** | `PATHSCIENTIST_*` vars (`start.sh` defaults + `.env.local`) | mix: defaults travel, paths/secrets reconfigure |
 | 6 | **Data roots** | dataset cache, model checkpoints, base/workspace dir | copy/re-point (large) |
@@ -29,7 +29,7 @@ PathScientist needs **six** things wired together:
 | Python venv | **uv, Python 3.12.13, torch 2.12.0+cu130** *(currently **MISSING** — see §7.1, rebuild it)* |
 | Apptainer | `1.5.1` at `/usr/bin/apptainer` *(resolved via `shutil.which`, see §4)* |
 | Sandbox image | `server/backend/auto_research_old/pathlab-sandbox.sif` (built); wired via `.env.local` `PATHSCIENTIST_SANDBOX_IMAGE` |
-| LLM | `gpt-5.5` via `codex-relay`, `https://relay.1hui.wang/v1`, wire `responses` |
+| LLM/HF token | Web sessions inherit PathLab Settings base URL/key and `huggingface_token`; PathScientist applies `gpt-5.5`, `codex-relay`, wire `responses` |
 | Base dir (workspaces) | `<client>/uploads/pathscientist` (start.sh default) |
 | Dataset cache | `/project/llmponco/wangyihui/original_data/pathlab_test_data` |
 | Web ports | `6100/6101/6102` (gateway / preprocessing / AI) |
@@ -60,16 +60,32 @@ Sanity:
 > `requirements.txt` pins `torch>=2.9` and `openhands-sdk @ git+…@<commit>`; the GPU build must be installed from the
 > matching CUDA wheel index (the bare requirement resolves to a CPU build otherwise).
 
-### 2.3 LLM config — `.env.local`
-The loader **only reads `PATHSCIENTIST_*` keys** from `.env.local`. Put non-`PATHSCIENTIST_` secrets
-(`HF_TOKEN`, `KAGGLE_*`, `GDC_TOKEN`) in the **shell env** or `server/.env`, not here.
+### 2.3 LLM config - Web inheritance vs standalone CLI
+
+Normal PathLab Web sessions do **not** need a separate `PATHSCIENTIST_LLM_*` block.
+When a session starts through the Gateway, PathScientist builds its LLM and Hugging
+Face token config from PathLab global Settings:
+
+- `openrouter_base_url` becomes the OpenAI-compatible base URL.
+- `openrouter_api_key` becomes the API key.
+- `huggingface_token` is forwarded into PathScientist and exposed to the runtime as `HF_TOKEN`.
+- PathScientist applies its own runtime defaults: `gpt-5.5`, `codex-relay`, and `responses`.
+
+Only set `PATHSCIENTIST_LLM_*` when running the standalone CLI or another headless path
+that bypasses the Gateway. The `.env.local` loader **only reads `PATHSCIENTIST_*` keys**;
+put non-`PATHSCIENTIST_` secrets in the **shell env** or `server/.env`, not here. For Web sessions,
+set the Hugging Face token in PathLab Settings rather than `HF_TOKEN`.
+
 ```bash
-# server/backend/pathscientist/.env.local   (chmod 600; MUST be git-ignored — see §7.4)
-PATHSCIENTIST_LLM_PROFILE=codex-relay
-PATHSCIENTIST_LLM_MODEL=gpt-5.5
-PATHSCIENTIST_LLM_WIRE_API=responses
-PATHSCIENTIST_LLM_BASE_URL=https://relay.1hui.wang/v1
-PATHSCIENTIST_LLM_API_KEY=<secret>
+# server/backend/pathscientist/.env.local   (chmod 600; MUST be git-ignored - see §7.4)
+
+# Standalone CLI/headless only. Web sessions inherit PathLab Settings instead.
+# PATHSCIENTIST_LLM_PROFILE=codex-relay
+# PATHSCIENTIST_LLM_MODEL=gpt-5.5
+# PATHSCIENTIST_LLM_WIRE_API=responses
+# PATHSCIENTIST_LLM_BASE_URL=https://relay.1hui.wang/v1
+# PATHSCIENTIST_LLM_API_KEY=<secret>
+
 # sandbox (see §2.4)
 PATHSCIENTIST_SANDBOX=auto
 PATHSCIENTIST_SANDBOX_IMAGE=/abs/path/to/pathlab-sandbox.sif
@@ -95,7 +111,9 @@ Full build steps: `docs/plan/2026-06-17-pathscientist-sandbox-migration-runbook.
 ```bash
 export PATHSCIENTIST_DATASET_CACHE_DIR=/path/to/pathlab-data     # durable data root (checked before download)
 export PATHLAB_CKPT_DIR=/path/to/pathlab-checkpoints             # extractor checkpoints
-export HF_HOME=/path/to/hf-cache; export HF_TOKEN=...            # gated HF models
+export HF_HOME=/path/to/hf-cache                                  # HF cache; Web token comes from PathLab Settings
+# Standalone CLI/headless fallback only:
+# export HF_TOKEN=...
 # base/workspace dir defaults to <client>/uploads/pathscientist; override with PATHSCIENTIST_BASE_DIR
 ```
 
@@ -111,13 +129,13 @@ cd ~/PathLab/pathlab/pathlab-client && ./deploy/start.sh        # then open http
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PATHSCIENTIST_LLM_{PROFILE,MODEL,WIRE_API,BASE_URL,API_KEY}` | codex-relay / gpt-5.5 / responses / relay.1hui.wang | LLM endpoint (the only required secrets) |
+| `PATHSCIENTIST_LLM_{PROFILE,MODEL,WIRE_API,BASE_URL,API_KEY}` | codex-relay / gpt-5.5 / responses / relay.1hui.wang | Standalone CLI/headless LLM endpoint only. Web sessions inherit PathLab Settings `openrouter_*`. |
 | `PATHSCIENTIST_SANDBOX` | `auto` | `auto`\|`apptainer`\|`local` (auto ⇒ apptainer if available, else local) |
 | `PATHSCIENTIST_SANDBOX_IMAGE` | — | abs path to the `.sif` (else the `auto_research_old/` default) |
 | `APPTAINER_BIN` | (auto via `which`) | override the apptainer binary path |
 | `PATHSCIENTIST_BASE_DIR` | `<client>/uploads/pathscientist` | session workspaces / output / persistence |
 | `PATHSCIENTIST_DATASET_CACHE_DIR` | `/project/llmponco/.../pathlab_test_data` | durable data root (reuse before download) |
-| `PATHLAB_CKPT_DIR` / `HF_HOME` / `HF_TOKEN` | — | extractor checkpoints / HF cache / gated models (shell, not `.env.local`) |
+| `PATHLAB_CKPT_DIR` / `HF_HOME` / `HF_TOKEN` | — | extractor checkpoints / HF cache; Web HF token inherits PathLab Settings `huggingface_token`, `HF_TOKEN` is CLI/service fallback |
 | `PATHSCIENTIST_AUTO_ACQUIRE_DATA` | `1` | auto dataset discovery+download |
 | `PATHSCIENTIST_DOWNLOAD_POLICY` | **`all`** | `public_only`\|`manual_only`\|`public_or_manual`\|`all`\|`disabled` ⚠️ `all` is permissive (§7.3) |
 | `PATHSCIENTIST_MAX_DOWNLOAD_SIZE_GB` / `_ALLOW_LARGE_DOWNLOADS` | `500` / `1` | download size cap (note: weakly enforced — see security plan B-SIZE) |
@@ -127,7 +145,9 @@ cd ~/PathLab/pathlab/pathlab-client && ./deploy/start.sh        # then open http
 | `PATHSCIENTIST_STOP_BEFORE_EXECUTION` | off | dry-run through pre-training stages |
 | `CUDA_VISIBLE_DEVICES` | (host) | GPU selection |
 
-`.env.local` overrides apply only for `PATHSCIENTIST_*` keys; shell env wins over `.env.local`; CLI flags win over both.
+For standalone CLI runs, `.env.local` overrides apply only for `PATHSCIENTIST_*` keys; shell env wins over
+`.env.local`; CLI flags win over both. For Web sessions, the Gateway config derived from PathLab Settings is the source
+of truth for LLM credentials.
 
 ## 4. Run modes & python resolution
 - **Standalone `start.sh`** exports `PATH="$VENV_DIR/bin:$PATH"`, so the agent's `python <script>` resolves to the venv.
@@ -140,10 +160,10 @@ cd ~/PathLab/pathlab/pathlab-client && ./deploy/start.sh        # then open http
 
 **Carry over (copy):**
 - [ ] **Code** — via git (branch + the committed docs).
-- [ ] **`.env.local`** — securely (it holds the LLM key); `chmod 600`; ensure it's git-ignored on the target.
+- [ ] **`.env.local`** — only for sandbox overrides and standalone CLI LLM config; `chmod 600`; ensure it's git-ignored on the target.
 - [ ] **Dataset cache** (`PATHSCIENTIST_DATASET_CACHE_DIR`) — copy or re-point; large, reuse to avoid re-download.
 - [ ] **Model checkpoints** (`PATHLAB_CKPT_DIR`, `HF_HOME`/HF cache) — copy or re-point.
-- [ ] **Credentials** — `HF_TOKEN`, `KAGGLE_*`, `GDC_TOKEN` (shell/`server/.env`, **not** `.env.local`).
+- [ ] **Credentials** — PathLab Settings/DB for Web LLM/HF (`openrouter_*`, `huggingface_token`), plus `KAGGLE_*`, `GDC_TOKEN`, and any standalone `HF_TOKEN` fallback in shell/`server/.env` (**not** `.env.local`).
 
 **Rebuild on the target (do NOT copy):**
 - [ ] **`.venv`** — `uv venv` + requirements + **CUDA-matched torch** (a copied venv breaks on a different driver/CUDA).
@@ -171,8 +191,9 @@ run → one real quick-check run showing `[sandbox] apptainer exec`.
 3. **`download_policy=all` + 500 GB cap + auto-acquire on** = effectively unrestricted internet dataset fetch from a
    run. Combine with the security plan's `B-NET`/`B-SIZE`/SSRF guards before exposing widely; tighten to `public_only`
    for shared/untrusted use.
-4. **`.env.local` holds a live LLM key and must be git-ignored** (security plan `E-SEC2`). Verify before any migration
-   that copies the tree, and rotate if it ever landed in git.
+4. **`.env.local` may hold standalone CLI LLM secrets or sandbox paths and must be git-ignored** (security plan `E-SEC2`).
+   Web LLM secrets live in PathLab Settings/DB. Verify before any migration that copies the tree, and rotate if secrets
+   ever landed in git.
 5. **Sandbox binary** is now resolved via `shutil.which` (good) — but if you move to a host where apptainer is at a
    non-standard path and not on `PATH`, set `APPTAINER_BIN` explicitly.
 

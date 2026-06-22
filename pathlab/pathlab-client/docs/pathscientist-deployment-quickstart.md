@@ -166,7 +166,9 @@ PATHLAB_UPLOADS_DIR=/data/pathlab/uploads
 # Foundation model checkpoints / Hugging Face cache.
 PATHLAB_CKPT_DIR=/data/pathlab/checkpoints
 HF_HOME=/data/pathlab/hf-cache
-HF_TOKEN=<optional-huggingface-token>
+# Web sessions inherit PathLab Settings huggingface_token.
+# Standalone/service fallback only:
+# HF_TOKEN=<optional-huggingface-token>
 
 # Optional GPU selection.
 CUDA_VISIBLE_DEVICES=0,1
@@ -178,17 +180,20 @@ restarts or existing login sessions will be invalidated.
 
 ## 7. LLM And Hugging Face Settings
 
-For the web UI, PathScientist inherits PathLab global LLM credentials from the
-PathLab Settings page:
+For the web UI, PathScientist inherits PathLab global LLM and Hugging Face
+credentials from the PathLab Settings page. Do not configure a separate
+`PATHSCIENTIST_LLM_*` block or require `HF_TOKEN` for normal Web/Gateway sessions:
 
 - `openrouter_base_url` is reused as the OpenAI-compatible base URL.
 - `openrouter_api_key` is reused as the API key.
+- `huggingface_token` is forwarded into PathScientist and exposed as `HF_TOKEN`
+  for gated foundation model downloads.
 - PathScientist still runs its own default model, currently `gpt-5.5`, because
   the OpenHands/Codex runtime requires a compatible model profile.
-- `huggingface_token` is also inherited from PathLab Settings when present.
 
 After the first login, open Settings and save the LLM base URL, API key, and
-Hugging Face token. For headless or standalone CLI use, create
+Hugging Face token. Only for headless or standalone CLI use that bypasses the
+Gateway, create
 `server/backend/pathscientist/.env.local` instead:
 
 ```bash
@@ -199,8 +204,9 @@ PATHSCIENTIST_LLM_BASE_URL=https://your-relay.example/v1
 PATHSCIENTIST_LLM_API_KEY=<secret>
 ```
 
-Only `PATHSCIENTIST_*` keys are loaded from `.env.local`. Put `HF_TOKEN`,
-`KAGGLE_*`, and `GDC_TOKEN` in `server/.env` or the service environment.
+Only `PATHSCIENTIST_*` keys are loaded from `.env.local`. Put `KAGGLE_*` and
+`GDC_TOKEN` in `server/.env` or the service environment. Use `HF_TOKEN` there
+only for standalone/headless fallback; Web sessions use PathLab Settings.
 
 ## 8. Data Repository Layout
 

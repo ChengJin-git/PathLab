@@ -44,9 +44,9 @@ def _valid_splits(*slide_ids: str) -> dict:
 def _write_pathlab_uploads(root: Path) -> dict[str, Path]:
     paths = {
         "wsi_files": root / "wsi_files",
-        "features": root / "features" / "virchow2" / "paramsabc",
+        "features": root / "features" / "virchow2",
         "task_features": root / "training" / "task-001" / "features",
-        "coordinates": root / "coordinates" / "paramsabc",
+        "coordinates": root / "coordinates",
         "metadata": root / "metadata",
         "ai_results": root / "ai_results",
         "models": root / "models",
@@ -110,7 +110,7 @@ def test_external_request_discovers_pathlab_uploads_layout(tmp_path):
     assert contract["external_data_layout"] == "pathlab_uploads"
     assert contract["external_pathlab_uploads_dir"] == "/data/pathlab_uploads"
     assert contract["external_wsi_dir"] == "/data/pathlab_uploads/wsi_files"
-    assert contract["external_features_dir"] == "/data/pathlab_uploads/features/virchow2/paramsabc"
+    assert contract["external_features_dir"] == "/data/pathlab_uploads/features/virchow2"
     assert contract["external_pathlab_training_dir"] == "/data/pathlab_uploads/training"
     assert contract["external_pathlab_coordinates_dir"] == "/data/pathlab_uploads/coordinates"
     assert contract["external_pathlab_metadata_dir"] == "/data/pathlab_uploads/metadata"
@@ -124,14 +124,14 @@ def test_external_request_discovers_pathlab_uploads_layout(tmp_path):
     external = next(item for item in contract["datasets"] if item["role"] == "external")
     assert external["role"] == "external"
     assert external["data_layout"] == "pathlab_uploads"
-    assert external["features_dir"] == "/data/pathlab_uploads/features/virchow2/paramsabc"
+    assert external["features_dir"] == "/data/pathlab_uploads/features/virchow2"
     assert external["pathlab_masks_dir"] == "/data/pathlab_uploads/masks"
 
 
 def test_external_request_prefers_requested_extractor_feature_leaf(tmp_path):
     uploads = tmp_path / "uploads"
     _write_pathlab_uploads(uploads)
-    uni_leaf = uploads / "features" / "uni2" / "paramsuni"
+    uni_leaf = uploads / "features" / "uni2"
     uni_leaf.mkdir(parents=True)
     for slide_id in ("slide_001", "slide_002", "slide_003"):
         (uni_leaf / f"{slide_id}.pt").write_bytes(b"pt")
@@ -155,7 +155,7 @@ def test_external_request_prefers_requested_extractor_feature_leaf(tmp_path):
         config=type("Config", (), {"planned_feature_extractor": "uni2"})(),
     )
 
-    assert result.contract["external_features_dir"] == "/data/pathlab_uploads/features/uni2/paramsuni"
+    assert result.contract["external_features_dir"] == "/data/pathlab_uploads/features/uni2"
 
 
 def test_readiness_uses_pathlab_uploads_global_feature_leaf(tmp_path):
@@ -169,9 +169,215 @@ def test_readiness_uses_pathlab_uploads_global_feature_leaf(tmp_path):
     )
 
     assert result.status == "features_ready"
-    assert result.features_dir == "/data/pathlab/features/virchow2/paramsabc"
+    assert result.features_dir == "/data/pathlab/features/virchow2"
     assert result.features_dir_host == str(paths["features"])
     assert result.splits_file == "/data/pathlab/splits.json"
+
+
+
+
+def test_readiness_accepts_sdpc_pathlab_uploads_with_matching_features(tmp_path):
+    uploads = tmp_path / "uploads"
+    features = uploads / "features" / "virchow2"
+    wsi_dir = uploads / "WSIs"
+    features.mkdir(parents=True)
+    wsi_dir.mkdir(parents=True)
+    slide_ids = ["PA2300070,01,", "PA2300072,01,", "PA2300081,01,", "PA2300083,01,"]
+    for idx, slide_id in enumerate(slide_ids):
+        (wsi_dir / f"{slide_id}.sdpc").write_text("wsi", encoding="utf-8")
+        (features / f"{slide_id}.pt").write_bytes(b"pt")
+    (uploads / "labels.csv").write_text(
+        "slide_id,label\n"
+        + "\n".join(f"{slide_id},{idx % 2}" for idx, slide_id in enumerate(slide_ids))
+        + "\n",
+        encoding="utf-8",
+    )
+    (uploads / "splits.json").write_text(
+        json.dumps({
+            "train": slide_ids[:2],
+            "val": [slide_ids[2]],
+            "test": [slide_ids[3]],
+            "labels": {slide_id: idx % 2 for idx, slide_id in enumerate(slide_ids)},
+        }),
+        encoding="utf-8",
+    )
+
+    result = assess_data_readiness(
+        _mil_profile(),
+        data_mounts={str(uploads): "/data/pathlab"},
+        preferred_feature_extractor="virchow2",
+    )
+
+    assert result.status == "features_ready"
+    assert result.features_dir == "/data/pathlab/features/virchow2"
+    assert result.splits_file == "/data/pathlab/splits.json"
+
+def test_readiness_rejects_sparse_missing_features_without_no_tissue_metadata(tmp_path):
+    uploads = tmp_path / "uploads"
+    features = uploads / "features" / "virchow2"
+    wsi_dir = uploads / "wsi_files"
+    features.mkdir(parents=True)
+    wsi_dir.mkdir(parents=True)
+    train_ids = [f"slide_train_{idx:02d}" for idx in range(16)]
+    val_ids = ["slide_val_00", "slide_val_01"]
+    test_ids = ["slide_test_00", "slide_test_01"]
+    split_ids = train_ids + val_ids + test_ids
+    missing_slide = train_ids[-1]
+    for slide_id in split_ids:
+        (wsi_dir / f"{slide_id}.svs").write_text("wsi")
+        if slide_id != missing_slide:
+            (features / f"{slide_id}.pt").write_bytes(b"pt")
+    (uploads / "splits.json").write_text(
+        json.dumps(
+            {
+                "train": train_ids,
+                "val": val_ids,
+                "test": test_ids,
+                "labels": {slide_id: idx % 2 for idx, slide_id in enumerate(split_ids)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (uploads / "labels.csv").write_text(
+        "slide_id,label\n"
+        + "\n".join(f"{slide_id},{idx % 2}" for idx, slide_id in enumerate(split_ids))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = assess_data_readiness(
+        _mil_profile(),
+        data_mounts={str(uploads): "/data/pathlab"},
+        preferred_feature_extractor="virchow2",
+    )
+
+    assert result.status == "raw_wsi_ready"
+    assert result.missing == ["features_dir"]
+    assert result.wsi_dir == "/data/pathlab/wsi_files"
+
+
+def test_readiness_allows_no_tissue_missing_features_when_question_requests_extraction(tmp_path):
+    uploads = tmp_path / "uploads"
+    features = uploads / "features" / "virchow2"
+    wsi_dir = uploads / "wsi_files"
+    features.mkdir(parents=True)
+    wsi_dir.mkdir(parents=True)
+    train_ids = [f"slide_train_{idx:02d}" for idx in range(16)]
+    val_ids = ["slide_val_00", "slide_val_01"]
+    test_ids = ["slide_test_00", "slide_test_01"]
+    split_ids = train_ids + val_ids + test_ids
+    missing_slide = train_ids[-1]
+    for slide_id in split_ids:
+        (wsi_dir / f"{slide_id}.svs").write_text("wsi")
+        if slide_id != missing_slide:
+            (features / f"{slide_id}.pt").write_bytes(b"pt")
+    (uploads / "splits.json").write_text(
+        json.dumps(
+            {
+                "train": train_ids,
+                "val": val_ids,
+                "test": test_ids,
+                "labels": {slide_id: idx % 2 for idx, slide_id in enumerate(split_ids)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (uploads / "labels.csv").write_text(
+        "slide_id,label\n"
+        + "\n".join(f"{slide_id},{idx % 2}" for idx, slide_id in enumerate(split_ids))
+        + "\n",
+        encoding="utf-8",
+    )
+    (uploads / "extraction_meta.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "extractor": "virchow2",
+                "results": {
+                    missing_slide: {
+                        "status": "no_tissue",
+                        "reason": "No detectable tissue found",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = assess_data_readiness(
+        _mil_profile(),
+        data_mounts={str(uploads): "/data/pathlab"},
+        preferred_feature_extractor="virchow2",
+        question="Use virchow2 features if available, and extract any missing features before training.",
+    )
+
+    assert result.status == "features_ready"
+    assert result.features_dir == "/data/pathlab/features/virchow2"
+    assert result.features_dir_host == str(features)
+    assert any("ignored 1 no_tissue" in note for note in result.notes)
+
+
+def test_readiness_allows_low_coverage_when_all_missing_features_are_no_tissue(tmp_path):
+    uploads = tmp_path / "uploads"
+    features = uploads / "features" / "virchow2"
+    wsi_dir = uploads / "wsi_files"
+    features.mkdir(parents=True)
+    wsi_dir.mkdir(parents=True)
+    train_ids = [f"slide_train_{idx:02d}" for idx in range(6)]
+    val_ids = ["slide_val_00", "slide_val_01"]
+    test_ids = ["slide_test_00", "slide_test_01"]
+    split_ids = train_ids + val_ids + test_ids
+    missing_ids = {"slide_train_05", "slide_test_01"}
+    for slide_id in split_ids:
+        (wsi_dir / f"{slide_id}.svs").write_text("wsi")
+        if slide_id not in missing_ids:
+            (features / f"{slide_id}.pt").write_bytes(b"pt")
+    (uploads / "splits.json").write_text(
+        json.dumps(
+            {
+                "train": train_ids,
+                "val": val_ids,
+                "test": test_ids,
+                "labels": {slide_id: idx % 2 for idx, slide_id in enumerate(split_ids)},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (uploads / "labels.csv").write_text(
+        "slide_id,label\n"
+        + "\n".join(f"{slide_id},{idx % 2}" for idx, slide_id in enumerate(split_ids))
+        + "\n",
+        encoding="utf-8",
+    )
+    (uploads / "extraction_meta.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "extractor": "virchow2",
+                "success_rate": 0.8,
+                "min_success_rate": 0.95,
+                "results": {
+                    slide_id: {
+                        "status": "no_tissue",
+                        "reason": "No detectable tissue found during tiling",
+                    }
+                    for slide_id in missing_ids
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = assess_data_readiness(
+        _mil_profile(),
+        data_mounts={str(uploads): "/data/pathlab"},
+        preferred_feature_extractor="virchow2",
+    )
+
+    assert result.status == "features_ready"
+    assert result.features_dir == "/data/pathlab/features/virchow2"
+    assert any("ignored 2 no_tissue" in note for note in result.notes)
+
 
 
 def test_readiness_uses_pathlab_wsi_files_for_raw_wsi(tmp_path):
@@ -213,7 +419,7 @@ def test_brief_renders_pathlab_uploads_contract_guidance():
             "external_data_layout": "pathlab_uploads",
             "external_pathlab_uploads_dir": "/data/pathlab",
             "external_wsi_dir": "/data/pathlab/wsi_files",
-            "external_features_dir": "/data/pathlab/features/virchow2/paramsabc",
+            "external_features_dir": "/data/pathlab/features/virchow2",
             "external_pathlab_training_dir": "/data/pathlab/training",
             "external_pathlab_coordinates_dir": "/data/pathlab/coordinates",
             "external_pathlab_metadata_dir": "/data/pathlab/metadata",
@@ -230,7 +436,7 @@ def test_brief_renders_pathlab_uploads_contract_guidance():
 
     assert "PathLab uploads layout:" in brief
     assert "wsi_files: /data/pathlab/wsi_files" in brief
-    assert "features: /data/pathlab/features/virchow2/paramsabc" in brief
+    assert "features: /data/pathlab/features/virchow2" in brief
     assert "training: /data/pathlab/training" in brief
     assert "coordinates: /data/pathlab/coordinates" in brief
     assert "metadata: /data/pathlab/metadata" in brief
@@ -314,13 +520,13 @@ def test_raw_wsi_external_plan_extracts_internal_then_external_before_training(t
         selected_skill="mil_classification",
         readiness=readiness,
         data_output_dir="/data/internal",
-        generated_features_dir="/data/internal/features/virchow2/paramsabc",
+        generated_features_dir="/data/internal/features/virchow2",
         extractor_name="virchow2",
         external_test_enabled=True,
         external_test_contract={
             "external_pathlab_uploads_dir": "/data/external",
             "external_wsi_dir": "/data/external/wsi_files",
-            "external_features_dir": "/data/external/features/virchow2/paramsabc",
+            "external_features_dir": "/data/external/features/virchow2",
             "external_splits_file": "/data/external/splits.json",
             "external_features_ready": False,
         },
@@ -343,7 +549,7 @@ def test_external_plan_extracts_features_when_contract_feature_path_is_missing(t
         pt_file.unlink()
     readiness = DataReadinessResult(
         status="features_ready",
-        features_dir="/data/internal/features/virchow2/paramsabc",
+        features_dir="/data/internal/features/virchow2",
         splits_file="/data/internal/splits.json",
     )
 
@@ -352,14 +558,14 @@ def test_external_plan_extracts_features_when_contract_feature_path_is_missing(t
         selected_skill="mil_classification",
         readiness=readiness,
         data_output_dir="/data/internal",
-        generated_features_dir="/data/internal/features/virchow2/paramsabc",
+        generated_features_dir="/data/internal/features/virchow2",
         extractor_name="virchow2",
         external_test_enabled=True,
         external_test_contract={
             "external_data_layout": "pathlab_uploads",
             "external_pathlab_uploads_dir": "/data/external",
             "external_wsi_dir": "/data/external/wsi_files",
-            "external_features_dir": "/data/external/features/virchow2/paramsabc",
+            "external_features_dir": "/data/external/features/virchow2",
             "external_splits_file": "/data/external/splits.json",
             "external_features_ready": False,
         },
@@ -373,13 +579,13 @@ def test_external_plan_extracts_features_when_contract_feature_path_is_missing(t
     assert steps["train_downstream"].depends_on == ["extract_external_features"]
     assert steps["external_test"].depends_on == ["train_downstream"]
     assert steps["external_test"].inputs["external_features_dir"] == "/data/external/features/virchow2"
-    assert steps["train_downstream"].inputs["features_dir"] == "/data/internal/features/virchow2/paramsabc"
+    assert steps["train_downstream"].inputs["features_dir"] == "/data/internal/features/virchow2"
 
 
 def test_external_plan_uses_existing_features_when_contract_marks_ready():
     readiness = DataReadinessResult(
         status="features_ready",
-        features_dir="/data/internal/features/virchow2/paramsabc",
+        features_dir="/data/internal/features/virchow2",
         splits_file="/data/internal/splits.json",
     )
 
@@ -388,12 +594,12 @@ def test_external_plan_uses_existing_features_when_contract_marks_ready():
         selected_skill="mil_classification",
         readiness=readiness,
         data_output_dir="/data/internal",
-        generated_features_dir="/data/internal/features/virchow2/paramsabc",
+        generated_features_dir="/data/internal/features/virchow2",
         extractor_name="virchow2",
         external_test_enabled=True,
         external_test_contract={
             "external_wsi_dir": "/data/external/wsi_files",
-            "external_features_dir": "/data/external/features/virchow2/paramsabc",
+            "external_features_dir": "/data/external/features/virchow2",
             "external_splits_file": "/data/external/splits.json",
             "external_features_ready": True,
         },
@@ -401,13 +607,13 @@ def test_external_plan_uses_existing_features_when_contract_marks_ready():
 
     assert [step.id for step in plan.steps] == ["train_downstream", "external_test"]
     assert plan.steps[-1].depends_on == ["train_downstream"]
-    assert plan.steps[-1].inputs["external_features_dir"] == "/data/external/features/virchow2/paramsabc"
+    assert plan.steps[-1].inputs["external_features_dir"] == "/data/external/features/virchow2"
 
 
 def test_external_plan_blocks_before_training_when_external_files_are_missing():
     readiness = DataReadinessResult(
         status="features_ready",
-        features_dir="/data/internal/features/virchow2/paramsabc",
+        features_dir="/data/internal/features/virchow2",
         splits_file="/data/internal/splits.json",
     )
 
@@ -416,7 +622,7 @@ def test_external_plan_blocks_before_training_when_external_files_are_missing():
         selected_skill="mil_classification",
         readiness=readiness,
         data_output_dir="/data/internal",
-        generated_features_dir="/data/internal/features/virchow2/paramsabc",
+        generated_features_dir="/data/internal/features/virchow2",
         extractor_name="virchow2",
         external_test_enabled=True,
         external_test_contract={
@@ -463,12 +669,11 @@ def test_feature_extraction_worker_uses_pathlab_uploads_layout(tmp_path, monkeyp
 
     worker.main()
 
-    params_hash = worker.compute_pathlab_params_hash()
-    assert (uploads / "features" / "virchow2" / params_hash / "slide_001.pt").exists()
-    assert (uploads / "coordinates" / params_hash / "slide_001_coords.h5").exists()
+    assert (uploads / "features" / "virchow2" / "slide_001.pt").exists()
+    assert (uploads / "coordinates" / "slide_001_coords.h5").exists()
     meta = json.loads((output / "worker_meta" / "worker_0.json").read_text())
-    assert meta["features_dir"].endswith(f"features/virchow2/{params_hash}")
-    assert meta["coords_dir"].endswith(f"coordinates/{params_hash}")
+    assert meta["features_dir"].endswith("features/virchow2")
+    assert meta["coords_dir"].endswith("coordinates")
 
 
 def test_feature_extraction_worker_creates_pathlab_task_feature_links(tmp_path, monkeypatch):
@@ -506,14 +711,66 @@ def test_feature_extraction_worker_creates_pathlab_task_feature_links(tmp_path, 
 
     worker.main()
 
-    params_hash = worker.compute_pathlab_params_hash()
-    cached_feature = uploads / "features" / "virchow2" / params_hash / "slide_001.pt"
+    cached_feature = uploads / "features" / "virchow2" / "slide_001.pt"
     task_feature = uploads / "training" / "task_abc" / "features" / "slide_001.pt"
     assert cached_feature.exists()
     assert task_feature.is_symlink()
     assert task_feature.resolve() == cached_feature
     meta = json.loads((output / "worker_meta" / "worker_0.json").read_text())
     assert meta["task_features_dir"].endswith("training/task_abc/features")
+
+
+
+def test_feature_extraction_worker_skips_unwritable_pathlab_task_feature_links(tmp_path, monkeypatch):
+    template = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_worker.py"
+    spec = importlib.util.spec_from_file_location("feature_extraction_worker_unwritable_task", template)
+    worker = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(worker)
+    uploads = tmp_path / "uploads"
+    wsi_dir = uploads / "wsi_files"
+    output = tmp_path / "run_output"
+    wsi_dir.mkdir(parents=True)
+    (wsi_dir / "slide_001.svs").write_text("wsi")
+
+    monkeypatch.setenv("PATHSCIENTIST_FAKE_FEATURE_EXTRACTION", "1")
+    monkeypatch.setenv("PATHSCIENTIST_PATHLAB_TRAINING_TASK_ID", "task_abc")
+    original_mkdir = Path.mkdir
+
+    def fail_task_training_mkdir(self, *args, **kwargs):
+        if self == uploads / "training" / "task_abc" / "features":
+            raise OSError(30, "Read-only file system", str(self))
+        return original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_task_training_mkdir)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "feature_extraction_worker.py",
+            "--rank",
+            "0",
+            "--world-size",
+            "1",
+            "--wsi-dir",
+            str(wsi_dir),
+            "--output-dir",
+            str(output),
+            "--data-output-dir",
+            str(uploads),
+            "--extractor",
+            "virchow2",
+        ],
+    )
+
+    worker.main()
+
+    cached_feature = uploads / "features" / "virchow2" / "slide_001.pt"
+    assert cached_feature.exists()
+    assert not (uploads / "training" / "task_abc" / "features" / "slide_001.pt").exists()
+    meta = json.loads((output / "worker_meta" / "worker_0.json").read_text())
+    assert meta["successful"] == 1
+    assert meta.get("task_features_dir", "") == ""
 
 
 def test_feature_extraction_quick_check_limits_patches(monkeypatch, tmp_path):
@@ -580,6 +837,128 @@ def test_feature_extraction_quick_check_limits_patches(monkeypatch, tmp_path):
     assert [len(batch) for batch in batches] == [2, 1]
 
 
+
+def test_feature_extraction_aggregate_tolerates_unwritable_data_output_meta(tmp_path, monkeypatch):
+    template = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_aggregate.py"
+    spec = importlib.util.spec_from_file_location("feature_extraction_aggregate_unwritable_meta", template)
+    aggregate = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(aggregate)
+
+    output = tmp_path / "run_output"
+    data_output = tmp_path / "data_output"
+    worker_meta = output / "worker_meta"
+    worker_meta.mkdir(parents=True)
+    data_output.mkdir()
+    (worker_meta / "worker_0.json").write_text(
+        json.dumps(
+            {
+                "total_assigned": 1,
+                "successful": 1,
+                "patches_extracted": 12,
+                "duration": 1.5,
+                "features_dir": str(data_output / "features" / "virchow2"),
+                "coords_dir": str(data_output / "coordinates"),
+                "results": {"slide_001": {"status": "success"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    original_write_text = Path.write_text
+
+    def fail_data_output_meta_write(self, *args, **kwargs):
+        if self == data_output / "extraction_meta.json.tmp":
+            raise OSError(30, "Read-only file system", str(self))
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_data_output_meta_write)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "feature_extraction_aggregate.py",
+            "--output-dir",
+            str(output),
+            "--data-output-dir",
+            str(data_output),
+            "--extractor",
+            "virchow2",
+            "--world-size",
+            "1",
+        ],
+    )
+
+    aggregate.main()
+
+    metrics = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["status"] == "completed"
+    assert metrics["successful_wsi"] == 1.0
+    assert (output / "extraction_meta.json").exists()
+    assert not (data_output / "extraction_meta.json").exists()
+
+
+def test_feature_extraction_aggregate_treats_no_tissue_as_explained_skip(tmp_path, monkeypatch):
+    template = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_aggregate.py"
+    spec = importlib.util.spec_from_file_location("feature_extraction_aggregate_no_tissue", template)
+    aggregate = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(aggregate)
+
+    output = tmp_path / "run_output"
+    data_output = tmp_path / "data_output"
+    worker_meta = output / "worker_meta"
+    worker_meta.mkdir(parents=True)
+    data_output.mkdir()
+    (worker_meta / "worker_0.json").write_text(
+        json.dumps(
+            {
+                "total_assigned": 3,
+                "successful": 1,
+                "patches_extracted": 12,
+                "duration": 1.5,
+                "features_dir": str(data_output / "features" / "virchow2"),
+                "coords_dir": str(data_output / "coordinates"),
+                "results": {
+                    "slide_001": {"status": "success"},
+                    "slide_002": {
+                        "status": "no_tissue",
+                        "reason": "No detectable tissue found during tiling",
+                    },
+                    "slide_003": {
+                        "status": "no_tissue",
+                        "reason": "No detectable tissue found during tiling",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "feature_extraction_aggregate.py",
+            "--output-dir",
+            str(output),
+            "--data-output-dir",
+            str(data_output),
+            "--extractor",
+            "virchow2",
+            "--world-size",
+            "1",
+        ],
+    )
+
+    aggregate.main()
+
+    meta = json.loads((output / "extraction_meta.json").read_text(encoding="utf-8"))
+    metrics = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
+    assert meta["status"] == "completed"
+    assert meta["no_tissue_wsi"] == 2
+    assert metrics["no_tissue_wsi"] == 2.0
+
+
 def test_feature_extraction_launcher_falls_back_to_data_wsi_files():
     launcher = Path(__file__).parent.parent / "domain" / "templates" / "feature_extraction_launcher.sh"
     script = launcher.read_text(encoding="utf-8")
@@ -594,6 +973,9 @@ def test_feature_extraction_launcher_uses_configurable_python_bin():
     assert 'PYTHON_BIN:=python3' in script
     assert '"$PYTHON_BIN" feature_extraction_worker.py' in script
     assert '"$PYTHON_BIN" feature_extraction_aggregate.py' in script
+    assert "aggregate_status=$?" in script
+    assert script.rstrip().endswith("exit $aggregate_status")
+    assert 'if [ "$status" -ne 0 ]; then' in script
     assert "python feature_extraction_worker.py" not in script
     assert "python feature_extraction_aggregate.py" not in script
 
@@ -618,7 +1000,8 @@ def test_training_skills_explain_pathlab_uploads_layout():
         constraints = skill.get_constraints_prompt()
         assert "PathLab uploads layout" in constraints
         assert "wsi_files/" in constraints
-        assert "features/<extractor>/<params_hash>/" in constraints
+        assert "features/<extractor>/{wsi_id}.pt" in constraints
+        assert "coordinates/{wsi_id}_coords.h5" in constraints
 
     external_yaml = yaml.safe_load((_SKILLS_DIR / "external_test.yaml").read_text())
     assert external_yaml["inputs"]["external_pathlab_uploads_dir"] == "$EXTERNAL_PATHLAB_UPLOADS_DIR"
@@ -667,6 +1050,47 @@ def test_classification_template_loads_pathlab_training_manifest(tmp_path):
     assert splits["test"] == ["slide_003"]
     assert splits["labels"] == {"slide_001": 1, "slide_002": 0, "slide_003": 1}
 
+
+
+
+def test_classification_template_honors_quick_check_sample_caps(monkeypatch):
+    monkeypatch.setenv("PATHLAB_QUICK_CHECK", "1")
+    monkeypatch.setenv("PATHLAB_MAX_TRAIN_SAMPLES", "3")
+    monkeypatch.setenv("PATHLAB_MAX_VAL_SAMPLES", "2")
+    monkeypatch.setenv("PATHLAB_MAX_TEST_SAMPLES", "1")
+    module = _load_template_module("classification_template.py")
+    filtered = {
+        "train": [f"train_{idx}" for idx in range(10)],
+        "val": [f"val_{idx}" for idx in range(5)],
+        "test": [f"test_{idx}" for idx in range(4)],
+    }
+    labels = {
+        slide_id: idx % 2
+        for idx, slide_id in enumerate(
+            filtered["train"] + filtered["val"] + filtered["test"]
+        )
+    }
+    stats = {
+        "raw_counts": {"train": 10, "val": 5, "test": 4},
+        "usable_counts": {"train": 10, "val": 5, "test": 4},
+        "missing_feature_counts": {"train": 0, "val": 0, "test": 0},
+        "missing_label_counts": {"train": 0, "val": 0, "test": 0},
+        "missing_feature_ids": {"train": [], "val": [], "test": []},
+        "missing_label_ids": {"train": [], "val": [], "test": []},
+    }
+    limited, limited_labels, limited_stats = module.apply_quick_check_limits(
+        filtered,
+        labels,
+        stats,
+    )
+
+    assert limited["train"] == ["train_0", "train_1", "train_2"]
+    assert limited["val"] == ["val_0", "val_1"]
+    assert limited["test"] == ["test_0"]
+    assert set(limited_labels) == {"train_0", "train_1", "train_2", "val_0", "val_1", "test_0"}
+    assert limited_stats["usable_counts"] == {"train": 3, "val": 2, "test": 1}
+    assert limited_stats["quick_check"] is True
+    assert limited_stats["quick_check_limits"] == {"train": 3, "val": 2, "test": 1}
 
 def test_patch_template_loads_pathlab_training_manifest(tmp_path):
     module = _load_template_module("patch_classification_template.py")
@@ -827,7 +1251,7 @@ def test_patch_template_builds_patch_smoke_metrics_payload(tmp_path):
 
 def test_run_experiment_accepts_pathlab_feature_cache_output(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
-    feature_leaf = uploads / "features" / "virchow2" / "paramsabc"
+    feature_leaf = uploads / "features" / "virchow2"
     feature_leaf.mkdir(parents=True)
     (feature_leaf / "slide_001.pt").write_bytes(b"pt")
     monkeypatch.setenv("PATHSCIENTIST_FEATURE_EXTRACTOR", "virchow2")

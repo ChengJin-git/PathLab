@@ -6,6 +6,7 @@ import os
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -111,6 +112,31 @@ def _run_async_best_effort(coro, description: str) -> Any:
         description,
     )
     return {"status": "skipped", "reason": "gateway_loop_not_configured"}
+
+
+def _run_async_required_value(coro_factory, description: str, timeout: float = 15.0) -> Any:
+    """Run an async read and return its value even from inside an event loop.
+
+    Best-effort writes may be scheduled from the gateway loop, but acquisition
+    registry reads are required inputs. If we are already inside an event loop,
+    run the coroutine in a helper thread so the synchronous caller receives the
+    loaded value instead of a scheduled-task marker.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro_factory())
+
+    def _run_in_thread() -> Any:
+        return asyncio.run(coro_factory())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_run_in_thread)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            logger.warning("Timed out while trying to %s", description)
+            return {"status": "failed", "reason": "timeout"}
 
 
 def _register_acquired_dataset_with_pathlab(
@@ -697,6 +723,7 @@ def _prepare_data_readiness_and_execution_plan(
         config,
         manifest_mounts=manifest_mounts,
         data_mounts=data_mounts,
+        prepared_contract=prepared_contract,
     )
 
     readiness = assess_data_readiness(
@@ -706,6 +733,12 @@ def _prepare_data_readiness_and_execution_plan(
         question=state.objective.question,
         generated_contract_root=workspace_root / ".dataset" / "readiness",
         preferred_feature_extractor=extractor_name,
+    )
+    _rewrite_pathlab_view_external_outputs(
+        state,
+        config,
+        data_mounts=data_mounts,
+        extractor_name=extractor_name,
     )
     _downgrade_external_features_when_dim_mismatch(
         state,
@@ -798,8 +831,12 @@ def _prepare_data_readiness_and_execution_plan(
     )
     if train_step is not None:
         config.planned_mil_model = train_step.inputs.get("mil_model_name") or ""
-    elif hasattr(config, "planned_mil_model"):
-        config.planned_mil_model = ""
+        config.planned_features_dir = train_step.inputs.get("features_dir") or ""
+        config.planned_splits_file = train_step.inputs.get("splits_file") or ""
+    else:
+        for attr in ("planned_mil_model", "planned_features_dir", "planned_splits_file"):
+            if hasattr(config, attr):
+                setattr(config, attr, "")
 
     return state
 
@@ -888,21 +925,29 @@ def _sync_external_test_config_from_state(
 
 
 def _sync_planned_feature_extraction_env_from_current_step(state, config) -> None:
-    """Mirror the current feature_extraction step into run_experiment env config."""
+    """Mirror the current execution step into run_experiment env config."""
     step = _current_execution_step(state)
-    if step.get("skill") != "feature_extraction":
-        for attr in (
-            "planned_data_output_dir",
-            "planned_feature_wsi_dir",
-            "planned_feature_extractor",
-        ):
-            if hasattr(config, attr):
-                setattr(config, attr, "")
-        return
+    for attr in (
+        "planned_data_output_dir",
+        "planned_feature_wsi_dir",
+        "planned_feature_extractor",
+        "planned_features_dir",
+        "planned_splits_file",
+    ):
+        if hasattr(config, attr):
+            setattr(config, attr, "")
+
     inputs = step.get("inputs") or {}
-    config.planned_data_output_dir = inputs.get("data_output_dir") or ""
-    config.planned_feature_wsi_dir = inputs.get("wsi_dir") or ""
-    config.planned_feature_extractor = inputs.get("extractor_name") or ""
+    if step.get("skill") == "feature_extraction":
+        config.planned_data_output_dir = inputs.get("data_output_dir") or ""
+        config.planned_feature_wsi_dir = inputs.get("wsi_dir") or ""
+        config.planned_feature_extractor = inputs.get("extractor_name") or ""
+        return
+
+    if step.get("id") == "train_downstream":
+        config.planned_features_dir = inputs.get("features_dir") or ""
+        config.planned_splits_file = inputs.get("splits_file") or ""
+        config.planned_mil_model = inputs.get("mil_model_name") or ""
 
 
 
@@ -1031,7 +1076,23 @@ def _advance_execution_plan_after_iteration(
         return False
 
     actual_features_dir = str(features_dir)
+    existing_runtime_features_dir = str(
+        (state.data_readiness or {}).get("features_dir") or ""
+    ).strip()
+    existing_host_features_dir = str(
+        (state.data_readiness or {}).get("features_dir_host") or ""
+    ).strip()
+    training_features_dir = existing_runtime_features_dir or actual_features_dir
+    training_features_dir_host = existing_host_features_dir or actual_features_dir
     step_id = str(step.get("id") or "")
+    feature_link_sync = None
+    if existing_host_features_dir and actual_features_dir != existing_host_features_dir:
+        feature_link_sync = _sync_pathlab_view_feature_links(
+            view_features_dir=Path(existing_host_features_dir),
+            extracted_features_dir=Path(actual_features_dir),
+        )
+        step.setdefault("outputs", {})["pathlab_view_feature_link_sync"] = feature_link_sync
+
     step_inputs = step.get("inputs") or {}
     registration = _register_pathscientist_features_with_pathlab(
         features_dir=actual_features_dir,
@@ -1057,7 +1118,7 @@ def _advance_execution_plan_after_iteration(
     elif current + 1 < len(steps):
         next_step = steps[current + 1]
         if isinstance(next_step, dict):
-            next_step.setdefault("inputs", {})["features_dir"] = actual_features_dir
+            next_step.setdefault("inputs", {})["features_dir"] = training_features_dir
 
     plan["current_step"] = current + 1
     plan["steps"] = steps
@@ -1080,8 +1141,8 @@ def _advance_execution_plan_after_iteration(
         state.data_readiness = {
             **(state.data_readiness or {}),
             "status": "features_ready",
-            "features_dir": actual_features_dir,
-            "features_dir_host": actual_features_dir,
+            "features_dir": training_features_dir,
+            "features_dir_host": training_features_dir_host,
             "missing": [
                 item for item in (state.data_readiness or {}).get("missing", [])
                 if item != "features_dir"
@@ -1378,6 +1439,302 @@ def _dataset_root_from_manifest_raw_root(raw_root: Path) -> Path:
     return raw_root
 
 
+def _dataset_root_from_pathlab_view_manifest(view_root: Path) -> Path | None:
+    """Return original PathLab dataset root for a session_inputs dataset view."""
+    manifest = Path(view_root) / "dataset_manifest.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("layout") != "pathlab_dataset_view":
+        return None
+
+    roots: set[Path] = set()
+    for item in data.get("pathlab_slide_map") or []:
+        if not isinstance(item, dict):
+            continue
+        raw_wsi = str(item.get("wsi_path") or "").strip()
+        if not raw_wsi:
+            continue
+        dataset_root = _dataset_root_from_asset_path(Path(raw_wsi).expanduser().parent)
+        if dataset_root is None:
+            continue
+        roots.add(dataset_root)
+        if len(roots) > 1:
+            return None
+    if len(roots) != 1:
+        return None
+    return next(iter(roots))
+
+
+def _dataset_root_from_pathlab_view_asset_dir(asset_dir: Path) -> Path | None:
+    """Return registered dataset root for a PathLab dataset-view asset dir."""
+    asset_dir = Path(asset_dir)
+    for view_root in (asset_dir.parent, asset_dir):
+        manifest = view_root / "dataset_manifest.json"
+        if not manifest.is_file():
+            continue
+        dataset_root = _dataset_root_from_pathlab_view_manifest(view_root)
+        if dataset_root is not None:
+            return dataset_root
+    return None
+
+
+def _pathlab_view_root_for_features_dir(features_dir: Path) -> Path | None:
+    """Return the PathLab session view root owning a feature directory."""
+    features_dir = Path(features_dir).expanduser()
+    for candidate in (features_dir, *features_dir.parents):
+        manifest = candidate / "dataset_manifest.json"
+        if not manifest.is_file():
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and data.get("layout") == "pathlab_dataset_view":
+            return candidate
+    return None
+
+
+def _safe_link_or_copy_feature(source: Path, target: Path) -> str:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() or target.is_symlink():
+        return "existing"
+    try:
+        target.symlink_to(source)
+        return "linked"
+    except OSError:
+        try:
+            target.write_bytes(source.read_bytes())
+            return "copied"
+        except OSError:
+            return "failed"
+
+
+def _sync_pathlab_view_feature_links(
+    *,
+    view_features_dir: Path,
+    extracted_features_dir: Path,
+) -> dict[str, Any]:
+    """Expose raw-name extracted features under PathLab view slide IDs.
+
+    PathLab session views use UUID slide IDs in splits, while feature extraction
+    against the durable dataset root writes tensors by original WSI stem. Link
+    the raw-name tensors back into the view feature dir so training can resolve
+    ``FEATURES_DIR/<split_slide_id>.pt``.
+    """
+    view_features_dir = Path(view_features_dir).expanduser()
+    extracted_features_dir = Path(extracted_features_dir).expanduser()
+    if not extracted_features_dir.is_dir():
+        return {"status": "skipped", "reason": "extracted_features_dir_missing"}
+    view_root = _pathlab_view_root_for_features_dir(view_features_dir)
+    if view_root is None:
+        return {"status": "skipped", "reason": "pathlab_view_manifest_missing"}
+    try:
+        manifest = json.loads((view_root / "dataset_manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "skipped", "reason": f"manifest_read_error:{exc}"}
+
+    linked = copied = existing = failed = missing = 0
+    for item in manifest.get("pathlab_slide_map") or []:
+        if not isinstance(item, dict):
+            continue
+        slide_id = str(item.get("slide_id") or item.get("wsi_id") or "").strip()
+        raw_wsi = str(item.get("wsi_path") or "").strip()
+        if not slide_id or not raw_wsi:
+            continue
+        source = extracted_features_dir / f"{Path(raw_wsi).stem}.pt"
+        target = view_features_dir / f"{slide_id}.pt"
+
+        if not source.is_file():
+            missing += 1
+            continue
+        result = _safe_link_or_copy_feature(source, target)
+        if result == "linked":
+            linked += 1
+        elif result == "copied":
+            copied += 1
+        elif result == "existing":
+            existing += 1
+        else:
+            failed += 1
+    status = "synced" if linked or copied or existing else "skipped"
+    return {
+        "status": status,
+        "linked": linked,
+        "copied": copied,
+        "existing": existing,
+        "failed": failed,
+        "missing": missing,
+    }
+
+
+def _feature_leaf_for_output_root(output_root: Path, extractor_name: str) -> Path:
+    output_root = Path(output_root)
+    if any((output_root / dirname).is_dir() for dirname in ("wsi_files", "WSIs", "wsis")):
+        return output_root / "features" / extractor_name
+    return output_root / "pt_files" / extractor_name
+
+
+def _container_path_for_host(
+    host_path: Path,
+    *,
+    data_mounts: dict[str, str],
+    preferred_container: str,
+) -> str:
+    host = Path(host_path).expanduser()
+    for host_root, container_root in sorted(
+        (data_mounts or {}).items(),
+        key=lambda item: len(str(item[0] or "")),
+        reverse=True,
+    ):
+        root = Path(host_root).expanduser()
+        try:
+            suffix = host.relative_to(root)
+        except ValueError:
+            continue
+        container = str(container_root or "").rstrip("/")
+        if not container:
+            continue
+        return f"{container}/{suffix.as_posix()}" if str(suffix) != "." else container
+    return preferred_container.rstrip("/")
+
+
+def _external_original_mount_name(view_container: str) -> str:
+    base = str(view_container or "/data/external").rstrip("/")
+    if base.endswith("_view"):
+        return f"{base[:-5]}_original"
+    return f"{base}_original"
+
+
+def _sync_pathlab_view_manifest_to_original_root(
+    view_root: Path,
+    original_root: Path,
+) -> str:
+    source = Path(view_root) / "dataset_manifest.json"
+    destination = Path(original_root) / "pathscientist_pathlab_view_manifest.json"
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict) or data.get("layout") != "pathlab_dataset_view":
+        return ""
+    try:
+        destination.write_text(
+            json.dumps(data, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.info("Could not sync PathLab view manifest to %s: %s", destination, exc)
+        return ""
+    return str(destination)
+
+
+def _rewrite_pathlab_view_external_outputs(
+    state,
+    config,
+    *,
+    data_mounts: dict[str, str],
+    extractor_name: str,
+) -> None:
+    """Route external PathLab dataset-view feature outputs to original data root."""
+    request = (getattr(state, "grounding", {}) or {}).get("external_test_request")
+    if not isinstance(request, dict):
+        return
+    contract = normalize_external_test_contract(
+        request.get("contract") or getattr(config, "external_test_contract", {}) or {}
+    )
+    if not contract:
+        return
+
+    view_texts = [
+        contract.get("external_pathlab_uploads_dir"),
+        contract.get("external_pathlab_wsi_files_dir"),
+        contract.get("external_wsi_dir"),
+    ]
+    view_host: Path | None = None
+    view_container = ""
+    for raw_text in view_texts:
+        text = str(raw_text or "").strip()
+        if not text:
+            continue
+        host = _host_path_from_mounts(text, data_mounts)
+        if host is None:
+            continue
+        candidate = host if host.name != "wsi_files" else host.parent
+        root = _dataset_root_from_pathlab_view_manifest(candidate)
+        if root is None:
+            continue
+        view_host = candidate
+        view_container = text if candidate == host else str(Path(text).parent)
+        break
+    if view_host is None:
+        return
+
+    original_root = _dataset_root_from_pathlab_view_manifest(view_host)
+    if original_root is None:
+        return
+    manifest_copy = _sync_pathlab_view_manifest_to_original_root(view_host, original_root)
+
+    original_container = _container_path_for_host(
+        original_root,
+        data_mounts=data_mounts,
+        preferred_container=_external_original_mount_name(view_container),
+    )
+    data_mounts[str(original_root)] = original_container
+    if not isinstance(getattr(config, "data_mounts", None), dict):
+        config.data_mounts = {}
+    config.data_mounts[str(original_root)] = original_container
+
+    original_feature_leaf = f"{original_container}/features/{extractor_name}"
+    feature_leaf = original_feature_leaf
+    external_ready = False
+    try:
+        from ..dataset.readiness import _feature_cache_covers_splits
+
+        splits_text = str(contract.get("external_splits_file") or "").strip()
+        splits_host = _host_path_from_mounts(splits_text, data_mounts) if splits_text else None
+        ready_feature_host: Path | None = None
+        if splits_host is not None and splits_host.is_file():
+            view_feature_host = view_host / "features" / extractor_name
+            original_feature_host = original_root / "features" / extractor_name
+            for candidate in (view_feature_host, original_feature_host):
+                if candidate.is_dir() and _feature_cache_covers_splits(candidate, splits_host):
+                    ready_feature_host = candidate
+                    break
+        if ready_feature_host is not None:
+            external_ready = True
+            feature_leaf = _container_path_for_host(
+                ready_feature_host,
+                data_mounts=data_mounts,
+                preferred_container=original_feature_leaf,
+            )
+    except Exception:
+        external_ready = False
+
+    updates = {
+        "pathlab_uploads_dir": original_container,
+        "pathlab_global_features_dir": f"{original_container}/features",
+        "pathlab_training_dir": f"{original_container}/training",
+        "pathlab_coordinates_dir": f"{original_container}/coordinates",
+        "data_output_dir": original_container,
+        "generated_features_dir": original_feature_leaf,
+        "features_dir": feature_leaf,
+        "extractor_name": extractor_name,
+    }
+    if manifest_copy:
+        contract["external_pathlab_view_manifest_file"] = manifest_copy
+    contract = update_external_dataset(contract, updates)
+    contract["external_features_ready"] = "true" if external_ready else "false"
+    request["contract"] = contract
+    request["enabled"] = True
+    request["requested"] = True
+    request["status"] = "enabled"
+    state.grounding["external_test_request"] = request
+    config.external_test_enabled = True
+    config.external_test_contract = dict(contract)
+
+
 def _resolve_symlinked_asset_root(asset_dir: Path) -> Path | None:
     """Return the real dataset root when prepared assets symlink to raw cache."""
     try:
@@ -1439,6 +1796,9 @@ def _resolve_features_data_output_dir(
     if raw_root:
         raw_path = _P(raw_root)
         if not (str(raw_path).startswith("/data/") or str(raw_path) == "/data"):
+            view_dataset_root = _dataset_root_from_pathlab_view_manifest(raw_path)
+            if view_dataset_root is not None:
+                return view_dataset_root
             return _dataset_root_from_manifest_raw_root(raw_path)
     if not wsi_dir:
         return fallback
@@ -1448,19 +1808,15 @@ def _resolve_features_data_output_dir(
     if str(p).startswith("/data/") or str(p) == "/data":
         return fallback
     dataset_root = _dataset_root_from_asset_path(p)
+    view_dataset_root = _dataset_root_from_pathlab_view_asset_dir(p)
+    if view_dataset_root is not None:
+        return view_dataset_root
     if dataset_root is not None:
         symlink_root = _resolve_symlinked_asset_root(p)
         if symlink_root is not None:
             return symlink_root
         return dataset_root
     return fallback
-
-
-def _feature_leaf_for_output_root(output_root: Path, extractor_name: str) -> Path:
-    output_root = Path(output_root)
-    if any((output_root / dirname).is_dir() for dirname in ("wsi_files", "WSIs", "wsis")):
-        return output_root / "features" / extractor_name
-    return output_root / "pt_files" / extractor_name
 
 
 def _inject_data_mounts_from_question(state, config) -> None:
@@ -2024,6 +2380,7 @@ def _internal_readiness_data_mounts(
     *,
     manifest_mounts: dict[str, str],
     data_mounts: dict[str, str],
+    prepared_contract: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     contracts: list[dict[str, Any]] = []
     request = (state.grounding or {}).get("external_test_request")
@@ -2094,6 +2451,14 @@ def _internal_readiness_data_mounts(
     if not external_paths:
         return dict(data_mounts or {})
     internal_paths = _role_paths("internal")
+    contract_internal_paths: set[Path] = set()
+    for field in fields:
+        raw_value = (prepared_contract or {}).get(field)
+        values = raw_value if isinstance(raw_value, list) else [raw_value]
+        for value in values:
+            host = _host_path_from_mounts(str(value or ""), data_mounts)
+            if host is not None:
+                contract_internal_paths.add(_resolve(host))
     fallback_internal_paths = (
         set()
         if internal_paths
@@ -2109,7 +2474,7 @@ def _internal_readiness_data_mounts(
         )
         is_internal = any(
             _contains(mount_host, path) or _contains(path, mount_host)
-            for path in internal_paths | fallback_internal_paths
+            for path in internal_paths | contract_internal_paths | fallback_internal_paths
         )
         if internal_paths and not is_internal:
             continue
@@ -2342,6 +2707,9 @@ def _skip_acquisition_if_cache_features_ready(
     return state
 
 
+_REGISTRY_ALIAS_TAG_PREFIXES = ("alias:", "dataset:", "dataset_name:")
+
+
 def _registry_record_keys(record) -> set[str]:
     """Stable duplicate keys for merging current seed records with cache."""
     keys: set[str] = set()
@@ -2353,7 +2721,9 @@ def _registry_record_keys(record) -> set[str]:
         keys.add(f"name:{name}")
     for tag in getattr(record, "tags", []) or []:
         tag_key = str(tag or "").strip().lower()
-        if tag_key:
+        if not tag_key:
+            continue
+        if tag_key.startswith(_REGISTRY_ALIAS_TAG_PREFIXES):
             keys.add(f"tag:{tag_key}")
     return keys
 
@@ -2371,6 +2741,789 @@ def _merge_seed_and_cache_records(seed_records, cache_records):
         out.append(record)
         blocked |= keys
     return out
+
+
+def _record_dataset_name_candidates(record) -> list[str]:
+    values: list[str] = []
+    for value in (
+        getattr(record, "name", ""),
+        getattr(record, "dataset_id", ""),
+        getattr(getattr(record, "download", None), "remote_id", ""),
+    ):
+        text = str(value or "").strip()
+        if text:
+            values.append(text)
+    for tag in getattr(record, "tags", []) or []:
+        text = str(tag or "").strip()
+        if text:
+            values.append(text)
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        key = value.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(value)
+    return out
+
+
+def _record_dataset_name_score(record, requested_names: list[str]) -> int:
+    best = 0
+    for requested in requested_names or []:
+        for candidate in _record_dataset_name_candidates(record):
+            best = max(best, _dataset_name_match_score(requested, candidate))
+    return best
+
+
+def _is_registered_dataset_record(record) -> bool:
+    provider = str(getattr(record, "provider", "") or "").strip().lower()
+    dataset_id = str(getattr(record, "dataset_id", "") or "").strip().lower()
+    download_kind = str(getattr(getattr(record, "download", None), "kind", "") or "").strip().lower()
+    return provider == "pathlab" or dataset_id.startswith("pathlab:") or download_kind == "pathlab_dataset"
+
+
+def _record_dataset_name_overlap_score(record, requested_names: list[str]) -> int:
+    requested_tokens: set[str] = set()
+    for name in requested_names or []:
+        requested_tokens.update(_meaningful_dataset_tokens(name))
+    if not requested_tokens:
+        return 0
+    best = 0
+    for candidate in _record_dataset_name_candidates(record):
+        candidate_tokens = set(_meaningful_dataset_tokens(candidate))
+        if not candidate_tokens:
+            continue
+        overlap = requested_tokens & candidate_tokens
+        if overlap:
+            best = max(best, len(overlap) * 100 + sum(len(token) for token in overlap))
+    return best
+
+
+def _record_summary_for_llm(record) -> dict[str, Any]:
+    download = getattr(record, "download", None)
+    return {
+        "dataset_id": str(getattr(record, "dataset_id", "") or ""),
+        "name": str(getattr(record, "name", "") or ""),
+        "provider": str(getattr(record, "provider", "") or ""),
+        "task_types": list(getattr(record, "task_types", []) or []),
+        "asset_types": list(getattr(record, "asset_types", []) or []),
+        "organs": list(getattr(record, "organs", []) or []),
+        "tags": list(getattr(record, "tags", []) or [])[:12],
+        "remote_id": str(getattr(download, "remote_id", "") or ""),
+    }
+
+
+def _candidate_records_for_llm_match(
+    records,
+    requested_names: list[str],
+    external_names: list[str],
+    *,
+    role: str,
+    limit: int = 40,
+) -> list:
+    ranked: list[tuple[int, int, int, int, Any]] = []
+    for index, record in enumerate(records or []):
+        requested_overlap = _record_dataset_name_overlap_score(record, requested_names)
+        external_overlap = _record_dataset_name_overlap_score(record, external_names)
+        if role == "internal" and external_overlap > requested_overlap and requested_overlap <= 0:
+            penalty = -10000
+        else:
+            penalty = 0
+        name_len = len(str(getattr(record, "name", "") or ""))
+        ranked.append((penalty + requested_overlap, requested_overlap, -external_overlap, -name_len, index, record))
+    ranked.sort(reverse=True)
+    return [record for *_scores, record in ranked[:limit]]
+
+
+def _llm_match_records_for_requested_dataset_role(
+    records,
+    state,
+    config,
+    *,
+    role: str,
+    requested_names: list[str],
+    external_names: list[str] | None = None,
+) -> list:
+    records = list(records or [])
+    if not records or not requested_names:
+        return []
+
+    external_names = list(external_names or [])
+    candidates = _candidate_records_for_llm_match(
+        records,
+        requested_names,
+        external_names,
+        role=role,
+    )
+    if not candidates:
+        return []
+
+    try:
+        from ..runtime.metric_parser import build_llm_text_caller
+        from ..structured_output import extract_json
+
+        llm_parser = build_llm_text_caller(config)
+    except Exception as exc:
+        logger.debug("dataset role LLM matcher unavailable: %s", exc)
+        return []
+    if llm_parser is None:
+        return []
+
+    task_profile = getattr(state, "task_profile", None) or (getattr(state, "grounding", {}) or {}).get("task_profile") or {}
+    question = str(getattr(getattr(state, "objective", None), "question", "") or "")
+    prompt = (
+        "You match a user's requested pathology dataset name to one dataset registry candidate.\n"
+        "Return ONLY JSON with schema:\n"
+        "{\"selected_dataset_id\":\"\", \"confidence\":\"high|medium|low|none\", \"reason\":\"\"}\n"
+        "Rules:\n"
+        "- Select only one dataset_id from the candidates below.\n"
+        "- Match by dataset semantics and aliases, ignoring generic prefixes like PathScientist, dataset, local, data.\n"
+        "- For role=internal, do not select a candidate that matches the external dataset name unless there is no better candidate.\n"
+        "- If no candidate matches the requested dataset, return selected_dataset_id as an empty string and confidence none.\n\n"
+        f"Role to match: {role}\n"
+        f"Requested {role} dataset names: {json.dumps(requested_names, ensure_ascii=False)}\n"
+        f"Requested external dataset names to avoid: {json.dumps(external_names, ensure_ascii=False)}\n"
+        f"User request: {question}\n"
+        f"Task profile: {json.dumps(task_profile, ensure_ascii=False, default=str)}\n"
+        "Candidates:\n"
+        f"{json.dumps([_record_summary_for_llm(record) for record in candidates], ensure_ascii=False, default=str)}"
+    )
+    try:
+        raw = llm_parser(prompt)
+        payload = extract_json(raw or "")
+    except Exception as exc:
+        logger.debug("dataset role LLM matcher failed: %s", exc)
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    selected_id = str(payload.get("selected_dataset_id") or payload.get("dataset_id") or "").strip()
+    confidence = str(payload.get("confidence") or "").strip().lower()
+    if not selected_id or confidence not in {"high", "medium"}:
+        return []
+
+    by_id = {str(getattr(record, "dataset_id", "") or ""): record for record in candidates}
+    selected = by_id.get(selected_id)
+    if selected is None:
+        return []
+
+    selected_requested_score = _record_dataset_name_score(selected, requested_names)
+    selected_requested_overlap = _record_dataset_name_overlap_score(selected, requested_names)
+    selected_external_score = _record_dataset_name_score(selected, external_names)
+    selected_external_overlap = _record_dataset_name_overlap_score(selected, external_names)
+    if (
+        role == "internal"
+        and external_names
+        and selected_external_score > 0
+        and selected_requested_score <= 0
+        and selected_requested_overlap <= 0
+    ):
+        return []
+    if (
+        role == "internal"
+        and external_names
+        and selected_external_overlap > selected_requested_overlap
+        and selected_requested_overlap <= 0
+    ):
+        return []
+
+    if getattr(state, "grounding", None) is None:
+        state.grounding = {}
+    grounding_key = f"{role}_dataset_llm_match"
+    state.grounding[grounding_key] = {
+        "selected_dataset_id": selected_id,
+        "selected_dataset_name": str(getattr(selected, "name", "") or ""),
+        "confidence": confidence,
+        "reason": str(payload.get("reason") or ""),
+        "requested_names": requested_names,
+        "external_names": external_names,
+    }
+    return [selected]
+
+
+def _filter_records_for_requested_internal_dataset(records, state, config) -> list:
+    requested_names = _requested_dataset_names_for_role(state, config, "internal")
+    if not requested_names:
+        return list(records or [])
+    if getattr(state, "grounding", None) is None:
+        state.grounding = {}
+
+    state.grounding["internal_dataset_name_constraint"] = requested_names
+    external_names = _requested_dataset_names_for_role(state, config, "external")
+    registered_scored = [
+        (
+            record,
+            _record_dataset_name_overlap_score(record, requested_names),
+            _record_dataset_name_overlap_score(record, external_names),
+        )
+        for record in (records or [])
+        if _is_registered_dataset_record(record)
+    ]
+    registered_matches = [
+        (record, requested_score, external_score)
+        for record, requested_score, external_score in registered_scored
+        if requested_score > 0 and requested_score >= external_score
+    ]
+    if registered_matches:
+        best_requested_score = max(
+            requested_score for _record, requested_score, _external_score in registered_matches
+        )
+        best_registered_matches = [
+            (record, requested_score, external_score)
+            for record, requested_score, external_score in registered_matches
+            if requested_score == best_requested_score
+        ]
+        state.grounding["internal_dataset_constraint_match_source"] = "registered_overlap"
+        state.grounding["internal_dataset_constraint_matches"] = [
+            {
+                "dataset_id": str(getattr(record, "dataset_id", "") or ""),
+                "name": str(getattr(record, "name", "") or ""),
+                "score": requested_score,
+                "source": "registered_overlap",
+            }
+            for record, requested_score, _external_score in best_registered_matches
+        ]
+        return [record for record, _requested_score, _external_score in best_registered_matches]
+
+    scored = [
+        (record, _record_dataset_name_score(record, requested_names))
+        for record in (records or [])
+    ]
+    matches = [record for record, score in scored if score > 0]
+    state.grounding["internal_dataset_constraint_matches"] = [
+        {
+            "dataset_id": str(getattr(record, "dataset_id", "") or ""),
+            "name": str(getattr(record, "name", "") or ""),
+            "score": score,
+        }
+        for record, score in scored
+        if score > 0
+    ]
+    if matches:
+        state.grounding["internal_dataset_constraint_match_source"] = "deterministic"
+        return matches
+
+    llm_matches = _llm_match_records_for_requested_dataset_role(
+        records,
+        state,
+        config,
+        role="internal",
+        requested_names=requested_names,
+        external_names=external_names,
+    )
+    if llm_matches:
+        state.grounding["internal_dataset_constraint_match_source"] = "llm"
+        state.grounding["internal_dataset_constraint_matches"] = [
+            {
+                "dataset_id": str(getattr(record, "dataset_id", "") or ""),
+                "name": str(getattr(record, "name", "") or ""),
+                "score": 0,
+                "source": "llm",
+            }
+            for record in llm_matches
+        ]
+        return llm_matches
+
+    external_scored = [
+        (record, _record_dataset_name_score(record, external_names))
+        for record in (records or [])
+    ]
+    external_matches = [record for record, score in external_scored if score > 0]
+    if external_matches:
+        state.grounding["external_dataset_excluded_from_internal_candidates"] = [
+            {
+                "dataset_id": str(getattr(record, "dataset_id", "") or ""),
+                "name": str(getattr(record, "name", "") or ""),
+                "score": score,
+            }
+            for record, score in external_scored
+            if score > 0
+        ]
+        return [record for record, score in external_scored if score <= 0]
+
+    state.grounding["internal_dataset_constraint_unmatched"] = requested_names
+    return list(records or [])
+
+
+def _pathlab_dataset_slug(name: str, dataset_id: str) -> str:
+    import re
+
+    raw = str(name or dataset_id or "dataset").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    if not slug:
+        slug = "dataset"
+    suffix = re.sub(r"[^a-z0-9]+", "", str(dataset_id or "").lower())[:8]
+    if suffix and suffix not in slug:
+        slug = f"{slug}_{suffix}"
+    return slug[:96]
+
+
+def _safe_pathlab_slide_id(value: str) -> str:
+    import re
+
+    raw = str(value or "").strip() or uuid4().hex
+    slide_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._-")
+    return (slide_id or uuid4().hex)[:180]
+
+
+def _normalized_pathlab_split(value: Any) -> str:
+    split = str(value or "").strip().lower()
+    if split in {"valid", "validation"}:
+        return "val"
+    return split if split in {"train", "val", "test"} else ""
+
+
+def _container_path_join(root: str, *parts: str) -> str:
+    clean = [str(part).strip("/") for part in parts if str(part or "").strip("/")]
+    return "/".join([str(root or "").rstrip("/")] + clean)
+
+
+def _pathlab_dataset_root_for_wsi(source: Path) -> tuple[Path, Path] | None:
+    parent = Path(source).expanduser().parent
+    dataset_root = _dataset_root_from_asset_path(parent)
+    if dataset_root is None:
+        return None
+    return dataset_root, parent
+
+
+def _write_pathlab_labels_and_splits(
+    *,
+    root: Path,
+    rows: list[dict[str, str]],
+    labels_file_name: str,
+    splits_file_name: str,
+) -> None:
+    import csv
+
+    labels_path = Path(root) / labels_file_name
+    split_values = [row.get("split", "") for row in rows]
+    use_db_splits = all(split_values)
+    labels_path.parent.mkdir(parents=True, exist_ok=True)
+    with labels_path.open("w", newline="", encoding="utf-8") as fh:
+        fieldnames = ["slide_id", "label"] + (["split"] if use_db_splits else [])
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row[key] for key in fieldnames})
+
+    from ..dataset.wsi_splits import build_classification_splits_from_labels
+
+    build_classification_splits_from_labels(labels_path, Path(root) / splits_file_name)
+
+
+def _build_pathlab_registered_dataset_contract(
+    *,
+    dataset: Any,
+    slides: list[Any],
+    sidecar_dir: Path,
+    data_container: str,
+    contract_container: str,
+) -> dict[str, Any] | None:
+    roots: set[Path] = set()
+    wsi_dirs: set[Path] = set()
+    rows: list[dict[str, str]] = []
+    accessible_rows: list[dict[str, str]] = []
+    pathlab_slide_map: list[dict[str, str]] = []
+    used_slide_ids: set[str] = set()
+    missing_sources: list[str] = []
+
+    data_container = str(data_container).rstrip("/")
+    contract_container = str(contract_container).rstrip("/")
+    for slide in slides or []:
+        source_raw = str(getattr(slide, "wsi_path", "") or "").strip()
+        if not source_raw:
+            continue
+        source = Path(source_raw).expanduser()
+        if not source.exists():
+            missing_sources.append(str(getattr(slide, "wsi_id", "") or source.name))
+            continue
+        root_pair = _pathlab_dataset_root_for_wsi(source)
+        if root_pair is None:
+            return None
+        root, wsi_dir = root_pair
+        roots.add(root.absolute())
+        wsi_dirs.add(wsi_dir.absolute())
+        slide_id = source.stem.strip() or _safe_pathlab_slide_id(str(getattr(slide, "wsi_id", "")))
+        suffix = 1
+        base_slide_id = slide_id
+        while slide_id in used_slide_ids:
+            suffix += 1
+            slide_id = f"{base_slide_id}_{suffix}"
+        used_slide_ids.add(slide_id)
+        label = str(getattr(slide, "label", "") or "").strip()
+        split = _normalized_pathlab_split(getattr(slide, "split", ""))
+        row = {"slide_id": slide_id, "label": label, "split": split}
+        accessible_rows.append(row)
+        if label:
+            rows.append(row)
+        original_filename = str(getattr(slide, "original_filename", "") or "").strip()
+        try:
+            relative_wsi = source.relative_to(root)
+            view_wsi_path = _container_path_join(data_container, relative_wsi.as_posix())
+        except ValueError:
+            view_wsi_path = _container_path_join(data_container, wsi_dir.name, source.name)
+        pathlab_slide_map.append({
+            "slide_id": slide_id,
+            "wsi_id": str(getattr(slide, "wsi_id", "") or ""),
+            "wsi_path": str(source),
+            "view_wsi_path": view_wsi_path,
+            "original_filename": original_filename or source.name,
+            "case_id": str(getattr(slide, "case_id", "") or ""),
+            "label": label,
+            "split": split,
+        })
+
+    if len(accessible_rows) < 3:
+        raise ValueError("too_few_accessible_wsi")
+    if len(roots) != 1 or len(wsi_dirs) != 1:
+        return None
+
+    root = next(iter(roots))
+    wsi_dir = next(iter(wsi_dirs))
+    try:
+        wsi_relative = wsi_dir.relative_to(root).as_posix()
+    except ValueError:
+        return None
+
+    labels_file_name = "pathscientist_labels.csv"
+    splits_file_name = "pathscientist_splits.json"
+    sidecar_dir = Path(sidecar_dir)
+    sidecar_dir.mkdir(parents=True, exist_ok=True)
+
+    db_label_counts: dict[str, int] = {}
+    for row in rows:
+        db_label_counts[row["label"]] = db_label_counts.get(row["label"], 0) + 1
+    labels_ready = len(rows) >= 3 and len(rows) == len(accessible_rows) and len(db_label_counts) > 1
+    if labels_ready:
+        _write_pathlab_labels_and_splits(
+            root=sidecar_dir,
+            rows=rows,
+            labels_file_name=labels_file_name,
+            splits_file_name=splits_file_name,
+        )
+
+    label_counts: dict[str, int] = {}
+    for row in rows:
+        label_counts[row["label"]] = label_counts.get(row["label"], 0) + 1
+
+    features_dir = root / "features" / "virchow2"
+    manifest = {
+        "dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
+        "pathlab_dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
+        "dataset_name": str(getattr(dataset, "name", "") or ""),
+        "layout": "pathlab_registered_dataset_root",
+        "data_type": "wsi",
+        "pathlab_uploads_dir": data_container,
+        "wsi_dir": _container_path_join(data_container, wsi_relative),
+        "features_dir": _container_path_join(data_container, "features", "virchow2"),
+        "labels_file": _container_path_join(contract_container, labels_file_name),
+        "splits_file": _container_path_join(contract_container, splits_file_name),
+        "requires_label_inference": not labels_ready,
+        "num_wsi": len(accessible_rows),
+        "num_labeled": len(rows),
+        "num_unlabeled": len(accessible_rows) - len(rows),
+        "classes": sorted(label_counts),
+        "label_counts": label_counts,
+        "db_label_counts": db_label_counts,
+        "source_organ": getattr(dataset, "source_organ", None),
+        "missing_source_count": len(missing_sources),
+        "feature_extractors": ["virchow2"] if features_dir.is_dir() else [],
+        "pathlab_slide_map": pathlab_slide_map,
+    }
+    (sidecar_dir / "dataset_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    contract: dict[str, Any] = {
+        "task_type": "mil_classification",
+        "wsi_dir": _container_path_join(data_container, wsi_relative),
+        "labels_file": _container_path_join(contract_container, labels_file_name),
+        "splits_file": _container_path_join(contract_container, splits_file_name),
+        "dataset_manifest_file": _container_path_join(contract_container, "dataset_manifest.json"),
+        "requires_feature_extraction": True,
+        "data_mounts": {str(root): data_container, str(sidecar_dir): contract_container},
+        "pathlab_uploads_dir": data_container,
+        "data_layout": "pathlab_uploads",
+    }
+    if features_dir.is_dir():
+        contract["features_dir"] = _container_path_join(data_container, "features", "virchow2")
+        contract["requires_feature_extraction"] = False
+    return {
+        "raw_root": str(root),
+        "prepared_root": str(sidecar_dir),
+        "contract": contract,
+        "reason": "pathlab_dataset_resolved",
+    }
+
+
+def _resolve_pathlab_dataset_for_acquisition_factory(config, workspace_root: Path):
+    def _database_url_for_asyncpg() -> str:
+        url = str(os.environ.get("DATABASE_URL") or "").strip()
+        if not url:
+            try:
+                from backend.database.database import DATABASE_URL as _DATABASE_URL
+
+                url = str(_DATABASE_URL or "").strip()
+            except Exception:
+                url = ""
+        return (
+            url.replace("postgresql+asyncpg://", "postgresql://", 1)
+            .replace("postgres+asyncpg://", "postgres://", 1)
+        )
+
+    def _resolver(record, profile, workspace_root_arg: Path) -> dict[str, Any] | None:
+        download = getattr(record, "download", None)
+        dataset_id = str(getattr(download, "remote_id", "") or "").strip()
+        if not dataset_id:
+            raw_id = str(getattr(record, "dataset_id", "") or "").strip()
+            dataset_id = raw_id.split(":", 1)[1] if raw_id.startswith("pathlab:") else raw_id
+        if not dataset_id:
+            return None
+        dsn = _database_url_for_asyncpg()
+        if not dsn:
+            return None
+
+        async def _run() -> dict[str, Any] | None:
+            import asyncpg
+
+            conn = await asyncpg.connect(dsn)
+            try:
+                dataset_row = await conn.fetchrow(
+                    """
+                    SELECT datasets.dataset_id, datasets.name, datasets.source_organ,
+                           datasets.user_id, datasets.is_public,
+                           data_groups.data_type, data_groups.task_type
+                    FROM datasets
+                    JOIN data_groups ON datasets.group_id = data_groups.group_id
+                    WHERE datasets.dataset_id = $1
+                    """,
+                    dataset_id,
+                )
+                if dataset_row is None:
+                    return None
+                owner_id = str(getattr(config, "pathlab_user_id", "") or "")
+                if owner_id and not bool(dataset_row["is_public"]) and str(dataset_row["user_id"] or "") != owner_id:
+                    raise ValueError("pathlab_dataset_access_denied")
+                slides = await conn.fetch(
+                    """
+                    SELECT wsi_id, original_filename, case_id, label, split, wsi_path,
+                           associated_files, feature_extracted
+                    FROM wsi_slides
+                    WHERE dataset_id = $1
+                    ORDER BY original_filename ASC NULLS LAST, wsi_id ASC
+                    """,
+                    dataset_id,
+                )
+            finally:
+                await conn.close()
+
+            dataset = SimpleNamespace(
+                dataset_id=dataset_row["dataset_id"],
+                name=dataset_row["name"],
+                source_organ=dataset_row["source_organ"],
+                data_type=dataset_row["data_type"],
+                task_type=dataset_row["task_type"],
+                user_id=dataset_row["user_id"],
+                is_public=dataset_row["is_public"],
+            )
+            slide_objects = [
+                SimpleNamespace(
+                    wsi_id=row["wsi_id"],
+                    original_filename=row["original_filename"],
+                    case_id=row["case_id"],
+                    label=row["label"],
+                    split=row["split"],
+                    wsi_path=row["wsi_path"],
+                    associated_files=row["associated_files"],
+                    feature_extracted=row["feature_extracted"],
+                )
+                for row in slides
+            ]
+            slug = _pathlab_dataset_slug(getattr(dataset, "name", ""), dataset_id)
+            data_container = f"/data/{slug}"
+            contract_container = f"{data_container}_contract"
+            return _build_pathlab_registered_dataset_contract(
+                dataset=dataset,
+                slides=slide_objects,
+                sidecar_dir=Path(workspace_root_arg) / ".dataset" / "pathlab_registered" / f"{slug}_contract",
+                data_container=data_container,
+                contract_container=contract_container,
+            )
+
+        result = _run_async_required_value(_run, f"resolve PathLab dataset {dataset_id}")
+        return result if isinstance(result, dict) else None
+
+    return _resolver
+
+
+def _pathlab_task_type_to_pathscientist(task_type: str, data_type: str) -> str:
+    task = (task_type or "").strip().lower()
+    data = (data_type or "").strip().lower()
+    if task == "classification" and data == "wsi":
+        return "mil_classification"
+    if task == "classification" and data == "patch":
+        return "patch_classification"
+    if task in {"survival", "survival_analysis"}:
+        return "survival_analysis"
+    return task
+
+
+def _is_transient_discovered_pathlab_dataset(name: str, tags: list[str] | None = None) -> bool:
+    """Return True for historical discovery rows that should not seed acquisition."""
+    normalized_name = (name or "").strip().lower()
+    if normalized_name.startswith("discovered - "):
+        return True
+    return any(str(tag or "").strip().lower() == "discovered" for tag in (tags or []))
+
+
+def _pathlab_dataset_record_from_row(row):
+    """Convert one PathLab dataset DB row into an acquisition registry record."""
+    try:
+        from ..dataset.types import DatasetRecord, DownloadSpec
+    except Exception as exc:
+        logger.debug("PathLab dataset row conversion unavailable: %s", exc)
+        return None
+
+    dataset_id = str(getattr(row, "dataset_id", "") or "").strip()
+    name = str(getattr(row, "name", "") or dataset_id).strip()
+    if not dataset_id or _is_transient_discovered_pathlab_dataset(name):
+        return None
+
+    data_type = str(getattr(row, "data_type", "") or "").strip().lower()
+    task_type = _pathlab_task_type_to_pathscientist(
+        str(getattr(row, "task_type", "") or ""),
+        data_type,
+    )
+    if not task_type:
+        return None
+    asset_types = (
+        ["wsi"]
+        if data_type == "wsi"
+        else (["patch_images"] if data_type == "patch" else [])
+    )
+    tags = ["pathlab", "pathscientist", name, dataset_id]
+    if getattr(row, "feature_count", 0):
+        tags.append("features_ready")
+    source_organ = str(getattr(row, "source_organ", "") or "").strip()
+    return DatasetRecord(
+        dataset_id=f"pathlab:{dataset_id}",
+        name=name,
+        provider="pathlab",
+        access="public" if bool(getattr(row, "is_public", False)) else "manual",
+        task_types=[task_type],
+        asset_types=asset_types,
+        organs=[source_organ] if source_organ else [],
+        tags=[tag for tag in tags if tag],
+        estimated_size_gb=0.0,
+        download=DownloadSpec(kind="pathlab_dataset", remote_id=dataset_id),
+    )
+
+
+def _pathlab_dataset_records_from_db(config=None):
+    """Return PathLab-registered datasets as acquisition registry records."""
+    try:
+        from ..dataset.types import DatasetRecord, DownloadSpec
+    except Exception as exc:
+        logger.debug("PathLab dataset registry import unavailable: %s", exc)
+        return []
+
+    def _database_url_for_asyncpg() -> str:
+        url = str(os.environ.get("DATABASE_URL") or "").strip()
+        if not url:
+            try:
+                from backend.database.database import DATABASE_URL as _DATABASE_URL
+
+                url = str(_DATABASE_URL or "").strip()
+            except Exception:
+                url = ""
+        return (
+            url.replace("postgresql+asyncpg://", "postgresql://", 1)
+            .replace("postgres+asyncpg://", "postgres://", 1)
+        )
+
+    async def _run() -> list[Any]:
+        import asyncpg
+
+        def _row_get(row: Any, key: str) -> Any:
+            try:
+                return row[key]
+            except Exception:
+                return getattr(row, key, None)
+
+        owner_id = str(getattr(config, "pathlab_user_id", "") or "")
+        dsn = _database_url_for_asyncpg()
+        if not dsn:
+            return []
+        query = """
+            SELECT
+                datasets.dataset_id,
+                datasets.name,
+                datasets.source_organ,
+                datasets.user_id,
+                datasets.is_public,
+                data_groups.data_type,
+                data_groups.task_type,
+                COUNT(wsi_slides.id) AS slide_count,
+                COUNT(wsi_slides.id) FILTER (
+                    WHERE wsi_slides.feature_extracted IS TRUE
+                ) AS feature_count
+            FROM datasets
+            JOIN data_groups
+                ON datasets.group_id = data_groups.group_id
+            LEFT JOIN wsi_slides
+                ON wsi_slides.dataset_id = datasets.dataset_id
+        """
+        params: list[Any] = []
+        if owner_id:
+            query += """
+            WHERE datasets.user_id = $1 OR datasets.is_public IS TRUE
+            """
+            params.append(owner_id)
+        query += """
+            GROUP BY
+                datasets.dataset_id,
+                datasets.name,
+                datasets.source_organ,
+                datasets.user_id,
+                datasets.is_public,
+                data_groups.data_type,
+                data_groups.task_type
+        """
+        conn = await asyncpg.connect(dsn)
+        try:
+            rows = await conn.fetch(query, *params)
+        finally:
+            await conn.close()
+
+        return [
+            SimpleNamespace(
+                dataset_id=_row_get(row, "dataset_id"),
+                name=_row_get(row, "name"),
+                source_organ=_row_get(row, "source_organ"),
+                user_id=_row_get(row, "user_id"),
+                is_public=_row_get(row, "is_public"),
+                data_type=_row_get(row, "data_type"),
+                task_type=_row_get(row, "task_type"),
+                slide_count=_row_get(row, "slide_count"),
+                feature_count=_row_get(row, "feature_count"),
+            )
+            for row in rows
+        ]
+
+    try:
+        rows = _run_async_required_value(_run, "load PathLab datasets into PathScientist registry")
+    except Exception as exc:
+        logger.debug("PathLab dataset registry load failed: %s", exc)
+        return []
+    if not isinstance(rows, list):
+        return []
+    records = []
+    for row in rows:
+        record = _pathlab_dataset_record_from_row(row)
+        if record is not None:
+            records.append(record)
+    return records
 
 
 def _run_acquisition_stage(
@@ -2523,11 +3676,23 @@ def _run_acquisition_stage(
         except Exception as e:
             logger.warning("dataset discovery persistence failed: %s", e)
 
+        pathlab_records = _pathlab_dataset_records_from_db(config)
+        curated_records = _merge_seed_and_cache_records(
+            curated_records,
+            pathlab_records,
+        )
+
         try:
             merged = merge_curated_and_discovered(curated_records, discovered)
         except Exception as e:
             logger.warning("merge_curated_and_discovered failed: %s", e)
             merged = curated_records
+
+        merged = _filter_records_for_requested_internal_dataset(
+            merged,
+            state,
+            config,
+        )
 
         session_registry_path = workspace_root / ".dataset" / "session_registry.json"
         session_registry = DatasetRegistry(session_registry_path)
@@ -2582,6 +3747,10 @@ def _run_acquisition_stage(
             download_only=(
                 ((state.grounding or {}).get("stop_after_skill", "") or "").strip()
                 == "acquisition"
+            ),
+            pathlab_dataset_resolver=_resolve_pathlab_dataset_for_acquisition_factory(
+                config,
+                workspace_root,
             ),
         )
 

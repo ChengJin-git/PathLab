@@ -260,12 +260,18 @@ DEFAULT_ADMIN_PASSWORD=admin
 Optional but common:
 
 ```bash
-HF_TOKEN=...                    # gated HF models, if needed
+HF_TOKEN=...                    # standalone/service fallback only; Web inherits PathLab Settings
 PATHLAB_CKPT_DIR=/path/to/ckpts # durable model checkpoint cache
 CUDA_VISIBLE_DEVICES=0,1        # GPU filtering
 ```
 
 ### 6.2 PathScientist local env
+
+Normal Web sessions started from PathLab do not require separate
+`PATHSCIENTIST_LLM_*` values. The Gateway inherits the PathLab global Settings
+LLM/HF credentials (`openrouter_base_url`, `openrouter_api_key`,
+`huggingface_token`), forwards the Hugging Face token as `HF_TOKEN`, and applies
+the PathScientist runtime defaults (`gpt-5.5`, `codex-relay`, `responses`).
 
 The standalone PathScientist launcher loads:
 
@@ -274,18 +280,20 @@ pathlab/pathlab-client/server/backend/pathscientist/.env.local
 ```
 
 Important limitation: the loader only accepts `PATHSCIENTIST_*` keys. Put
-`HF_TOKEN`, `KAGGLE_*`, `GDC_TOKEN`, etc. in your shell environment or backend
-`server/.env`, not in this `.env.local`, unless the code is changed to load
-those prefixes.
+`KAGGLE_*`, `GDC_TOKEN`, etc. in your shell environment or backend `server/.env`,
+not in this `.env.local`, unless the code is changed to load those prefixes.
+For Web sessions, put the Hugging Face token in PathLab Settings; use `HF_TOKEN`
+only as a standalone CLI/headless or service-environment fallback.
 
-A safe `.env.local` template:
+A safe standalone CLI `.env.local` template:
 
 ```bash
-PATHSCIENTIST_LLM_PROFILE=codex-relay
-PATHSCIENTIST_LLM_MODEL=gpt-5.5
-PATHSCIENTIST_LLM_WIRE_API=responses
-PATHSCIENTIST_LLM_BASE_URL=https://your-relay.example/v1
-PATHSCIENTIST_LLM_API_KEY=replace-with-local-secret
+# Standalone CLI/headless only. Web sessions inherit PathLab Settings instead.
+# PATHSCIENTIST_LLM_PROFILE=codex-relay
+# PATHSCIENTIST_LLM_MODEL=gpt-5.5
+# PATHSCIENTIST_LLM_WIRE_API=responses
+# PATHSCIENTIST_LLM_BASE_URL=https://your-relay.example/v1
+# PATHSCIENTIST_LLM_API_KEY=replace-with-local-secret
 
 PATHSCIENTIST_BASE_DIR=/path/to/pathscientist-workspaces
 PATHSCIENTIST_DATASET_CACHE_DIR=/path/to/pathlab-data
@@ -307,9 +315,12 @@ chmod 600 pathlab/pathlab-client/server/backend/pathscientist/.env.local
 
 | Secret/env | Required for | Where to put |
 |---|---|---|
-| `PATHSCIENTIST_LLM_API_KEY` | LLM helper calls and skill/model selection when not using existing Codex config | `pathscientist/.env.local` |
-| `PATHSCIENTIST_LLM_BASE_URL` | OpenAI-compatible relay endpoint | `pathscientist/.env.local` |
-| `HF_TOKEN` | gated Hugging Face model downloads | shell or `server/.env` |
+| PathLab Settings `openrouter_api_key` | Web PathScientist LLM calls | PathLab Settings / database |
+| PathLab Settings `openrouter_base_url` | Web PathScientist OpenAI-compatible relay endpoint | PathLab Settings / database |
+| PathLab Settings `huggingface_token` | Web PathScientist gated Hugging Face model downloads | PathLab Settings / database |
+| `PATHSCIENTIST_LLM_API_KEY` | Standalone CLI/headless LLM calls only | `pathscientist/.env.local` or shell |
+| `PATHSCIENTIST_LLM_BASE_URL` | Standalone CLI/headless OpenAI-compatible relay endpoint only | `pathscientist/.env.local` or shell |
+| `HF_TOKEN` | standalone CLI/headless or service fallback for gated Hugging Face downloads | shell or `server/.env` |
 | `PATHLAB_CKPT_DIR` | durable local checkpoint directory | shell or `server/.env` |
 | `KAGGLE_USERNAME` + `KAGGLE_KEY` | Kaggle CLI auth | shell |
 | `KAGGLE_API_TOKEN` | modern Kaggle bearer token / KGAT token | shell |
@@ -642,7 +653,9 @@ Recommended durable checkpoint root:
 ```bash
 export PATHLAB_CKPT_DIR=/path/to/pathlab-checkpoints
 export HF_HOME=/path/to/huggingface-cache
-export HF_TOKEN=...
+# Web sessions inherit PathLab Settings huggingface_token.
+# Standalone CLI/headless fallback:
+# export HF_TOKEN=...
 ```
 
 Feature extraction output convention:
@@ -812,16 +825,20 @@ python -m pip install -r ../../requirements.txt -r ../../requirements-test.txt
 
 ### `No LLM model configured` or skill/model selection fails
 
-Check:
+For Web sessions, check PathLab global Settings first. PathScientist inherits
+`openrouter_base_url` and `openrouter_api_key` through the Gateway, then applies
+its own model/profile defaults.
+
+For standalone CLI/headless runs, check:
 
 ```bash
 env | grep '^PATHSCIENTIST_LLM_'
 cat pathlab/pathlab-client/server/backend/pathscientist/.env.local
 ```
 
-For relay usage, `PATHSCIENTIST_LLM_MODEL`, `PATHSCIENTIST_LLM_BASE_URL`, and
-`PATHSCIENTIST_LLM_API_KEY` must resolve. `PATHSCIENTIST_LLM_PROFILE` defaults
-to `codex-relay` in `start.sh`.
+In standalone relay usage, `PATHSCIENTIST_LLM_MODEL`,
+`PATHSCIENTIST_LLM_BASE_URL`, and `PATHSCIENTIST_LLM_API_KEY` must resolve.
+`PATHSCIENTIST_LLM_PROFILE` defaults to `codex-relay` in `start.sh`.
 
 ### Kaggle says credentials are missing
 
@@ -866,7 +883,9 @@ Set a durable checkpoint/cache location and make sure the expected files exist:
 ```bash
 export PATHLAB_CKPT_DIR=/path/to/pathlab-checkpoints
 export HF_HOME=/path/to/hf-cache
-export HF_TOKEN=...
+# Web sessions inherit PathLab Settings huggingface_token.
+# Standalone CLI/headless fallback:
+# export HF_TOKEN=...
 ```
 
 For local-only extractors, place files exactly as requested by the error, e.g.:

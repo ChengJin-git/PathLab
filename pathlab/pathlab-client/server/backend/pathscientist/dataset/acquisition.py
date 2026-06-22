@@ -59,8 +59,9 @@ _LOCAL_SCAN_SKIP_DIRS = {
     "prepared",
 }
 _LOCAL_WSI_EXTS = {
-    ".svs", ".tif", ".tiff", ".ndpi", ".mrxs",
-    ".scn", ".vms", ".vmu", ".bif",
+    ".svs", ".svslide", ".tif", ".tiff", ".ndpi", ".mrxs",
+    ".scn", ".vsi", ".vms", ".vmu", ".bif", ".kfb", ".sdpc",
+    ".tmap", ".qptiff",
 }
 _LOCAL_RAW_HINT_DIRS = {
     "WSIs", "wsis", "slides", "slide", "wsi", "WSI", "wsi_images",
@@ -110,6 +111,17 @@ _LOCAL_PROVIDER_TOKENS = {
     "tcia": "tcia",
     "direct": "direct_http",
     "directhttp": "direct_http",
+}
+_LOCAL_SOURCE_ONLY_TOKENS = {
+    "nanfang",
+    "pwh",
+    "xijing",
+    "zhefuyi",
+    "zhengda",
+    "shantou",
+    "zhongshan",
+    "zhongshansanyuan",
+    "zhongshanzhongliu",
 }
 _LOCAL_LABEL_FILE_NAMES = {
     "labels.csv", "label.csv", "labels.tsv", "label.tsv",
@@ -460,6 +472,7 @@ class DatasetAcquisitionService:
         policy: AcquisitionPolicy | None = None,
         local_identity_llm_parser: Callable[[str], str] | None = None,
         download_only: bool = False,
+        pathlab_dataset_resolver: Callable[[Any, TaskProfile, Path], dict[str, Any] | None] | None = None,
     ):
         self._registry = registry
         self._providers = dict(providers)
@@ -468,6 +481,7 @@ class DatasetAcquisitionService:
         self._policy = policy or AcquisitionPolicy()
         self._local_identity_llm_parser = local_identity_llm_parser
         self._download_only = bool(download_only)
+        self._pathlab_dataset_resolver = pathlab_dataset_resolver
 
     def _select_normalizer(self, task_type: str) -> DatasetNormalizer | None:
         for n in self._normalizers:
@@ -1690,7 +1704,11 @@ class DatasetAcquisitionService:
         ):
             return False, "local_dataset_label_schema_mismatch", evidence
 
-        if evidence["identity_score"] > 0:
+        matched_identity_tokens = set(evidence.get("matched_identity_tokens") or [])
+        if (
+            evidence["identity_score"] > 0
+            and not matched_identity_tokens <= _LOCAL_SOURCE_ONLY_TOKENS
+        ):
             return True, "identity_token_match", evidence
 
         decision, reason = self._llm_local_identity_decision(
@@ -1716,6 +1734,137 @@ class DatasetAcquisitionService:
         return (
             "local_dataset_identity_mismatch:"
             f"selected_dataset_id={record.dataset_id}"
+        )
+
+    def _is_pathlab_dataset_record(self, record) -> bool:
+        provider = str(getattr(record, "provider", "") or "").strip().lower()
+        dataset_id = str(getattr(record, "dataset_id", "") or "").strip().lower()
+        download_kind = str(getattr(getattr(record, "download", None), "kind", "") or "").strip().lower()
+        return provider == "pathlab" or dataset_id.startswith("pathlab:") or download_kind == "pathlab_dataset"
+
+    def _try_pathlab_dataset_resolver(
+        self,
+        *,
+        profile: TaskProfile,
+        workspace_root: Path,
+        manifest_path: Path,
+        candidates,
+        chosen,
+    ) -> AcquisitionResult | None:
+        record = chosen.record
+        if not self._is_pathlab_dataset_record(record):
+            return None
+        if self._pathlab_dataset_resolver is None:
+            return None
+
+        try:
+            payload = self._pathlab_dataset_resolver(record, profile, workspace_root)
+        except Exception as exc:
+            reason = f"pathlab_dataset_resolver_error:{exc}"
+            manifest = DatasetManifest(
+                dataset_id=record.dataset_id,
+                provider=record.provider,
+                selected_for_task=profile.task_type,
+                raw_root="",
+                prepared_root="",
+                data_mounts={},
+                prepared_contract={},
+                access=record.access,
+                status="failed",
+            )
+            save_manifest(manifest_path, manifest)
+            ev = write_acquisition_record(
+                workspace_root,
+                {
+                    "status": "failed",
+                    "reason": reason,
+                    "candidate": {"dataset_id": record.dataset_id, "score": chosen.score},
+                    "task_profile": profile.to_dict(),
+                },
+            )
+            self._write_plan(
+                workspace_root, candidates,
+                status="failed",
+                selected_dataset_id=record.dataset_id,
+                reason=reason,
+                profile=profile,
+            )
+            return AcquisitionResult(
+                status="failed",
+                manifest=manifest,
+                manifest_path=manifest_path,
+                candidate=chosen,
+                evidence_path=ev,
+                reason=reason,
+            )
+        if not payload:
+            return None
+        contract = dict(payload.get("contract") or {})
+        if not contract:
+            return None
+        contract, reason, readiness_payload = self._validate_prepared_contract(
+            profile=profile,
+            contract=contract,
+            workspace_root=workspace_root,
+        )
+        if reason:
+            manifest = DatasetManifest(
+                dataset_id=record.dataset_id,
+                provider=record.provider,
+                selected_for_task=profile.task_type,
+                raw_root=str(payload.get("raw_root") or ""),
+                prepared_root=str(payload.get("prepared_root") or ""),
+                data_mounts=dict(contract.get("data_mounts") or {}),
+                prepared_contract={
+                    k: str(v) if not isinstance(v, dict) else v
+                    for k, v in contract.items()
+                },
+                access=record.access,
+                status="failed",
+            )
+            save_manifest(manifest_path, manifest)
+            ev = write_acquisition_record(
+                workspace_root,
+                {
+                    "status": "failed",
+                    "reason": reason,
+                    "candidate": {"dataset_id": record.dataset_id, "score": chosen.score},
+                    "prepared_contract": manifest.prepared_contract,
+                    "data_readiness": readiness_payload,
+                    "task_profile": profile.to_dict(),
+                },
+            )
+            self._write_plan(
+                workspace_root, candidates,
+                status="failed",
+                selected_dataset_id=record.dataset_id,
+                reason=reason,
+                profile=profile,
+            )
+            return AcquisitionResult(
+                status="failed",
+                manifest=manifest,
+                manifest_path=manifest_path,
+                candidate=chosen,
+                evidence_path=ev,
+                reason=reason,
+            )
+
+        raw_root = Path(str(payload.get("raw_root") or payload.get("prepared_root") or ""))
+        prepared_root = Path(str(payload.get("prepared_root") or raw_root))
+        return self._prepared_success_result(
+            profile=profile,
+            workspace_root=workspace_root,
+            manifest_path=manifest_path,
+            candidates=candidates,
+            chosen=chosen,
+            raw_root=raw_root,
+            prepared_root=prepared_root,
+            contract=contract,
+            readiness_payload=readiness_payload,
+            reason=str(payload.get("reason") or "pathlab_dataset_resolved"),
+            download_status="pathlab_dataset",
+            local_identity_reason="llm_identity_accept",
         )
 
     def _iter_local_raw_candidates(
@@ -2357,6 +2506,16 @@ class DatasetAcquisitionService:
 
         chosen = allowed[0]
         record = chosen.record
+
+        pathlab_result = self._try_pathlab_dataset_resolver(
+            profile=profile,
+            workspace_root=workspace_root,
+            manifest_path=manifest_path,
+            candidates=candidates,
+            chosen=chosen,
+        )
+        if pathlab_result is not None:
+            return pathlab_result
 
         if (
             profile.task_type == "mil_classification"

@@ -303,6 +303,268 @@ def test_multi_mil_uses_existing_tcga_nsclc_feature_cache_without_download(tmp_p
     assert result.manifest.data_mounts[str(nsclc_root)] == "/data/raw"
 
 
+def test_local_discovery_rejects_source_only_dataset_identity_match(tmp_path):
+    """A shared source token such as Nanfang must not make NSCLC match GC-IM."""
+    from pathscientist.dataset.normalizers.mil_classification import (
+        MILClassificationNormalizer,
+    )
+
+    cache_root = tmp_path / "tmp_test_data"
+    wrong_root = cache_root / "Nanfang-NSCLC-subset4"
+    (wrong_root / "WSIs").mkdir(parents=True)
+    for slide_id in ("1015654", "1015659", "1015664", "1018204"):
+        (wrong_root / "WSIs" / f"{slide_id}.svs").write_text("wsi")
+    (wrong_root / "labels.csv").write_text(
+        "slide_id,label\n"
+        "1015654,1\n"
+        "1015659,0\n"
+        "1015664,0\n"
+        "1018204,1\n",
+        encoding="utf-8",
+    )
+    (wrong_root / "splits.json").write_text(json.dumps({
+        "train": ["1015654", "1018204"],
+        "val": ["1015664"],
+        "test": ["1015659"],
+        "labels": {
+            "1015654": 1,
+            "1015659": 0,
+            "1015664": 0,
+            "1018204": 1,
+        },
+    }))
+    reg = _registry_with([
+        DatasetRecord(
+            dataset_id="discovered:nanfang-gc-im",
+            name="Nanfang-GC-IM",
+            provider="manual",
+            access="manual",
+            task_types=["mil_classification"],
+            asset_types=["wsi"],
+            organs=["stomach"],
+            tags=[
+                "intestinal_metaplasia",
+                "intestinal metaplasia",
+                "metaplasia",
+                "IM",
+                "Task4",
+            ],
+            download=DownloadSpec(kind="manual"),
+        )
+    ], tmp_path)
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={},
+        normalizers=[MILClassificationNormalizer()],
+        cache_root=cache_root,
+        policy=AcquisitionPolicy(download_policy="all"),
+        local_identity_llm_parser=lambda _prompt: (
+            '{"decision":"reject","confidence":"high",'
+            '"reason":"NSCLC is not gastric intestinal metaplasia",'
+            '"matched_dataset_identity":"","conflicts":["organ","target"]}'
+        ),
+    )
+    profile = TaskProfile(
+        task_type="mil_classification",
+        asset_level="slide",
+        input_modality="wsi",
+        label_granularity="slide",
+        organ="stomach",
+        prediction_target="intestinal_metaplasia",
+        dataset_keywords=["Nanfang-GC-IM", "PWH-GC-IM"],
+        required_label_keywords=["intestinal_metaplasia", "IM", "Task4"],
+    )
+
+    result = service.acquire(profile, workspace_root=tmp_path / "workspace")
+
+    assert result.status != "prepared"
+    assert result.manifest.raw_root != str(wrong_root)
+
+
+def test_local_discovery_prefers_canonical_pathscientist_record_over_discovered_alias(tmp_path):
+    """Do not create a session-local discovered dataset when a canonical one exists."""
+    from pathscientist.dataset.normalizers.mil_classification import (
+        MILClassificationNormalizer,
+    )
+
+    cache_root = tmp_path / "tmp_test_data"
+    pwh_root = cache_root / "PWH-GC-IM"
+    (pwh_root / "WSIs").mkdir(parents=True)
+    for slide_id in ("23S000033", "23S000034", "23S000035", "23S000036"):
+        (pwh_root / "WSIs" / f"{slide_id}.svs").write_text("wsi")
+    (pwh_root / "labels.csv").write_text(
+        "slide_id,label\n"
+        "23S000033,Intestinal metaplasia\n"
+        "23S000034,Not Intestinal metaplasia\n"
+        "23S000035,Intestinal metaplasia\n"
+        "23S000036,Not Intestinal metaplasia\n",
+        encoding="utf-8",
+    )
+    (pwh_root / "splits.json").write_text(json.dumps({
+        "train": ["23S000033", "23S000034"],
+        "val": ["23S000035"],
+        "test": ["23S000036"],
+        "labels": {
+            "23S000033": 1,
+            "23S000034": 0,
+            "23S000035": 1,
+            "23S000036": 0,
+        },
+    }))
+
+    canonical = DatasetRecord(
+        dataset_id="pathlab:pwh-gc-im",
+        name="PathScientist PWH-GC-IM",
+        provider="manual",
+        access="manual",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["stomach"],
+        tags=[
+            "PWH-GC-IM",
+            "intestinal_metaplasia",
+            "intestinal metaplasia",
+            "metaplasia",
+            "IM",
+            "Task4",
+        ],
+        download=DownloadSpec(kind="manual"),
+    )
+    discovered = DatasetRecord(
+        dataset_id="discovered:pwh-gc-im",
+        name="PWH-GC-IM",
+        provider="manual",
+        access="manual",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["stomach"],
+        tags=[
+            "PWH-GC-IM",
+            "intestinal_metaplasia",
+            "intestinal metaplasia",
+            "metaplasia",
+            "IM",
+            "Task4",
+            "discovered",
+        ],
+        download=DownloadSpec(kind="manual"),
+    )
+    reg = _registry_with([discovered, canonical], tmp_path)
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={},
+        normalizers=[MILClassificationNormalizer()],
+        cache_root=cache_root,
+        policy=AcquisitionPolicy(download_policy="all"),
+    )
+    profile = TaskProfile(
+        task_type="mil_classification",
+        asset_level="slide",
+        input_modality="wsi",
+        label_granularity="slide",
+        organ="stomach",
+        prediction_target="intestinal_metaplasia",
+        dataset_keywords=["PWH-GC-IM"],
+        required_label_keywords=["intestinal_metaplasia", "IM", "Task4"],
+    )
+
+    result = service.acquire(profile, workspace_root=tmp_path / "workspace")
+
+    assert result.status == "prepared"
+    assert result.candidate is not None
+    assert result.candidate.record.dataset_id == "pathlab:pwh-gc-im"
+    assert result.manifest.dataset_id == "pathlab:pwh-gc-im"
+    assert result.manifest.raw_root == str(pwh_root)
+
+
+
+def test_pathlab_dataset_record_uses_resolver_instead_of_download_provider(tmp_path):
+    root = tmp_path / "Nanfang-GC-IM"
+    wsi_dir = root / "WSIs"
+    labels = root / "labels.csv"
+    splits = root / "splits.json"
+    wsi_dir.mkdir(parents=True)
+    for slide_id in ("slide-1", "slide-2", "slide-3", "slide-4"):
+        (wsi_dir / f"{slide_id}.svs").write_text("wsi", encoding="utf-8")
+    labels.write_text(
+        "slide_id,label\n"
+        "slide-1,0\n"
+        "slide-2,1\n"
+        "slide-3,0\n"
+        "slide-4,1\n",
+        encoding="utf-8",
+    )
+    splits.write_text(json.dumps({
+        "train": ["slide-1", "slide-2"],
+        "val": ["slide-3"],
+        "test": ["slide-4"],
+        "labels": {
+            "slide-1": 0,
+            "slide-2": 1,
+            "slide-3": 0,
+            "slide-4": 1,
+        },
+    }), encoding="utf-8")
+    rec = DatasetRecord(
+        dataset_id="pathlab:dataset-nanfang-gc-im",
+        name="PathScientist Nanfang-GC-IM",
+        provider="pathlab",
+        access="manual",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["stomach"],
+        tags=["Nanfang-GC-IM", "intestinal_metaplasia"],
+        download=DownloadSpec(kind="pathlab_dataset", remote_id="dataset-nanfang-gc-im"),
+    )
+    reg = _registry_with([rec], tmp_path)
+
+    def resolver(record, profile, workspace_root):
+        assert record.dataset_id == "pathlab:dataset-nanfang-gc-im"
+        assert profile.task_type == "mil_classification"
+        return {
+            "raw_root": str(root),
+            "prepared_root": str(root),
+            "contract": {
+                "task_type": "mil_classification",
+                "wsi_dir": str(wsi_dir),
+                "labels_file": str(labels),
+                "splits_file": str(splits),
+                "requires_feature_extraction": True,
+                "data_mounts": {str(root): "/data"},
+            },
+            "reason": "pathlab_dataset_resolved",
+        }
+
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={},
+        normalizers=[],
+        cache_root=tmp_path / "cache",
+        policy=AcquisitionPolicy(download_policy="all"),
+        pathlab_dataset_resolver=resolver,
+    )
+
+    result = service.acquire(
+        TaskProfile(
+            task_type="mil_classification",
+            asset_level="slide",
+            input_modality="wsi",
+            label_granularity="slide",
+            organ="stomach",
+            dataset_keywords=["Nanfang-GC-IM"],
+            prediction_target="intestinal_metaplasia",
+        ),
+        workspace_root=tmp_path / "workspace",
+    )
+
+    assert result.status == "prepared"
+    assert result.reason == "pathlab_dataset_resolved"
+    assert result.manifest.dataset_id == "pathlab:dataset-nanfang-gc-im"
+    assert result.manifest.provider == "pathlab"
+    assert result.manifest.raw_root == str(root)
+    assert result.manifest.data_mounts == {str(root): "/data"}
+    assert result.manifest.prepared_contract["splits_file"] == str(splits)
+
 def test_acquisition_failed_when_no_normalizer_supports_task(tmp_path):
     reg = _registry_with([
         DatasetRecord(

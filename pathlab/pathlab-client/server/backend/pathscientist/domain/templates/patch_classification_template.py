@@ -6,7 +6,7 @@ at it but the file didn't exist, so `skill_browser load patch_classification`
 crashed and grounding fell back to free mode (session_a70dd3a564c1).
 
 Contracts (do NOT change without updating the skill yaml):
-  - Default extractor: ``DEFAULT_EXTRACTOR = os.getenv("PATHLAB_EXTRACTOR", "uni2")``
+  - Default extractor: ``DEFAULT_EXTRACTOR = os.getenv("PATHLAB_EXTRACTOR", "virchow2")``
     A pathology foundation model. **Never** silently fall back to ImageNet.
   - ``PATHLAB_QUICK_CHECK=1`` → 2 epochs, small subsample, write
     ``"quick_check": True`` in metrics.json so the orchestrator can refuse
@@ -76,7 +76,7 @@ from torch.utils.data import DataLoader, Dataset
 # venv outside the apptainer sandbox).
 
 # ── Configuration ──────────────────────────────────────────────────────────
-DEFAULT_EXTRACTOR = os.getenv("PATHLAB_EXTRACTOR", "uni2")
+DEFAULT_EXTRACTOR = os.getenv("PATHLAB_EXTRACTOR", "virchow2")
 EPOCHS = int(os.getenv("PATHLAB_MAX_EPOCHS", "50"))
 EARLY_STOPPING_PATIENCE = int(os.getenv("PATHLAB_EARLY_STOPPING_PATIENCE", "10"))
 BATCH_SIZE = int(os.getenv("PATHLAB_BATCH_SIZE", "64"))

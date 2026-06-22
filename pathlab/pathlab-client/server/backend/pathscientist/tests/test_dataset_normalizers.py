@@ -120,6 +120,30 @@ def test_mil_normalizer_carries_labels_when_present(tmp_path):
     assert Path(contract["labels_file"]).read_text() == "slide_id,label\ns1,tumor\n"
 
 
+def test_mil_normalizer_uses_task4_for_intestinal_metaplasia_profile(tmp_path):
+    raw = tmp_path / "raw"
+    (raw / "slides").mkdir(parents=True)
+    (raw / "slides" / "s1.svs").write_bytes(b"fake")
+    (raw / "slides" / "s2.svs").write_bytes(b"fake")
+    (raw / "labels.csv").write_text(
+        "slide_id,Task1,Task4\n"
+        "s1,0,Intestinal metaplasia\n"
+        "s2,1,Not Intestinal metaplasia\n"
+    )
+    prepared = tmp_path / "prepared"
+
+    contract = MILClassificationNormalizer().prepare(
+        raw,
+        prepared,
+        task_profile={"prediction_target": "intestinal_metaplasia"},
+    )
+
+    assert contract["label_column"] == "Task4"
+    assert Path(contract["labels_file"]).read_text() == (
+        "slide_id,label\ns1,Intestinal metaplasia\ns2,Not Intestinal metaplasia\n"
+    )
+
+
 def test_mil_normalizer_emits_empty_labels_when_missing(tmp_path):
     raw = tmp_path / "raw"
     (raw / "slides").mkdir(parents=True)

@@ -170,7 +170,7 @@ def _expected_feature_output_dirs(
 
     Prefer the configured extractor name because it is the orchestrator's
     selected extractor. For PathLab uploads repositories, feature tensors land
-    under ``features/<extractor>/<params_hash>``; standalone fallback datasets
+    under ``features/<extractor>``; standalone fallback datasets
     still use ``pt_files/<extractor>``.
     """
     roots = _candidate_data_output_roots(config=config, data_output_dir=data_output_dir)
@@ -237,7 +237,7 @@ def _feature_output_contract_violation(
         "successfully, but no .pt/.pth feature tensors were found in the "
         f"planned persistent feature directory: {expected_text}. "
         "Feature extraction scripts must save tensors under "
-        "DATA_OUTPUT_DIR/features/<extractor>/<params_hash>/<slide_id>.pt "
+        "DATA_OUTPUT_DIR/features/<extractor>/<slide_id>.pt "
         "for PathLab uploads or DATA_OUTPUT_DIR/pt_files/<extractor>/<slide_id>.pt "
         "for standalone fallback datasets, not only under "
         "OUTPUT_DIR/output/runs/<run_id>. This run is marked failed so the "
@@ -358,6 +358,7 @@ def _planned_feature_extraction_env(config) -> dict[str, str]:
         extractor = (os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTOR", "") or "").strip()
     if extractor:
         env["PATHSCIENTIST_FEATURE_EXTRACTOR"] = extractor
+        env["PATHLAB_EXTRACTOR"] = extractor
     return env
 
 
@@ -377,6 +378,22 @@ def _planned_model_selection_env(config) -> dict[str, str]:
         mil_model = (os.environ.get("PATHSCIENTIST_MIL_MODEL", "") or "").strip()
     if mil_model:
         env["PATHSCIENTIST_MIL_MODEL"] = mil_model
+    return env
+
+
+def _planned_training_data_env(config) -> dict[str, str]:
+    """Return orchestrator-planned downstream training data env vars."""
+    env: dict[str, str] = {}
+    features_dir = (getattr(config, "planned_features_dir", "") or "").strip()
+    splits_file = (getattr(config, "planned_splits_file", "") or "").strip()
+    extractor = (getattr(config, "planned_feature_extractor", "") or "").strip()
+    if features_dir:
+        env["FEATURES_DIR"] = features_dir
+    if splits_file:
+        env["SPLITS_FILE"] = splits_file
+    if extractor:
+        env["PATHSCIENTIST_FEATURE_EXTRACTOR"] = extractor
+        env["PATHLAB_EXTRACTOR"] = extractor
     return env
 
 
@@ -864,6 +881,8 @@ def _build_env_vars_for_test(
                 run_history=getattr(config, "run_history", None),
             )
         )
+    if (run_kind or "").strip().lower() in {"auto", "training"}:
+        env_vars.update(_planned_training_data_env(config))
     env_vars.update(_planned_model_selection_env(config))
     return env_vars
 
@@ -1337,6 +1356,8 @@ class RunExperimentExecutor(ToolExecutor):
                     contract["model_path"] = resolved_model_path
                     self._config.external_test_contract = contract
             external_test_last_experiment = last_experiment
+        if semantic_run_kind == "training":
+            env_vars.update(_planned_training_data_env(self._config))
         env_vars.update(_planned_model_selection_env(self._config))
 
         if semantic_run_kind == "external_test":

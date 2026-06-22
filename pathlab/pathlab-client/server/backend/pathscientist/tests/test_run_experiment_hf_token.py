@@ -27,6 +27,41 @@ def test_run_experiment_env_forwards_huggingface_token(tmp_path):
     assert env["PATHSCIENTIST_HUGGINGFACE_TOKEN"] == "pathlab-hf-token"
 
 
+def test_run_experiment_env_injects_planned_patch_extractor(tmp_path):
+    config = PathScientistConfig(
+        planned_feature_extractor="virchow2",
+    )
+
+    env = _build_env_vars_for_test(
+        config=config,
+        run_dir=tmp_path / "run",
+        script_text="print('patch train')\n",
+        run_kind="training",
+    )
+
+    assert env["PATHSCIENTIST_FEATURE_EXTRACTOR"] == "virchow2"
+    assert env["PATHLAB_EXTRACTOR"] == "virchow2"
+
+
+def test_run_experiment_env_injects_planned_training_data_paths(tmp_path):
+    config = PathScientistConfig(
+        planned_features_dir="/data/internal/features/virchow2",
+        planned_splits_file="/data/internal/splits.json",
+        planned_mil_model="abmil",
+    )
+
+    env = _build_env_vars_for_test(
+        config=config,
+        run_dir=tmp_path / "run",
+        script_text="print('train')\n",
+        run_kind="training",
+    )
+
+    assert env["FEATURES_DIR"] == "/data/internal/features/virchow2"
+    assert env["SPLITS_FILE"] == "/data/internal/splits.json"
+    assert env["PATHSCIENTIST_MIL_MODEL"] == "abmil"
+
+
 def test_run_experiment_linkage_records_pathlab_training_artifacts(tmp_path, monkeypatch):
     uploads = tmp_path / "uploads"
     features_dir = uploads / "features" / "conch" / "abc123"

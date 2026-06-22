@@ -29,7 +29,7 @@ from .base import NormalizerError
 
 logger = logging.getLogger(__name__)
 
-_WSI_EXTS = (".svs", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn", ".vms", ".vmu")
+_WSI_EXTS = (".svs", ".svslide", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn", ".bif", ".vsi", ".vms", ".vmu", ".kfb", ".sdpc", ".tmap", ".qptiff")
 _CONVENTIONAL_SLIDE_DIRS = (
     "WSIs", "wsis", "slides", "slide", "wsi", "WSI", "wsi_images",
     "train_images", "images",

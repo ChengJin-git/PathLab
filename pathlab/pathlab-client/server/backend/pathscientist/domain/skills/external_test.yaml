@@ -66,7 +66,7 @@ constraints:
   - "For survival analysis, report c_index and survival coverage without updating model weights."
   - "For segmentation, report dice and IoU; use EXTERNAL_PREDICTIONS_DIR unless the agent implements a model inference adapter."
   - "Use run_experiment with run_kind=external_test; run quick_check=true before the full external test."
-  - "PathLab uploads layout: when EXTERNAL_PATHLAB_UPLOADS_DIR is set, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/<params_hash>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/<params_hash>/{wsi_id}_coords.h5, slide metadata in metadata/{wsi_id}.json, masks in masks/, progress in progress/, and logs in logs/."
+  - "PathLab uploads layout: when EXTERNAL_PATHLAB_UPLOADS_DIR is set, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/{wsi_id}_coords.h5, slide metadata in metadata/{wsi_id}.json, masks in masks/, progress in progress/, and logs in logs/."
 
 dataset:
   format: task_specific_external_validation

@@ -66,7 +66,14 @@ def main() -> None:
     task_features_dir = Path(task_features_dirs[0]) if task_features_dirs else None
 
     min_success_rate = float(os.getenv("PATHSCIENTIST_FEATURE_MIN_SUCCESS_RATE", "0.95"))
-    success_rate = (successful / total_wsi) if total_wsi > 0 else 0.0
+    no_tissue_wsi = sum(
+        1
+        for record in results.values()
+        if isinstance(record, dict)
+        and str(record.get("status") or "").strip().lower() == "no_tissue"
+    )
+    actionable_wsi = max(0, total_wsi - no_tissue_wsi)
+    success_rate = (successful / actionable_wsi) if actionable_wsi > 0 else 0.0
     if successful <= 0:
         status = "failed"
     elif success_rate < min_success_rate:
@@ -78,6 +85,8 @@ def main() -> None:
         "status": status,
         "extractor": args.extractor,
         "total_wsi": total_wsi,
+        "actionable_wsi": actionable_wsi,
+        "no_tissue_wsi": no_tissue_wsi,
         "successful": successful,
         "success_rate": round(success_rate, 4),
         "min_success_rate": min_success_rate,
@@ -94,12 +103,17 @@ def main() -> None:
         "patches_extracted": float(patches),
         "successful_wsi": float(successful),
         "total_wsi": float(total_wsi),
+        "actionable_wsi": float(actionable_wsi),
+        "no_tissue_wsi": float(no_tissue_wsi),
         "success_rate": float(round(success_rate, 4)),
         "status": meta["status"],
     }
 
     atomic_json_dump(meta, output_dir / "extraction_meta.json")
-    atomic_json_dump(meta, data_output / "extraction_meta.json")
+    try:
+        atomic_json_dump(meta, data_output / "extraction_meta.json")
+    except OSError as exc:
+        print(f"warning: could not write data_output extraction_meta.json: {exc}", flush=True)
     atomic_json_dump(metrics, output_dir / "metrics.json")
 
     if successful <= 0:

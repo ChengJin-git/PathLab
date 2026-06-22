@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-WSI_EXTS = {".svs", ".ndpi", ".tiff", ".tif", ".mrxs", ".scn", ".bif"}
+WSI_EXTS = {".svs", ".svslide", ".ndpi", ".tiff", ".tif", ".mrxs", ".scn", ".bif", ".vsi", ".vms", ".vmu", ".kfb", ".sdpc", ".tmap", ".qptiff"}
 DEFAULT_EXTRACTOR_NAME = "uni2"
 
 _EXTRACTOR_ALIASES = {
@@ -86,10 +86,9 @@ def _uses_pathlab_uploads_layout(data_output: Path, wsi_dir: Path) -> bool:
 
 def _artifact_dirs(data_output: Path, wsi_dir: Path, extractor_name: str) -> tuple[Path, Path]:
     if _uses_pathlab_uploads_layout(data_output, wsi_dir):
-        params_hash = compute_pathlab_params_hash()
         return (
-            data_output / "features" / extractor_name / params_hash,
-            data_output / "coordinates" / params_hash,
+            data_output / "features" / extractor_name,
+            data_output / "coordinates",
         )
     return data_output / "pt_files" / extractor_name, data_output / "patches"
 
@@ -116,15 +115,19 @@ def _link_task_feature(
         return None
     if not cached_features_path.exists():
         return None
-    task_features_dir.mkdir(parents=True, exist_ok=True)
-    link_path = task_features_dir / f"{wsi_id}.pt"
-    if link_path.exists() or link_path.is_symlink():
-        link_path.unlink()
     try:
-        rel_path = os.path.relpath(cached_features_path, task_features_dir)
-        link_path.symlink_to(rel_path)
-    except OSError:
-        link_path.symlink_to(cached_features_path)
+        task_features_dir.mkdir(parents=True, exist_ok=True)
+        link_path = task_features_dir / f"{wsi_id}.pt"
+        if link_path.exists() or link_path.is_symlink():
+            link_path.unlink()
+        try:
+            rel_path = os.path.relpath(cached_features_path, task_features_dir)
+            link_path.symlink_to(rel_path)
+        except OSError:
+            link_path.symlink_to(cached_features_path)
+    except OSError as exc:
+        _log(f"warning: skip task feature link for {wsi_id}: {exc}")
+        return None
     return link_path
 
 
@@ -509,7 +512,11 @@ def main() -> None:
     features_dir.mkdir(parents=True, exist_ok=True)
     coords_dir.mkdir(parents=True, exist_ok=True)
     if task_features_dir is not None:
-        task_features_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            task_features_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            _log(f"warning: task feature link dir unavailable: {exc}")
+            task_features_dir = None
     meta_dir.mkdir(parents=True, exist_ok=True)
     progress_dir.mkdir(parents=True, exist_ok=True)
 
@@ -659,7 +666,12 @@ def main() -> None:
         else:
             _log(f"coords_cached rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id} coords={coords_h5}")
         if not coords_h5:
-            results[wsi_id] = {"status": "no_tissue"}
+            results[wsi_id] = {
+                "status": "no_tissue",
+                "reason": "No detectable tissue found during tiling",
+                "wsi_path": str(wsi_path),
+                "coords_path": str(coords_dir / f"{wsi_id}_coords.h5"),
+            }
             _log(f"wsi_no_tissue rank={args.rank} index={index}/{len(assigned)} wsi_id={wsi_id}")
             _write_progress(
                 args=args,

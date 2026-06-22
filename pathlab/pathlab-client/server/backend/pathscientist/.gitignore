@@ -2,3 +2,6 @@
 __pycache__/
 test_data/
 *.pyc
+
+# Historical PathScientist planning docs kept locally only
+docs/achieve/

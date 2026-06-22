@@ -126,10 +126,16 @@ for pid in "${pids[@]}"; do
 done
 
 trap - EXIT INT TERM
+set +e
 "$PYTHON_BIN" feature_extraction_aggregate.py \
   --output-dir "$OUTPUT_DIR" \
   --data-output-dir "$DATA_OUTPUT_DIR" \
   --extractor "$PATHSCIENTIST_FEATURE_EXTRACTOR" \
   --world-size "$WORLD_SIZE"
+aggregate_status=$?
+set -e
 
-exit "$status"
+if [ "$status" -ne 0 ]; then
+  exit "$status"
+fi
+exit $aggregate_status

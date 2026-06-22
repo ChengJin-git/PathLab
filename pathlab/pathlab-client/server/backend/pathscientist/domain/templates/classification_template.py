@@ -185,6 +185,10 @@ WEIGHT_DECAY = 1e-5
 SCHEDULER_TYPE = "cosine"      # cosine, step, none
 EARLY_STOPPING_PATIENCE = 10
 AUTO_BALANCE = True            # compute class weights from label distribution
+QUICK_CHECK = os.getenv("PATHLAB_QUICK_CHECK", "").lower() in {"1", "true", "yes"}
+MAX_TRAIN_SAMPLES = int(os.getenv("PATHLAB_MAX_TRAIN_SAMPLES", "0") or "0")
+MAX_VAL_SAMPLES = int(os.getenv("PATHLAB_MAX_VAL_SAMPLES", "0") or "0")
+MAX_TEST_SAMPLES = int(os.getenv("PATHLAB_MAX_TEST_SAMPLES", "0") or "0")
 
 
 # ============================================================================
@@ -310,6 +314,59 @@ def prepare_feature_splits(splits, features_dir="/data/features"):
     return filtered, labels, stats
 
 
+def _sample_limit_for_split(split_name):
+    if split_name == "train":
+        return MAX_TRAIN_SAMPLES
+    if split_name == "val":
+        return MAX_VAL_SAMPLES
+    if split_name == "test":
+        return MAX_TEST_SAMPLES
+    return 0
+
+
+def apply_quick_check_limits(filtered_splits, labels, split_stats):
+    """Apply quick-check split caps after feature filtering.
+
+    ``run_experiment(quick_check=True)`` sets PATHLAB_MAX_*_SAMPLES. The MIL
+    template must honor those caps before loading tensors, otherwise a quick
+    check can still read hundreds of WSI feature bags from NAS.
+    """
+    if not QUICK_CHECK:
+        split_stats.setdefault("quick_check", False)
+        return filtered_splits, labels, split_stats
+
+    limited = {}
+    limits = {}
+    for split_name in ("train", "val", "test"):
+        split_ids = list(filtered_splits.get(split_name, []))
+        limit = _sample_limit_for_split(split_name)
+        limits[split_name] = limit
+        if limit > 0:
+            split_ids = split_ids[:limit]
+        limited[split_name] = split_ids
+
+    limited_label_ids = {
+        wsi_id
+        for split_ids in limited.values()
+        for wsi_id in split_ids
+    }
+    limited_labels = {wsi_id: labels[wsi_id] for wsi_id in limited_label_ids if wsi_id in labels}
+    limited_stats = {
+        key: (dict(value) if isinstance(value, dict) else value)
+        for key, value in split_stats.items()
+    }
+    limited_stats["usable_counts_before_quick_check"] = dict(
+        split_stats.get("usable_counts", {})
+    )
+    limited_stats["usable_counts"] = {
+        split_name: len(limited.get(split_name, []))
+        for split_name in ("train", "val", "test")
+    }
+    limited_stats["quick_check"] = True
+    limited_stats["quick_check_limits"] = limits
+    return limited, limited_labels, limited_stats
+
+
 # ============================================================================
 # Evaluation (mirrors PathLab's _evaluate_split)
 # ============================================================================
@@ -404,6 +461,11 @@ def train():
         splits,
         features_dir,
     )
+    filtered_splits, labels, split_stats = apply_quick_check_limits(
+        filtered_splits,
+        labels,
+        split_stats,
+    )
     train_ids = filtered_splits["train"]
     val_ids = filtered_splits["val"]
     test_ids = filtered_splits["test"]
@@ -419,6 +481,11 @@ def train():
         "Data usable after feature filtering: train=%d, val=%d, test=%d",
         usable["train"], usable["val"], usable["test"],
     )
+    if QUICK_CHECK:
+        logger.info(
+            "Quick check sample caps applied: train=%d, val=%d, test=%d",
+            usable["train"], usable["val"], usable["test"],
+        )
     if any(missing_features.values()):
         logger.warning(
             "Missing feature tensors skipped before training: train=%d, val=%d, test=%d; examples=%s",
@@ -585,6 +652,12 @@ def train():
         "feature_dim": in_dim,
         "num_classes": num_classes,
         "data_coverage": split_stats,
+        "quick_check": QUICK_CHECK,
+        "split_counts": {
+            "train": len(train_ids),
+            "val": len(val_ids),
+            "test": len(test_ids),
+        },
     }
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

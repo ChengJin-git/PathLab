@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,8 +25,8 @@ from typing import Any
 FEATURE_EXTS = {".pt", ".pth"}
 PATCH_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 WSI_EXTS = {
-    ".svs", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn",
-    ".bif", ".vms", ".vmu",
+    ".svs", ".svslide", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn",
+    ".bif", ".vsi", ".vms", ".vmu", ".kfb", ".sdpc", ".tmap", ".qptiff",
 }
 FEATURE_CONSUMER_TASKS = {"mil_classification", "survival_analysis"}
 PATCH_CONSUMER_TASKS = {"patch_classification"}
@@ -199,6 +200,68 @@ def _candidate_extraction_meta_paths(feature_dir: str | Path) -> list[Path]:
     return out
 
 
+def _record_is_no_tissue(record: Any) -> bool:
+    if isinstance(record, dict):
+        values = [
+            record.get("status"),
+            record.get("reason"),
+            record.get("error"),
+            record.get("message"),
+        ]
+    else:
+        values = [record]
+    text = " ".join(str(value or "") for value in values).strip().lower()
+    normalized = text.replace("-", "_").replace(" ", "_")
+    return (
+        "no_tissue" in normalized
+        or "no_detectable_tissue" in normalized
+        or "without_detectable_tissue" in normalized
+        or "blank_or_no_detectable_tissue" in normalized
+    )
+
+
+def _meta_failures_are_only_no_tissue(meta: dict[str, Any]) -> bool:
+    results = meta.get("results")
+    if not isinstance(results, dict) or not results:
+        return False
+    failed = [
+        record
+        for record in results.values()
+        if str((record or {}).get("status") if isinstance(record, dict) else record)
+        .strip()
+        .lower()
+        not in {"success", "cached"}
+    ]
+    return bool(failed) and all(_record_is_no_tissue(record) for record in failed)
+
+
+def _meta_low_success_is_explained_by_no_tissue(meta: dict[str, Any]) -> bool:
+    results = meta.get("results")
+    if not isinstance(results, dict) or not results:
+        return False
+    actionable = 0
+    successful = 0
+    for record in results.values():
+        if _record_is_no_tissue(record):
+            continue
+        actionable += 1
+        status = (
+            str((record or {}).get("status") if isinstance(record, dict) else record)
+            .strip()
+            .lower()
+        )
+        if status in {"success", "cached"}:
+            successful += 1
+    if actionable <= 0:
+        return False
+    min_success_rate = _coerce_float(meta.get("min_success_rate"))
+    if min_success_rate is None:
+        min_success_rate = 0.95
+    if min_success_rate > 1.0:
+        min_success_rate = min_success_rate / 100.0
+    return successful / actionable >= min_success_rate
+
+
 def _feature_cache_is_complete_path(feature_dir: str | Path) -> bool:
     """Reject partial extractor caches when metadata is available.
 
@@ -220,7 +283,11 @@ def _feature_cache_is_complete_path(feature_dir: str | Path) -> bool:
         return False
 
     status = str(meta.get("status") or "").strip().lower()
-    if status and status != "completed":
+    no_tissue_explains_failures = (
+        _meta_failures_are_only_no_tissue(meta)
+        or _meta_low_success_is_explained_by_no_tissue(meta)
+    )
+    if status and status != "completed" and not no_tissue_explains_failures:
         return False
 
     min_success_rate = _coerce_float(meta.get("min_success_rate"))
@@ -236,7 +303,11 @@ def _feature_cache_is_complete_path(feature_dir: str | Path) -> bool:
         if total_wsi and total_wsi > 0 and successful is not None:
             success_rate = successful / total_wsi
 
-    if success_rate is not None and success_rate < min_success_rate:
+    if (
+        success_rate is not None
+        and success_rate < min_success_rate
+        and not no_tissue_explains_failures
+    ):
         return False
     return True
 
@@ -276,7 +347,7 @@ def _leaf_feature_dir(
         strict_preferred = str(preferred_feature_extractor or "").strip().lower()
         if (
             strict_preferred
-            and candidate.host_path.parent.name.lower() == "pt_files"
+            and candidate.host_path.parent.name.lower() in {"pt_files", "features"}
             and candidate.host_path.name.lower() != strict_preferred
         ):
             return None
@@ -308,7 +379,8 @@ def _leaf_feature_dir(
         if strict_preferred:
             nested = [
                 p for p in nested
-                if any(parent.name.lower() == strict_preferred for parent in p.parents)
+                if p.name.lower() == strict_preferred
+                or any(parent.name.lower() == strict_preferred for parent in p.parents)
             ]
             if not nested:
                 return None
@@ -744,16 +816,48 @@ def _split_slide_ids(path: str | Path) -> set[str]:
     return slide_ids
 
 
-def _feature_cache_covers_splits(feature_dir: str | Path, splits_file: str | Path) -> bool:
-    """Return True when every split slide id has a feature tensor.
+def _load_no_tissue_slide_ids(feature_dir: str | Path) -> set[str]:
+    """Return slide IDs that feature extraction explicitly marked no_tissue."""
+    out: set[str] = set()
+    for meta_path in _candidate_extraction_meta_paths(feature_dir):
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(meta, dict):
+            continue
+        results = meta.get("results")
+        if not isinstance(results, dict):
+            continue
+        for slide_id, record in results.items():
+            if _record_is_no_tissue(record):
+                out.add(str(slide_id))
+    return out
 
-    A run can report a successful quick/full extraction for only a subset of
-    slides and leave partial ``.pt`` files in the durable dataset directory.
-    Do not treat that folder as train-ready unless it covers the actual split.
+
+def _feature_cache_coverage(feature_dir: str | Path, splits_file: str | Path) -> tuple[bool, dict[str, Any]]:
+    """Return whether feature tensors cover enough split IDs to train.
+
+    MIL training filters missing tensors before epochs. A small number of
+    missing features should not force extraction when every split still has
+    usable slides and overall coverage is high.
     """
-    expected = _split_slide_ids(splits_file)
+    p = Path(splits_file)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return False, {}
+    if not isinstance(data, dict):
+        return False, {}
+    split_ids = {
+        key: [str(item) for item in data.get(key, []) if str(item)]
+        for key in ("train", "val", "test")
+    }
+    expected = {slide_id for ids in split_ids.values() for slide_id in ids}
     if not expected:
-        return False
+        return False, {}
     feature_path = Path(feature_dir)
     try:
         present = {
@@ -762,19 +866,98 @@ def _feature_cache_covers_splits(feature_dir: str | Path, splits_file: str | Pat
             if p.is_file() and p.suffix.lower() in FEATURE_EXTS
         }
     except OSError:
-        return False
-    if expected.issubset(present):
-        return True
+        return False, {}
     present_norm = {item.lower() for item in present}
-    for item in expected:
-        lowered = item.lower()
-        stem = Path(item).stem.lower()
-        variants = {lowered}
+
+    def has_feature(slide_id: str) -> bool:
+        variants = {slide_id.lower()}
+        stem = Path(slide_id).stem.lower()
         if stem:
             variants.add(stem)
-        if not (variants & present_norm):
-            return False
-    return True
+        return bool(variants & present_norm)
+
+    present_by_split = {}
+    missing_ids_by_split = {}
+    for key, ids in split_ids.items():
+        missing_ids = [slide_id for slide_id in ids if not has_feature(slide_id)]
+        missing_ids_by_split[key] = missing_ids
+        present_by_split[key] = len(ids) - len(missing_ids)
+    missing_by_split = {
+        key: len(missing_ids)
+        for key, missing_ids in missing_ids_by_split.items()
+    }
+    missing_ids = [
+        slide_id
+        for key in ("train", "val", "test")
+        for slide_id in missing_ids_by_split.get(key, [])
+    ]
+    present_total = sum(present_by_split.values())
+    expected_total = sum(len(ids) for ids in split_ids.values())
+    coverage = present_total / expected_total if expected_total else 0.0
+    min_coverage = _coerce_float(os.environ.get("PATHSCIENTIST_FEATURE_READY_MIN_COVERAGE"))
+    if min_coverage is None:
+        min_coverage = 0.95
+    if min_coverage > 1.0:
+        min_coverage = min_coverage / 100.0
+    ok = (
+        coverage >= min_coverage
+        and all(present_by_split[key] > 0 for key in ("train", "val", "test"))
+    )
+    return ok, {
+        "coverage": round(coverage, 4),
+        "present_total": present_total,
+        "expected_total": expected_total,
+        "missing_total": expected_total - present_total,
+        "missing_ids": missing_ids,
+        "missing_ids_by_split": missing_ids_by_split,
+        "present_by_split": present_by_split,
+        "missing_by_split": missing_by_split,
+        "min_coverage": min_coverage,
+    }
+
+
+def _coverage_is_ready_after_ignoring_no_tissue(
+    coverage: dict[str, Any],
+    no_tissue_ids: set[str],
+) -> bool:
+    missing_ids = {
+        str(slide_id)
+        for slide_id in coverage.get("missing_ids") or []
+        if str(slide_id)
+    }
+    if not missing_ids:
+        return False
+
+    ignored_no_tissue_ids = missing_ids & no_tissue_ids
+    unresolved_missing_ids = missing_ids - no_tissue_ids
+    coverage["ignored_no_tissue_ids"] = sorted(ignored_no_tissue_ids)
+    coverage["unresolved_missing_ids"] = sorted(unresolved_missing_ids)
+    if unresolved_missing_ids:
+        return False
+
+    present_by_split = coverage.get("present_by_split") or {}
+    return all(
+        int(present_by_split.get(key) or 0) > 0
+        for key in ("train", "val", "test")
+    )
+
+
+def _feature_cache_covers_splits(feature_dir: str | Path, splits_file: str | Path) -> bool:
+    ok, _coverage = _feature_cache_coverage(feature_dir, splits_file)
+    return ok
+
+
+def _question_requests_missing_feature_extraction(question: str) -> bool:
+    text = (question or "").lower()
+    if not text:
+        return False
+    return (
+        ("missing feature" in text and any(token in text for token in ("extract", "generate", "compute")))
+        or "extract any missing features" in text
+        or "extract missing features" in text
+        or "补提" in question
+        or ("缺失" in question and "特征" in question and ("提取" in question or "补" in question))
+    )
 
 
 def collect_readiness_candidates(
@@ -847,7 +1030,7 @@ def _first_ready_feature_pair(
     *,
     task_type: str,
     preferred_feature_extractor: str = "",
-) -> tuple[ResolvedPath, ResolvedPath, str] | None:
+) -> tuple[ResolvedPath, ResolvedPath, str, dict[str, Any]] | None:
     for fdir in candidates.features_dirs:
         leaf = _leaf_feature_dir(
             fdir,
@@ -858,11 +1041,14 @@ def _first_ready_feature_pair(
         if not _feature_cache_is_complete_path(leaf.host_path):
             continue
         for splits in candidates.splits_files:
-            if (
-                splits_file_matches_task(splits.host_path, task_type)
-                and _feature_cache_covers_splits(leaf.host_path, splits.host_path)
-            ):
-                return (leaf, splits, leaf.source or splits.source or "preflight")
+            if not splits_file_matches_task(splits.host_path, task_type):
+                continue
+            covers_splits, coverage = _feature_cache_coverage(leaf.host_path, splits.host_path)
+            if covers_splits and not coverage.get("missing_total", 0):
+                return (leaf, splits, leaf.source or splits.source or "preflight", coverage)
+            no_tissue_ids = _load_no_tissue_slide_ids(leaf.host_path)
+            if _coverage_is_ready_after_ignoring_no_tissue(coverage, no_tissue_ids):
+                return (leaf, splits, leaf.source or splits.source or "preflight", coverage)
     return None
 
 
@@ -1162,7 +1348,49 @@ def assess_data_readiness(
         preferred_feature_extractor=preferred_feature_extractor,
     )
     if feature_pair:
-        features_dir, splits_file, source = feature_pair
+        features_dir, splits_file, source, coverage = feature_pair
+        notes = ["existing feature tensors detected; skip feature_extraction"]
+        if coverage and coverage.get("missing_total", 0):
+            ignored_no_tissue_ids = coverage.get("ignored_no_tissue_ids") or []
+            unresolved_missing_ids = coverage.get("unresolved_missing_ids") or []
+            low_coverage_needs_extraction = (
+                coverage.get("coverage", 1.0) < coverage.get("min_coverage", 0.95)
+                and not ignored_no_tissue_ids
+            )
+            if unresolved_missing_ids or low_coverage_needs_extraction:
+                raw_pair = _first_ready_raw_wsi_pair(candidates, task_type=task_type)
+                if raw_pair:
+                    wsi_dir, labels_file, raw_splits_file, raw_source = raw_pair
+                    return DataReadinessResult(
+                        status="raw_wsi_ready",
+                        source=raw_source or source,
+                        wsi_dir=wsi_dir.runtime_path,
+                        labels_file=labels_file.runtime_path,
+                        splits_file=raw_splits_file.runtime_path,
+                        features_dir=features_dir.runtime_path,
+                        wsi_dir_host=str(wsi_dir.host_path),
+                        labels_file_host=str(labels_file.host_path),
+                        splits_file_host=str(raw_splits_file.host_path),
+                        features_dir_host=str(features_dir.host_path),
+                        missing=["features_dir"],
+                        notes=[
+                            "existing feature tensors are incomplete; user requested missing feature extraction before training",
+                            "feature coverage "
+                            f"{coverage['present_total']}/{coverage['expected_total']}",
+                        ],
+                    )
+            if ignored_no_tissue_ids:
+                notes.append(
+                    "feature coverage "
+                    f"{coverage['present_total']}/{coverage['expected_total']}; "
+                    f"ignored {len(ignored_no_tissue_ids)} no_tissue slide(s)"
+                )
+            else:
+                notes.append(
+                    "feature coverage "
+                    f"{coverage['present_total']}/{coverage['expected_total']} "
+                    "with every split represented; training will filter missing tensors"
+                )
         return DataReadinessResult(
             status="features_ready",
             source=source,
@@ -1170,7 +1398,7 @@ def assess_data_readiness(
             splits_file=splits_file.runtime_path,
             features_dir_host=str(features_dir.host_path),
             splits_file_host=str(splits_file.host_path),
-            notes=["existing feature tensors detected; skip feature_extraction"],
+            notes=notes,
         )
 
     raw_pair = _first_ready_raw_wsi_pair(candidates, task_type=task_type)

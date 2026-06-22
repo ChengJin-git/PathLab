@@ -88,8 +88,25 @@ class DatasetScout:
         # bool sorts as False < True; with reverse=True, relevant=True comes
         # first, so a relevant policy-blocked record cannot be truncated out
         # by irrelevant high-scoring records before acquisition sees it.
-        scored.sort(key=lambda c: (c.relevant, c.score), reverse=True)
+        scored.sort(
+            key=lambda c: (
+                c.relevant,
+                c.score,
+                self._canonical_preference(c.record),
+            ),
+            reverse=True,
+        )
         return scored[:top_k]
+
+    def _canonical_preference(self, record: DatasetRecord) -> int:
+        """Prefer registered/canonical datasets over transient discoveries on ties."""
+        dataset_id = (record.dataset_id or "").lower()
+        tags = {str(tag or "").lower() for tag in (record.tags or [])}
+        if dataset_id.startswith("discovered:") or "discovered" in tags:
+            return 0
+        if dataset_id.startswith("pathlab:") or record.name.lower().startswith("pathscientist "):
+            return 2
+        return 1
 
     def _record_text(self, record: DatasetRecord) -> str:
         return (

@@ -175,6 +175,8 @@ class PathScientistConfig:
     planned_feature_wsi_dir: str = ""
     planned_feature_extractor: str = ""
     planned_mil_model: str = ""
+    planned_features_dir: str = ""
+    planned_splits_file: str = ""
     external_test_enabled: bool = False
     external_test_contract: dict[str, Any] = field(default_factory=dict)
     run_history: list[dict[str, Any]] = field(default_factory=list)

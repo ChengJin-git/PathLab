@@ -295,6 +295,24 @@ def _infer_prediction_target(text: str) -> tuple[str, list[str]]:
             "microsatellite_instability",
             ["MSI", "MSI-H", "MSS", "microsatellite", "microsatellite_instability"],
         )
+    if (
+        "intestinal metaplasia" in text
+        or "intestinal_metaplasia" in text
+        or "pwh-gc-im" in text
+        or "pwh_gc_im" in text
+        or " gc-im" in f" {text}"
+        or "gc_im" in text
+    ):
+        return (
+            "intestinal_metaplasia",
+            [
+                "intestinal_metaplasia",
+                "intestinal metaplasia",
+                "metaplasia",
+                "IM",
+                "Task4",
+            ],
+        )
     if any(
         tok in text
         for tok in (
@@ -302,7 +320,6 @@ def _infer_prediction_target(text: str) -> tuple[str, list[str]]:
             "gastritis",
             "gastric inflammation",
             "inflammation grading",
-            "intestinal metaplasia",
         )
     ):
         return (
@@ -312,8 +329,6 @@ def _infer_prediction_target(text: str) -> tuple[str, list[str]]:
                 "inflammation",
                 "activity",
                 "atrophy",
-                "intestinal_metaplasia",
-                "intestinal metaplasia",
                 "Task1",
                 "Task2",
                 "Task3",

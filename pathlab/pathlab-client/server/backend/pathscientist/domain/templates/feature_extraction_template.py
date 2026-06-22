@@ -10,8 +10,8 @@ Extracts patch-level features from WSIs using PathLab's real pipeline:
 
 Code Agent can modify ANY part of this script.
 Constraints (from skill definition):
-  - PathLab output: {output_dir}/features/{extractor_name}/{params_hash}/{wsi_id}.pt
-  - PathLab coordinates: {output_dir}/coordinates/{params_hash}/{wsi_id}_coords.h5
+  - PathLab output: {output_dir}/features/{extractor_name}/{wsi_id}.pt
+  - PathLab coordinates: {output_dir}/coordinates/{wsi_id}_coords.h5
   - Each feature tensor shape: (N_patches, D)
   - Save extraction_meta.json and metrics.json in output_dir
 
@@ -367,8 +367,8 @@ def extract():
       WSI → TissueSegmenter → WSITiler → coords.h5 → WSIPatchDataset → Extractor → features.pt
 
     Output directory convention for PathLab uploads repositories:
-      {data_output}/features/{extractor_name}/{params_hash}/{wsi_id}.pt
-      {data_output}/coordinates/{params_hash}/{wsi_id}_coords.h5
+      {data_output}/features/{extractor_name}/{wsi_id}.pt
+      {data_output}/coordinates/{wsi_id}_coords.h5
 
     DATA_OUTPUT_DIR: stable user-visible path for feature/coord files.
     OUTPUT_DIR: per-run directory for metrics.json (used by the agent).
@@ -383,9 +383,8 @@ def extract():
     # Data artifacts go to DATA_OUTPUT_DIR (stable, user-visible).
     data_output_path = Path(data_output)
     if (data_output_path / "wsi_files").is_dir() or Path(wsi_dir).name == "wsi_files":
-        params_hash = compute_pathlab_params_hash()
-        features_dir = data_output_path / "features" / EXTRACTOR_NAME / params_hash
-        coords_dir = data_output_path / "coordinates" / params_hash
+        features_dir = data_output_path / "features" / EXTRACTOR_NAME
+        coords_dir = data_output_path / "coordinates"
     else:
         features_dir = data_output_path / "pt_files" / EXTRACTOR_NAME
         coords_dir = data_output_path / "patches"
@@ -400,7 +399,7 @@ def extract():
     logger.info(f"Filter params: {FILTER_PARAMS}")
 
     # Find WSI files
-    wsi_exts = {".svs", ".ndpi", ".tiff", ".tif", ".mrxs", ".scn", ".bif"}
+    wsi_exts = {".svs", ".svslide", ".ndpi", ".tiff", ".tif", ".mrxs", ".scn", ".bif", ".vsi", ".vms", ".vmu", ".kfb", ".sdpc", ".tmap", ".qptiff"}
     wsi_files = [f for f in Path(wsi_dir).iterdir() if f.suffix.lower() in wsi_exts]
 
     if not wsi_files:
@@ -500,7 +499,12 @@ def extract():
         # Step 1-2: Tile
         coords_h5 = tile_wsi(str(wsi_path), coords_dir, wsi_id)
         if not coords_h5:
-            results[wsi_id] = {"status": "no_tissue"}
+            results[wsi_id] = {
+                "status": "no_tissue",
+                "reason": "No detectable tissue found during tiling",
+                "wsi_path": str(wsi_path),
+                "coords_path": str(Path(coords_dir) / f"{wsi_id}_coords.h5"),
+            }
             continue
 
         # Step 3-4: Extract features

@@ -21,7 +21,7 @@ _CONF_RANK = {"": 0, "low": 1, "medium": 2, "high": 3}
 _FEATURE_EXTS = {".pt", ".pth"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
 _MASK_EXTS = _IMAGE_EXTS | {".npy", ".pt", ".pth"}
-_WSI_EXTS = {".svs", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn", ".bif", ".vms", ".vmu"}
+_WSI_EXTS = {".svs", ".svslide", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn", ".bif", ".vsi", ".vms", ".vmu", ".kfb", ".sdpc", ".tmap", ".qptiff"}
 
 
 @dataclass
@@ -316,7 +316,8 @@ def _choose_feature_leaf(root: Path, *, preferred_extractor: str = "") -> Path |
         preferred_leaves = [
             leaf
             for leaf in leaves
-            if any(parent.name.lower() == preferred for parent in leaf.parents)
+            if leaf.name.lower() == preferred
+            or any(parent.name.lower() == preferred for parent in leaf.parents)
         ]
         if preferred_leaves:
             return preferred_leaves[0]

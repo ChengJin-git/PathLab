@@ -196,6 +196,14 @@ def _conf_at_least(confidence: str, minimum: str = "medium") -> bool:
     return _CONF_RANK.get(confidence, 0) >= _CONF_RANK[minimum]
 
 
+def _is_target_generalization(current: str, candidate: str) -> bool:
+    current_norm = _norm_lower(current)
+    candidate_norm = _norm_lower(candidate)
+    if current_norm == "intestinal_metaplasia" and candidate_norm == "chronic_gastritis_grading":
+        return True
+    return False
+
+
 def _merge_keywords(base: list[str], extra: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
@@ -330,6 +338,15 @@ def merge_task_profile_enrichment(
             sources["prediction_target"] = "llm"
         elif profile.prediction_target == enrichment.prediction_target:
             sources.setdefault("prediction_target", "heuristic+llm")
+        elif _is_target_generalization(
+            profile.prediction_target,
+            enrichment.prediction_target,
+        ):
+            sources["prediction_target_conflict"] = {
+                "heuristic": profile.prediction_target,
+                "llm": enrichment.prediction_target,
+                "resolution": "kept_specific_heuristic",
+            }
         elif _conf_at_least(enrichment.prediction_target_confidence):
             updates["prediction_target"] = enrichment.prediction_target
             sources["prediction_target"] = "llm_override"
