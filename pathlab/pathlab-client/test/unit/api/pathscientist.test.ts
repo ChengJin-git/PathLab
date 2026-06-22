@@ -16,6 +16,8 @@ import {
   listPathScientistSkills,
   startPathScientistSession,
   stopPathScientistSession,
+  downloadPathScientistSession,
+  sharePathScientistSession,
 } from '@renderer/api/pathscientist'
 
 const mockFetch = vi.mocked(fetch)
@@ -127,5 +129,91 @@ describe('pathscientist api', () => {
       'http://localhost:6100/pathscientist/sessions/abc/download?token=scoped-download-token',
     )
     expect(getPathScientistSessionShareUrl('abc')).toContain('/pathscientist/sessions/abc')
+  })
+
+  describe('user-visible branding', () => {
+    it('uses AutoResearch in apiFetch context for start session', async () => {
+      setAuthToken('session-token')
+      mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', conversation_id: '', model: 'gpt-5.5', status: 'queued' }))
+
+      await startPathScientistSession({ question: 'hello' })
+
+      mockFetch.mockReset()
+      mockFetch.mockRejectedValueOnce(new TypeError('Network error'))
+
+      await expect(startPathScientistSession({ question: 'hello' })).rejects.toThrow('AutoResearch')
+    })
+
+    it('uses AutoResearch in apiFetch context for delete session', async () => {
+      setAuthToken('session-token')
+      mockFetch.mockRejectedValueOnce(new TypeError('Network error'))
+
+      await expect(deletePathScientistSession('abc')).rejects.toThrow('AutoResearch')
+    })
+
+    it('uses AutoResearch in apiFetch context for list sessions', async () => {
+      setAuthToken('session-token')
+      mockFetch.mockRejectedValueOnce(new TypeError('Network error'))
+
+      await expect(listPathScientistSessions()).rejects.toThrow('AutoResearch')
+    })
+
+    it('uses AutoResearch in downloadApiFile context on network error', async () => {
+      setAuthToken('download-token')
+      mockFetch.mockRejectedValueOnce(new TypeError('Network error'))
+
+      await expect(downloadPathScientistSession('abc')).rejects.toThrow('AutoResearch')
+    })
+
+    it('returns autoresearch fallback filename on successful download without Content-Disposition', async () => {
+      setAuthToken('download-token')
+      const originalURL = globalThis.URL
+      const originalClick = HTMLAnchorElement.prototype.click
+      try {
+        vi.stubGlobal('URL', {
+          createObjectURL: vi.fn(() => 'blob:mock-url'),
+          revokeObjectURL: vi.fn(),
+        })
+        HTMLAnchorElement.prototype.click = vi.fn()
+        mockFetch.mockResolvedValueOnce(new Response(new Blob(['zip-content']), {
+          status: 200,
+          headers: new Headers(),
+        }))
+
+        const result = await downloadPathScientistSession('abc')
+
+        expect(result.filename).toBe('autoresearch-abc.zip')
+      } finally {
+        vi.stubGlobal('URL', originalURL)
+        HTMLAnchorElement.prototype.click = originalClick
+      }
+    })
+
+    it('uses AutoResearch in navigator.share title', async () => {
+      const originalNavigator = window.navigator
+      const shareMock = vi.fn()
+      try {
+        Object.defineProperty(window, 'navigator', {
+          value: { ...originalNavigator, share: shareMock, clipboard: undefined },
+          writable: true,
+          configurable: true,
+        })
+        shareMock.mockResolvedValue(undefined)
+
+        await sharePathScientistSession('abc')
+
+        expect(shareMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: 'AutoResearch session',
+          }),
+        )
+      } finally {
+        Object.defineProperty(window, 'navigator', {
+          value: originalNavigator,
+          writable: true,
+          configurable: true,
+        })
+      }
+    })
   })
 })
