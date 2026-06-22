@@ -590,6 +590,47 @@ async def test_delete_external_task_uses_bulk_delete_once():
 
 
 @pytest.mark.asyncio
+async def test_delete_external_task_preserves_cancelled_status():
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    wsi = SimpleNamespace(
+        wsi_id="wsi_1",
+        wsi_path="/mnt/external/wsi_1.svs",
+        dataset_id="dataset_1",
+        user_id="user_1",
+    )
+
+    class SessionFactory:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    with (
+        patch.object(storage_tasks, "async_session", return_value=SessionFactory()),
+        patch.object(
+            storage_tasks.WSIRepository,
+            "get_by_ids",
+            new=AsyncMock(return_value={"wsi_1": wsi}),
+        ),
+        patch.object(
+            storage_tasks,
+            "_bulk_delete_wsi_records",
+            new=AsyncMock(side_effect=storage_tasks.StorageTaskCancelledError()),
+        ),
+        patch.object(
+            storage_tasks.StorageTaskRepository, "update_status", new=AsyncMock()
+        ) as update_status,
+    ):
+        await storage_tasks._run_delete_external_task("task_1", "user_1", ["wsi_1"])
+
+    statuses = [call.args[2] for call in update_status.await_args_list]
+    assert statuses == ["processing"]
+
+
+@pytest.mark.asyncio
 async def test_start_delete_dataset_task_does_not_materialize_wsi_ids_before_returning():
     from gateway.models import DeletionMode, StartDeleteDatasetRequest
     from gateway.routes import storage_tasks

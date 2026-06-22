@@ -1162,6 +1162,8 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list[An
                 f"Delete external task {task_id} completed: {deleted_count} deleted, {failed_count} failed"
             )
 
+        except StorageTaskCancelledError:
+            return
         except Exception as e:
             logger.error(f"Delete external task {task_id} failed: {e}")
             await StorageTaskRepository.update_status(
