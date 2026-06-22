@@ -1352,24 +1352,29 @@
     "generatingTitle": "Generating title...",
     "untitledSession": "Untitled session",
     "live": "Live",
+    "clearAll": "Clear all",
+    "clearAllConfirmTitle": "Clear all sessions",
+    "clearAllConfirmMessage": "Are you sure you want to clear {{count}} sessions? This will delete the sessions and their workspace data. Shared datasets will not be removed.",
+    "clearAllFailed": "Failed to clear sessions",
     "sessionsPage": {
       "title": "Research sessions",
       "description": "Start and inspect autonomous computational pathology runs from the PathLab interface. This MVP shows live events and raw state while the richer transcript UI is being built.",
       "refresh": "Refresh",
       "newSession": "New session",
       "loading": "Loading sessions...",
-      "emptyTitle": "No PathScientist sessions yet",
+      "emptyTitle": "No AutoResearch sessions yet",
       "emptyDescription": "Create a short session to verify the backend bridge and event stream.",
       "startOne": "Start one",
       "workspace": "Workspace",
       "unknownTime": "unknown",
-      "untitledSession": "Untitled PathScientist session",
+      "untitledSession": "Untitled AutoResearch session",
       "stopRun": "Stop run",
       "delete": "Delete",
       "deleteSession": "Delete session",
       "stopFailed": "Failed to stop session",
       "deleteFailed": "Failed to delete session",
-      "deleteConfirm": "Delete this PathScientist session and its backend workspace? Generated code, logs, models, and run results for this session will be removed. Shared datasets are not deleted."
+      "deleteConfirmTitle": "Delete session",
+      "deleteConfirm": "Delete this AutoResearch session and its backend workspace? Generated code, logs, models, and run results for this session will be removed. Shared datasets are not deleted."
     },
     "clinical": {
       "researchQuestion": "Research question",
@@ -1421,6 +1426,7 @@
       "shareFailed": "Failed to share session",
       "downloadSuccess": "Session download started",
       "downloadFailed": "Failed to download session",
+      "deleteConfirmTitle": "Delete session",
       "deleteConfirm": "Delete this session and its workspace data? Shared datasets will not be removed.",
       "deleteSuccess": "Session deleted",
       "deleteFailed": "Failed to delete session"
@@ -1496,18 +1502,18 @@
       "samples": "{{count}} samples"
     },
     "newSessionPage": {
-      "title": "Start a PathScientist session",
-      "description": "Describe the computational pathology task. PathScientist will start a backend session and stream live events into the run detail page.",
+      "title": "Start an AutoResearch session",
+      "description": "Describe the computational pathology task. AutoResearch will start a backend session and stream live events into the run detail page.",
       "researchQuestion": "Research question",
       "questionPlaceholder": "Extract Virchow2 features for this WSI folder, but do not train yet...",
       "maxIter": "Max iter",
       "starting": "Starting...",
       "startSession": "Start session",
-      "startFailed": "Failed to start PathScientist session"
+      "startFailed": "Failed to start AutoResearch session"
     },
     "sessionPage": {
       "sessionDetail": "Session detail",
-      "description": "Structured PathScientist execution console for this run.",
+      "description": "Structured AutoResearch execution console for this run.",
       "researchQuestion": "Research question",
       "deleteSession": "Delete session",
       "resumeSession": "Resume session",
@@ -1521,7 +1527,7 @@
     },
     "stageTimeline": {
       "title": "Stage timeline",
-      "description": "Compressed view of the PathScientist research pipeline."
+      "description": "Compressed view of the AutoResearch research pipeline."
     },
     "executionConsole": {
       "title": "Execution console",
