@@ -19,9 +19,9 @@
 #   PATHSCIENTIST_LLM_BASE_URL    模型地址
 #   PATHSCIENTIST_LLM_WIRE_API    wire API (codex-relay 默认 responses)
 #   PATHSCIENTIST_SANDBOX         sandbox 模式: auto|apptainer|local
-#   PATHSCIENTIST_BASE_DIR        workspace 根目录 (默认 pathlab-client/uploads/pathscientist)
+#   PATHSCIENTIST_BASE_DIR        AutoResearch 根目录 (默认 Settings uploads/autoresearch)
 #   PATHSCIENTIST_DATASET_CACHE_DIR 统一数据根目录；本地先查这里，下载也落这里
-#                                  (默认 /project/llmponco/wangyihui/original_data/pathlab_test_data)
+#                                  (默认 $PATHSCIENTIST_BASE_DIR/dataset_cache)
 #   PATHSCIENTIST_GENERATE_PAPER_DRAFT 是否在 synthesis 阶段生成 paper_draft.md
 #                                  (默认 0，关闭；置 1 显式开启)
 #   PATHSCIENTIST_FEATURE_EXTRACTOR 显式固定 WSI feature extractor
@@ -70,7 +70,28 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
+SERVER_DIR="$(dirname "$BACKEND_DIR")"
 PATHLAB_CLIENT_DIR="$(dirname "$(dirname "$BACKEND_DIR")")"
+
+resolve_default_base_dir() {
+    PATHLAB_CLIENT_DIR="$PATHLAB_CLIENT_DIR" \
+    PYTHONPATH="$SERVER_DIR${PYTHONPATH:+:$PYTHONPATH}" \
+    "$VENV_DIR/bin/python" - <<'PY'
+import os
+from pathlib import Path
+
+try:
+    from backend.common.config import Config
+
+    print(Config.get_autoresearch_dir())
+except Exception:
+    uploads_dir = os.environ.get("PATHLAB_UPLOADS_DIR", "")
+    if uploads_dir:
+        print(Path(uploads_dir).expanduser() / "autoresearch")
+    else:
+        print(Path(os.environ["PATHLAB_CLIENT_DIR"]) / "uploads" / "autoresearch")
+PY
+}
 
 load_project_env() {
     local env_file="$1"
@@ -134,8 +155,9 @@ PATHSCIENTIST_LLM_PROFILE_DEFAULT="${PATHSCIENTIST_LLM_PROFILE:-codex-relay}"
 export PATHSCIENTIST_LLM_MODEL="${PATHSCIENTIST_LLM_MODEL:-gpt-5.5}"
 export PATHSCIENTIST_LLM_WIRE_API="${PATHSCIENTIST_LLM_WIRE_API:-responses}"
 export PATHSCIENTIST_SANDBOX="${PATHSCIENTIST_SANDBOX:-auto}"
-export PATHSCIENTIST_BASE_DIR="${PATHSCIENTIST_BASE_DIR:-$PATHLAB_CLIENT_DIR/uploads/pathscientist}"
-export PATHSCIENTIST_DATASET_CACHE_DIR="${PATHSCIENTIST_DATASET_CACHE_DIR:-/project/llmponco/wangyihui/original_data/pathlab_test_data}"
+PATHSCIENTIST_BASE_DIR_DEFAULT="$(resolve_default_base_dir)"
+export PATHSCIENTIST_BASE_DIR="${PATHSCIENTIST_BASE_DIR:-$PATHSCIENTIST_BASE_DIR_DEFAULT}"
+export PATHSCIENTIST_DATASET_CACHE_DIR="${PATHSCIENTIST_DATASET_CACHE_DIR:-$PATHSCIENTIST_BASE_DIR/dataset_cache}"
 export PATHSCIENTIST_GENERATE_PAPER_DRAFT="${PATHSCIENTIST_GENERATE_PAPER_DRAFT:-0}"
 export PATHSCIENTIST_FEATURE_EXTRACTOR_MODE="${PATHSCIENTIST_FEATURE_EXTRACTOR_MODE:-auto}"
 if [[ "$PATHSCIENTIST_FEATURE_EXTRACTOR_MODE" == "fixed" ]]; then

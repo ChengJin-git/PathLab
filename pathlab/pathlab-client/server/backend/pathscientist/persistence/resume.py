@@ -10,22 +10,22 @@ from __future__ import annotations
 import json
 import logging
 import os
+from importlib import import_module
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
-
-from openhands.sdk.conversation import LocalConversation
 
 from ..config import PathScientistConfig
 from ..persistence.layout import get_persistence_root
 from ..persistence.state_bridge import update_agent_state
 from ..runtime.iteration_state import IterationState
-from ..runtime.session import DEFAULT_BASE_DIR, PathScientistSession
+from ..runtime.session import DEFAULT_BASE_DIR, PathScientistSession, _resolve_base_dir
 from ..runtime.session_registry import SessionDeps, register_session
 from ..runtime.workspace import Workspace
 from ..tools.metrics import MetricsTracker
 
 logger = logging.getLogger(__name__)
-def _read_agent_state_from_disk(conversation_dir: Path) -> dict:
+def _read_agent_state_from_disk(conversation_dir: Path) -> dict[str, Any]:
     """Read agent_state from base_state.json without creating a full conversation."""
     base_state_path = conversation_dir / "base_state.json"
     if not base_state_path.exists():
@@ -34,7 +34,7 @@ def _read_agent_state_from_disk(conversation_dir: Path) -> dict:
     return data.get("agent_state", {})
 
 
-def _rebuild_tracker(agent_state: dict, config: PathScientistConfig) -> MetricsTracker:
+def _rebuild_tracker(agent_state: dict[str, Any], config: PathScientistConfig) -> MetricsTracker:
     """Rebuild MetricsTracker from persisted tracker_state."""
     from ..orchestrator.metrics_utils import repair_tracker_state_payload
 
@@ -51,7 +51,7 @@ def _rebuild_tracker(agent_state: dict, config: PathScientistConfig) -> MetricsT
     return tracker
 
 
-def _rebuild_iteration_state(agent_state: dict, config: PathScientistConfig) -> IterationState:
+def _rebuild_iteration_state(agent_state: dict[str, Any], config: PathScientistConfig) -> IterationState:
     """Rebuild IterationState from persisted iteration_state."""
     iter_data = agent_state.get("iteration_state", {})
     state = IterationState(
@@ -86,11 +86,16 @@ def _candidate_persistence_roots(config: PathScientistConfig) -> list[Path]:
     if workspace_dir:
         workspace_path = Path(workspace_dir).expanduser().resolve()
         if workspace_path.name.startswith("session_"):
+            if workspace_path.parent.name == "autoresearch_sessions":
+                add(workspace_path.parent.parent)
             add(workspace_path.parent)
         add(workspace_path)
 
     add(os.environ.get("PATHSCIENTIST_PERSISTENCE_DIR", ""))
-    add(os.environ.get("PATHSCIENTIST_BASE_DIR", DEFAULT_BASE_DIR))
+    try:
+        add(_resolve_base_dir())
+    except Exception:
+        add(os.environ.get("PATHSCIENTIST_BASE_DIR", DEFAULT_BASE_DIR))
 
     return candidates
 
@@ -98,7 +103,7 @@ def _candidate_persistence_roots(config: PathScientistConfig) -> list[Path]:
 def resume_conversation(
     config: PathScientistConfig,
     conversation_id: UUID,
-) -> tuple[LocalConversation, PathScientistSession]:
+) -> tuple[Any, PathScientistSession]:
     """Resume a previously persisted PathScientist conversation.
 
     Rebuilds Workspace, MetricsTracker, IterationState, and SessionDeps
@@ -164,7 +169,8 @@ def resume_conversation(
     agent, _, _, _ = create_agent(config, research_question=session.research_question, session=session)
 
     # Create conversation — OpenHands detects base_state.json and enters resume mode
-    conversation = LocalConversation(
+    conversation_cls = import_module("openhands.sdk.conversation").LocalConversation
+    conversation = conversation_cls(
         agent=agent,
         workspace=workspace.sdk_workspace,
         persistence_dir=str(persistence_root),
