@@ -2588,6 +2588,50 @@ def test_delete_session_endpoint_does_not_remove_workspace_outside_base(tmp_path
     assert outside_workspace.exists()
 
 
+def test_delete_session_endpoint_does_not_follow_workspace_symlink(tmp_path):
+    route_module = load_route_module()
+    base_dir = tmp_path / "pathscientist-base"
+    victim_workspace = base_dir / "victim-workspace"
+    victim_workspace.mkdir(parents=True)
+    keep_file = victim_workspace / "keep.txt"
+    keep_file.write_text("important\n", encoding="utf-8")
+    symlink_workspace = base_dir / "session_symlink"
+    try:
+        symlink_workspace.symlink_to(victim_workspace, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+
+    route_module._resolve_pathscientist_base_dir = lambda: base_dir
+    manager = route_module.PathScientistSessionManager()
+    record = route_module.SessionRecord(
+        session_id="s-delete-symlink-workspace",
+        conversation_id="conv-delete-symlink-workspace",
+        question="old run",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+        state={"workspace_dir": str(symlink_workspace)},
+    )
+    manager._sessions[record.session_id] = record
+    route_module._SESSION_MANAGER = manager
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.delete("/pathscientist/sessions/s-delete-symlink-workspace")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["deleted"] is True
+    assert data["workspace_deleted"] is False
+    assert data["workspace_delete_reason"] == "Workspace is a symlink; skipped for safety."
+    assert symlink_workspace.is_symlink()
+    assert keep_file.read_text(encoding="utf-8") == "important\n"
+
+
 def test_delete_session_endpoint_rejects_running_session():
     route_module = load_route_module()
     manager = route_module.PathScientistSessionManager()
@@ -2612,6 +2656,31 @@ def test_delete_session_endpoint_rejects_running_session():
 
     assert response.status_code == 409
     assert manager.get("s-delete-running") is record
+
+
+def test_delete_session_does_not_call_manager_delete_without_accessible_record(monkeypatch):
+    route_module = load_route_module()
+    manager = route_module.PathScientistSessionManager()
+    route_module._SESSION_MANAGER = manager
+
+    async def fake_load_db_record(session_id, **kwargs):
+        assert session_id == "unseen-session-id"
+        return None
+
+    def fail_delete(session_id: str):
+        pytest.fail(f"manager.delete should not be called for unresolved session {session_id}")
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_load_db_record)
+    monkeypatch.setattr(manager, "delete", fail_delete)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.delete("/pathscientist/sessions/unseen-session-id")
+
+    assert response.status_code == 404
 
 
 def test_delete_session_resolves_db_record_to_runtime_session_id(monkeypatch):

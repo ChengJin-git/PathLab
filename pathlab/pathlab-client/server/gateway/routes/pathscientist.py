@@ -1351,6 +1351,13 @@ def _delete_session_workspace(record: SessionRecord) -> dict[str, Any]:
             "workspace_delete_reason": "No workspace found for this session.",
         }
 
+    if workspace.is_symlink():
+        return {
+            "workspace_deleted": False,
+            "workspace_path": str(workspace),
+            "workspace_delete_reason": "Workspace is a symlink; skipped for safety.",
+        }
+
     workspace = workspace.resolve(strict=False)
     base_dir = _resolve_pathscientist_base_dir().resolve(strict=False)
     payload: dict[str, Any] = {
@@ -3662,9 +3669,10 @@ async def delete_session(
             include_events=False,
             register=False,
         )
-    delete_session_id = existing.session_id if existing is not None else session_id
+    if existing is None:
+        raise HTTPException(status_code=404, detail="PathScientist session not found")
     try:
-        result = _SESSION_MANAGER.delete(delete_session_id)
+        result = _SESSION_MANAGER.delete(existing.session_id)
     except SessionDeleteRejected as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
@@ -3960,7 +3968,7 @@ def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
     for session_id in internal_session_ids:
         canonical_workspace = _canonical_session_workspace_path(str(session_id or ""))
         if canonical_workspace is not None and canonical_workspace.is_dir():
-            return canonical_workspace.resolve()
+            return canonical_workspace if canonical_workspace.is_symlink() else canonical_workspace.resolve()
 
     candidates: list[Any] = [
         state.get("workspace_path"),
@@ -3997,7 +4005,7 @@ def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
             logger.debug("PathScientist workspace probe skipped for %s: %s", path, exc)
             continue
         if is_workspace_dir:
-            return path.resolve()
+            return path if path.is_symlink() else path.resolve()
 
     # Web-created sessions store the internal PathScientist session_id in
     # research state. Default workspaces live under <base>/autoresearch_sessions.
@@ -4011,7 +4019,7 @@ def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
             logger.debug("PathScientist workspace probe skipped for %s: %s", path, exc)
             continue
         if is_workspace_dir:
-            return path.resolve()
+            return path if path.is_symlink() else path.resolve()
     return None
 
 
