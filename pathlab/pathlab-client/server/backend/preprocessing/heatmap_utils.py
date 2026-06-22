@@ -33,6 +33,7 @@ def load_result_meta(attention_or_cam_file: Path, suffix: str = "_attention.npy"
                 return json.load(f)
         except Exception as e:
             logger.warning(f"Failed to load result meta from {result_json_file}: {e}")
+
     return {}
 
 
@@ -193,4 +194,3 @@ def normalize_attention(attention: np.ndarray[Any, Any]) -> Tuple[np.ndarray[Any
         attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
         logger.debug(f"Softmax + percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
         return attention_normalized, attention_softmax
-

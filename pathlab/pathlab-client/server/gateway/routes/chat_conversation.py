@@ -1,13 +1,25 @@
 import os
 import re
 import uuid
+import json
 import httpx
+from importlib import import_module
+from typing import Protocol
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.common import get_logger
+get_logger = import_module("backend.common").get_logger
 
 logger = get_logger("ChatConversation")
+
+
+class _ConversationMessage(Protocol):
+    id: int
+    variant_group_id: str | None
+    is_active_variant: bool
+
+    def to_dict(self) -> dict[str, object]: ...
+
 
 # Regex patterns for special UI-only blocks that should be stripped before
 # sending user message content to the title-generation AI prompt.
@@ -33,6 +45,7 @@ def _build_title_generation_payload(
     payload: dict[str, object] = {
         "model": model,
         "messages": [{"role": "user", "content": title_prompt}],
+        "stream": True,
         # Keep enough output room in case a provider still emits reasoning or extra text.
         "max_tokens": 512,
         "temperature": 0.3,
@@ -95,6 +108,30 @@ def _extract_title_response_text(message: dict[str, object]) -> str:
     return extract_text_from_content(message.get("content")).strip()
 
 
+def _extract_title_stream_response_text(response_text: str) -> str:
+    chunks: list[str] = []
+    for line in response_text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        data = line[6:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        choices = parsed.get("choices")
+        if not isinstance(choices, list) or not choices:
+            continue
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+            chunks.append(delta["content"])
+    return "".join(chunks).strip()
+
+
 def _get_title_source_message(conversation) -> str | None:
     """Pick the first user message that should drive title generation.
 
@@ -119,11 +156,15 @@ def _get_title_source_message(conversation) -> str | None:
     return None
 
 
-from backend.common.config import Config
-from backend.database import get_db
-from backend.database.repositories import ChatRepository
-from backend.auth import current_active_user, User
-from gateway.chat.permissions import require_conversation_access
+Config = import_module("backend.common.config").Config
+get_db = import_module("backend.database").get_db
+ChatRepository = import_module("backend.database.repositories").ChatRepository
+_auth_module = import_module("backend.auth")
+current_active_user = _auth_module.current_active_user
+User = _auth_module.User
+require_conversation_access = import_module(
+    "gateway.chat.permissions"
+).require_conversation_access
 from ..prompts import detect_language
 from ..models import (
     CreateConversationRequest,
@@ -136,7 +177,7 @@ from .chat_patch_inference import (
     cleanup_chat_patch_tasks_from_message,
 )
 from .chat_model_selector import extract_text_from_content
-from .chat_llm_client import _check_local_vllm_available
+from .chat_llm_client import _check_local_vllm_available, _raise_for_status_with_detail
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -207,7 +248,7 @@ async def get_conversation(
     conversation = await require_conversation_access(db, conversation_id, user)
     sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
 
-    variant_groups: dict[str, list] = {}
+    variant_groups: dict[str, list[_ConversationMessage]] = {}
     for msg in sorted_messages:
         if msg.variant_group_id:
             variant_groups.setdefault(msg.variant_group_id, []).append(msg)
@@ -273,7 +314,7 @@ async def generate_conversation_title(
     conversation = await require_conversation_access(db, conversation_id, user)
 
     first_message = _get_title_source_message(conversation)
-    if not first_message or not first_message.strip():
+    if first_message is None or not first_message.strip():
         raise HTTPException(
             status_code=400,
             detail=(
@@ -385,10 +426,8 @@ async def generate_conversation_title(
                 headers=headers,
                 json=payload,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            message = data.get("choices", [{}])[0].get("message", {})
-            raw_content = _extract_title_response_text(message)
+            await _raise_for_status_with_detail(resp)
+            raw_content = _extract_title_stream_response_text(resp.text)
             title = raw_content.strip().strip('"').strip("'")
     except Exception as e:
         logger.warning(

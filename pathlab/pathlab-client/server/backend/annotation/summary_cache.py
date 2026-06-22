@@ -3,12 +3,14 @@
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from backend.common.config import Config
+Config = import_module("backend.common.config").Config
 from .coco_utils import coco_to_roi_annotations
-from backend.common.file_types import is_patch_file
+
+is_patch_file = import_module("backend.common.file_types").is_patch_file
 
 
 CACHE_VERSION = (
@@ -16,11 +18,11 @@ CACHE_VERSION = (
 )
 
 
-def _to_isoformat(value: Any) -> Optional[str]:
+def _to_isoformat(value: Any) -> str | None:
     return value.isoformat() if value else None
 
 
-def _latest_updated_at_iso(items: Iterable[Any]) -> Optional[str]:
+def _latest_updated_at_iso(items: list[Any] | tuple[Any, ...]) -> str | None:
     latest_value: datetime | None = None
     for item in items:
         updated_at = getattr(item, "updated_at", None)
@@ -349,10 +351,9 @@ def build_effective_summary_from_cache(
 async def rebuild_dataset_annotation_summary_cache(
     db: Any, dataset_id: str
 ) -> dict[str, Any]:
-    from backend.database.repositories import (
-        SegmentationAnnotationRepository,
-        WSIRepository,
-    )
+    repositories = import_module("backend.database.repositories")
+    SegmentationAnnotationRepository = repositories.SegmentationAnnotationRepository
+    WSIRepository = repositories.WSIRepository
 
     wsis = await WSIRepository.get_by_dataset(db, dataset_id, skip=0, limit=0)
     merged_annotations: Dict[str, list[dict[str, Any]]] = {}
@@ -375,6 +376,7 @@ async def rebuild_dataset_annotation_summary_cache(
         exact_lookup, stem_lookup = _build_dataset_wsi_lookups(wsis)
 
         for record in records_to_use:
+            record_annotation_id = getattr(record, "annotation_id", None)
             record_annotations = getattr(record, "annotations", {})
             if not isinstance(record_annotations, dict):
                 continue
@@ -385,6 +387,13 @@ async def rebuild_dataset_annotation_summary_cache(
             )
             for wsi_id, regions in roi_map.items():
                 merged_annotations.setdefault(wsi_id, []).extend(regions)
+            if (
+                isinstance(record_annotation_id, str)
+                and record_annotation_id.startswith("label_")
+                and not record_annotation_id == f"label_{dataset_id}"
+            ):
+                inferred_wsi_id = record_annotation_id[len("label_") :]
+                merged_annotations.setdefault(inferred_wsi_id, [])
 
     finalized_annotations_key = {
         "count": len(gt_records),
@@ -411,11 +420,10 @@ async def rebuild_draft_annotation_summary_cache(
     annotation_id: str,
     user_id: str,
     dataset_id: str,
-) -> Optional[dict[str, Any]]:
-    from backend.database.repositories import (
-        SegmentationAnnotationRepository,
-        WSIRepository,
-    )
+) -> dict[str, Any] | None:
+    repositories = import_module("backend.database.repositories")
+    SegmentationAnnotationRepository = repositories.SegmentationAnnotationRepository
+    WSIRepository = repositories.WSIRepository
 
     draft_annotation = await SegmentationAnnotationRepository.get(
         db, annotation_id, user_id

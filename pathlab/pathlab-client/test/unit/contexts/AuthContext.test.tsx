@@ -204,7 +204,7 @@ describe('AuthContext', () => {
         await result.current.login('alice', 'secret', 'turnstile_token_123')
       })
 
-      expect(mockLoginWithCredentials).toHaveBeenCalledWith('alice', 'secret', 'turnstile_token_123')
+      expect(mockLoginWithCredentials).toHaveBeenCalledWith('alice', 'secret', 'turnstile_token_123', undefined, undefined)
     })
 
     it('returns false and sets error on bad credentials', async () => {

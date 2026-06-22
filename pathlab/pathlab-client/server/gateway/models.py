@@ -5,8 +5,48 @@ Pydantic models for Gateway API requests/responses
 from enum import Enum
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Dict, List, Any, Literal
+from backend.ai.task_taxonomy import (
+    CANONICAL_TASK_IDS,
+    get_task_metadata,
+    is_canonical_task_type,
+    normalize_task_type,
+    validate_task_axes,
+)
 from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 from backend.auth.schemas import UserReadAdmin
+
+
+def _normalize_task_type_for_dataset_axes(
+    task_type: str,
+    *,
+    aggregation_level: Optional[str],
+) -> str:
+    normalized = task_type.strip().lower()
+    if not is_canonical_task_type(normalized):
+        raise ValueError(f"task_type must be one of {CANONICAL_TASK_IDS}, got: {normalized}")
+    metadata = get_task_metadata(normalized)
+    validate_task_axes(
+        task_type=normalized,
+        data_type=metadata.data_type,
+        aggregation_level=aggregation_level or "file",
+    )
+    return normalized
+
+
+def _infer_batch_register_data_type(files: List["BatchRegisterFileInfo"]) -> Optional[str]:
+    normalized_data_types = {
+        file.data_type.strip().lower()
+        for file in files
+        if isinstance(file.data_type, str) and file.data_type.strip()
+    }
+    if not normalized_data_types:
+        return None
+    if len(normalized_data_types) > 1:
+        raise ValueError("files contain mixed data_type values")
+    inferred = next(iter(normalized_data_types))
+    if inferred not in {"wsi", "patch"}:
+        raise ValueError("files contain unsupported data_type values")
+    return inferred
 
 
 class DatasetUpdateVisibilityRequest(BaseModel):
@@ -23,7 +63,15 @@ class DatasetRenameRequest(BaseModel):
 class DatasetUpdateTypeRequest(BaseModel):
     """Request model for updating dataset type (classification/survival/segmentation)"""
 
-    task_type: str  # "classification", "survival", or "segmentation"
+    task_type: str  # "wsi_classification", "wsi_survival", or "patch_segmentation"
+
+    @model_validator(mode="after")
+    def normalize_task_type_value(self):
+        normalized = self.task_type.strip().lower()
+        if not is_canonical_task_type(normalized):
+            raise ValueError(f"task_type must be one of {CANONICAL_TASK_IDS}, got: {normalized}")
+        self.task_type = normalized
+        return self
 
 
 class DatasetUpdateDataLevelRequest(BaseModel):
@@ -56,14 +104,23 @@ class WSIClassifyRequest(BaseModel):
     params: Optional[Dict[str, Any]] = None
 
 
+class IndependentInferenceRequest(BaseModel):
+    """Request model for inference on selected uploaded, unlabeled images."""
+
+    model_id: str
+    wsi_ids: List[str] = Field(min_length=1)
+    rerun_from_task_id: Optional[str] = None
+
+
 class SplitConfig(BaseModel):
     """Configuration for data splitting strategy"""
 
     strategy: str = "random"  # random, k_fold, manual
-    n_splits: int = 5  # for k_fold
+    n_splits: int = Field(default=5, ge=2, le=20)  # for k_fold
     ratios: Dict[str, float] = {"train": 0.7, "val": 0.1, "test": 0.2}
     manual_splits: Optional[Dict[str, str]] = None  # map wsi_id -> split
     seed: int = 42
+    stratified: bool = True
 
 
 class TrainingTaskRequest(BaseModel):
@@ -76,7 +133,7 @@ class TrainingTaskRequest(BaseModel):
         None  # Admin rerun only: preserve owner from source task
     )
     task_name: str
-    task_type: str  # "classification", "survival", or "segmentation"
+    task_type: str  # Canonical task id from CANONICAL_TASK_IDS.
     data_type: str  # "wsi" or "patch"
     task_description: Optional[str] = None
     dataset_id: Optional[str] = (
@@ -92,7 +149,14 @@ class TrainingTaskRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_segmentation_mode(self):
-        if self.task_type != "segmentation":
+        self.task_type = normalize_task_type(
+            task_type=self.task_type,
+            data_type=self.data_type,
+            aggregation_level="file",
+        )
+        self.data_type = self.data_type.strip().lower()
+
+        if self.task_type != "patch_segmentation":
             return self
 
         if self.data_type != "patch":
@@ -112,15 +176,23 @@ class TrainingTaskRequest(BaseModel):
                 "Segmentation tasks must use model.backbone instead of model.encoder."
             )
 
+        FM_DECODER_ARCHITECTURES = {
+            "linear_decoder",
+            "conv_decoder",
+            "dpt_decoder",
+            "unetr_decoder",
+        }
+
         is_fm_backbone = is_fm_segmentation_backbone(backbone)
-        if is_fm_backbone and architecture != "conv_decoder":
+        if is_fm_backbone and architecture not in FM_DECODER_ARCHITECTURES:
             raise ValueError(
-                f"Segmentation FM backbone '{backbone}' requires model.architecture='conv_decoder'."
+                f"Segmentation FM backbone '{backbone}' requires model.architecture to be one of "
+                f"{sorted(FM_DECODER_ARCHITECTURES)}, got '{architecture}'."
             )
 
-        if architecture == "conv_decoder" and not is_fm_backbone:
+        if architecture in FM_DECODER_ARCHITECTURES and not is_fm_backbone:
             raise ValueError(
-                f"Segmentation architecture 'conv_decoder' requires an FM backbone, got '{backbone}'."
+                f"Segmentation architecture '{architecture}' requires an FM backbone, got '{backbone}'."
             )
 
         return self
@@ -137,11 +209,20 @@ class BaseDatasetRequest(BaseModel):
     dataset_name: Optional[str] = None
     source_organ: Optional[str] = None
     aggregation_level: Optional[str] = None
-    task_type: Optional[str] = None
+    task_type: Optional[str] = "wsi_classification"
     is_public: bool = False
     default_label: Optional[str] = None
     default_event_time: Optional[float] = None
     default_event_status: Optional[int] = None
+
+    @model_validator(mode="after")
+    def normalize_task_type_value(self):
+        task_type = self.task_type or "wsi_classification"
+        self.task_type = _normalize_task_type_for_dataset_axes(
+            task_type,
+            aggregation_level=self.aggregation_level,
+        )
+        return self
 
 
 class BaseWSIMetadataFields(BaseModel):
@@ -279,6 +360,14 @@ class ScanDirectoryRequest(BaseModel):
     page_size: int = 100
 
 
+class StartScanDirectoryTaskRequest(BaseModel):
+    """Request model for starting an asynchronous directory scan"""
+
+    directory_path: str
+    task_type: Optional[str] = None
+    page_size: int = 100
+
+
 class BatchRegisterFileInfo(BaseModel):
     """File info for batch registration, including associated files for special formats"""
 
@@ -300,13 +389,29 @@ class BatchRegisterRequest(BaseModel):
     scan_root: Optional[str] = (
         None  # Directory used during external scan (for segmentation annotation matching)
     )
-    task_type: str = "classification"  # "classification", "survival", or "segmentation"
+    task_type: str = "wsi_classification"  # Canonical task id from CANONICAL_TASK_IDS.
     is_public: bool = False
     # Classification fields
     default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
     default_event_time: Optional[float] = None  # Time to event
     default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
+
+    @model_validator(mode="after")
+    def normalize_task_type_value(self):
+        inferred_data_type = _infer_batch_register_data_type(self.files)
+        if inferred_data_type is not None:
+            self.task_type = normalize_task_type(
+                task_type=self.task_type,
+                data_type=inferred_data_type,
+                aggregation_level="file",
+            )
+            return self
+        normalized = self.task_type.strip().lower()
+        if not is_canonical_task_type(normalized):
+            raise ValueError(f"task_type must be one of {CANONICAL_TASK_IDS}, got: {normalized}")
+        self.task_type = normalized
+        return self
 
 
 class CheckExternalFilesRequest(BaseModel):
@@ -328,14 +433,41 @@ class StartBatchImportRequest(BaseDatasetRequest):
     select_all_valid: bool = False
     selected_paths: List[str] = Field(default_factory=list)
     excluded_paths: List[str] = Field(default_factory=list)
-    aggregation_level: str = "file"
-    task_type: str = "classification"
+    aggregation_level: Optional[str] = "file"
+    task_type: Optional[str] = "wsi_classification"
+
+    @model_validator(mode="after")
+    def normalize_task_type_value(self):
+        task_type = self.task_type or "wsi_classification"
+        aggregation_level = self.aggregation_level or "file"
+
+        inferred_data_type = _infer_batch_register_data_type(self.files or [])
+        if inferred_data_type is not None:
+            self.task_type = normalize_task_type(
+                task_type=task_type,
+                data_type=inferred_data_type,
+                aggregation_level=aggregation_level,
+            )
+            return self
+        self.task_type = _normalize_task_type_for_dataset_axes(
+            task_type,
+            aggregation_level=aggregation_level,
+        )
+        self.aggregation_level = aggregation_level
+        return self
 
 
 class StartDeleteExternalRequest(BaseModel):
     """Request model for starting a delete external files background task"""
 
     wsi_ids: List[str]  # List of WSI IDs to delete
+
+
+class StartDeleteWSIsRequest(BaseModel):
+    """Request model for starting owner-safe WSI batch deletion."""
+
+    wsi_ids: List[str] = Field(min_length=1)
+    mode: DeletionMode = DeletionMode.STANDARD
 
 
 class StartDeleteDatasetRequest(BaseModel):
@@ -365,11 +497,21 @@ class AnnotationExtractRequest(BaseModel):
     annotation_id: Optional[str] = None
     annotations: Optional[Dict[str, Any]] = None
     dataset_name: str
-    task_type: str = "classification"
+    task_type: str = "patch_segmentation"
     source_dataset_id: Optional[str] = None
     dataset_scope: bool = False
     source_organ: Optional[str] = None
     annotation_mode: Literal["personal", "shared"] = "personal"
+
+    @model_validator(mode="after")
+    def normalize_task_type_value(self):
+        normalized = self.task_type.strip().lower()
+        if not is_canonical_task_type(normalized):
+            raise ValueError(f"task_type must be one of {CANONICAL_TASK_IDS}, got: {normalized}")
+        if not normalized.startswith("patch_"):
+            raise ValueError("Annotation extraction creates patch datasets; task_type must be patch_classification or patch_segmentation")
+        self.task_type = normalized
+        return self
 
 
 class AnnotationDeleteByLabelsRequest(BaseModel):
@@ -394,8 +536,8 @@ class AddCollaboratorRequest(BaseModel):
 
 
 class PublicSettingsResponse(BaseModel):
-    turnstile_enabled: bool
-    turnstile_site_key: str
+    captcha_provider: Optional[str] = None
+    captcha_site_key: str = ""
 
 
 class GlobalSettingsResponse(BaseModel):
@@ -416,6 +558,9 @@ class GlobalSettingsResponse(BaseModel):
     turnstile_enabled: bool
     turnstile_site_key: str
     turnstile_secret_key: str
+    tencent_captcha_enabled: bool
+    tencent_captcha_app_id: str
+    tencent_captcha_secret_key: str
     resend_enabled: bool
     resend_api_key: str
     admin_notify_email: str
@@ -440,6 +585,9 @@ class GlobalSettingsUpdateRequest(BaseModel):
     turnstile_enabled: Optional[bool] = None
     turnstile_site_key: Optional[str] = None
     turnstile_secret_key: Optional[str] = None
+    tencent_captcha_enabled: Optional[bool] = None
+    tencent_captcha_app_id: Optional[str] = None
+    tencent_captcha_secret_key: Optional[str] = None
     resend_enabled: Optional[bool] = None
     resend_api_key: Optional[str] = None
     admin_notify_email: Optional[str] = None
@@ -518,7 +666,7 @@ class ModelUpdateRequest(BaseModel):
 
 
 class AccessRequest(BaseModel):
-    username: str = Field(description="Desired username (stored in email field)")
+    username: str = Field(description="Desired login username")
     password: str = Field(description="Account password")
     registration_email: str = Field(
         description="Educational email for identity verification"
@@ -527,6 +675,12 @@ class AccessRequest(BaseModel):
     turnstile_token: Optional[str] = Field(
         default=None, description="Cloudflare Turnstile token"
     )
+    tencent_captcha_token: Optional[str] = Field(
+        default=None, description="Tencent Captcha ticket"
+    )
+    tencent_captcha_randstr: Optional[str] = Field(
+        default=None, description="Tencent Captcha randstr"
+    )
 
 
 class SecureLoginRequest(BaseModel):
@@ -534,6 +688,8 @@ class SecureLoginRequest(BaseModel):
     hashed_password: str
     timestamp: int
     turnstile_token: Optional[str] = None
+    tencent_captcha_token: Optional[str] = None
+    tencent_captcha_randstr: Optional[str] = None
 
 
 class PaginatedUserListResponse(BaseModel):
@@ -591,6 +747,13 @@ class ExternalValidationRequest(BaseModel):
     metrics: Optional[List[str]] = None
     charts: Optional[List[str]] = None
     compute_bootstrap_ci: Optional[bool] = False
+
+
+class BatchInferenceRequest(BaseModel):
+    model_task_id: str
+    model_id: Optional[str] = None
+    dataset_id: str
+    rerun_from_task_id: Optional[str] = None
 
 
 class QuickAnalysisRequest(BaseModel):

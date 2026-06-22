@@ -26,6 +26,19 @@ export interface RunningTaskInfo {
 }
 
 /**
+ * GPU stage detail for a running or waiting task
+ */
+export interface GpuStageDetail {
+  task_id: string
+  stage: string
+  state: 'waiting' | 'running'
+  gpu: number | null
+  device: string | null
+  required_vram_mb: number
+  effective_free_mb?: number
+}
+
+/**
  * GPU task queue status
  */
 export interface QueueStatus {
@@ -42,6 +55,7 @@ export interface QueueStatus {
   vram_available?: boolean
   vram_free_mb?: number
   vram_status?: string
+  gpu_stage_details?: Record<string, GpuStageDetail>
 }
 
 /**

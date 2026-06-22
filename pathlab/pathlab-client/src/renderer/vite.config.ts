@@ -10,6 +10,11 @@ const devGatewayTarget = process.env.VITE_DEV_GATEWAY_TARGET || 'http://127.0.0.
 export default defineConfig({
   root: '.',
   base: '/',
+  resolve: {
+    alias: {
+      '@renderer': resolve(__dirname, 'src')
+    }
+  },
   plugins: [
     react(),
     VitePWA({

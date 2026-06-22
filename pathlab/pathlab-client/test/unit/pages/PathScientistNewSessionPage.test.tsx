@@ -31,23 +31,24 @@ describe('PathScientistNewSessionPage', () => {
     await i18n.changeLanguage('zh-CN')
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistNewSessionPage />
       </MemoryRouter>,
     )
 
-    expect(screen.getByRole('heading', { name: '启动 PathScientist 会话' })).toBeInTheDocument()
-    expect(screen.getByText('描述计算病理任务。PathScientist 会启动后端会话，并把实时事件流写入运行详情页。')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '启动自动实验会话' })).toBeInTheDocument()
+    expect(screen.getByText('描述计算病理任务。自动实验会启动后端会话，并把实时事件流写入运行详情页。')).toBeInTheDocument()
     expect(screen.getByLabelText('研究问题')).toBeInTheDocument()
     expect(screen.getByLabelText('最大迭代次数')).toHaveValue(5)
     expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '启动会话' })).toBeInTheDocument()
     expect(screen.queryByText('Start a PathScientist session')).not.toBeInTheDocument()
+    expect(screen.queryByText('PathScientist')).not.toBeInTheDocument()
   })
 
   it('defaults max iterations to the PathScientist CLI default', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistNewSessionPage />
       </MemoryRouter>,
     )
@@ -58,7 +59,7 @@ describe('PathScientistNewSessionPage', () => {
 
   it('does not render the manual skill selector', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistNewSessionPage />
       </MemoryRouter>,
     )
@@ -70,7 +71,7 @@ describe('PathScientistNewSessionPage', () => {
 
   it('allows typing a replacement max iteration number', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistNewSessionPage />
       </MemoryRouter>,
     )
@@ -86,7 +87,7 @@ describe('PathScientistNewSessionPage', () => {
 
   it('submits the typed max iteration value', async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistNewSessionPage />
       </MemoryRouter>,
     )

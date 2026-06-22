@@ -49,6 +49,10 @@
     "pleaseEnterUsernameAndPassword": "请输入用户名和密码",
     "copyright": "© 2026",
     "protectedByTurnstile": "受 Cloudflare Turnstile 保护",
+    "protectedByTencent": "受腾讯云验证码保护",
+    "captchaRequired": "请完成验证码验证",
+    "captchaExpired": "验证码已过期，请重试",
+    "captchaError": "验证码验证失败，请重试",
     "savedSuccess": "已保存！",
     "savingText": "保存中...",
     "saveSettings": "保存设置",
@@ -72,7 +76,7 @@
     "welcomeBack": "欢迎回来",
     "signedInAs": "登录为",
     "systemMaintenance": "系统正在维护中，请稍后再试。",
-    "sessionExpired": "您的账号已在其他设备登录，当前会话已结束。",
+    "sessionExpired": "您的账号同时在线设备数已超过2台，当前会话已结束。",
     "accountPendingApproval": "您的账号正在等待管理员审核，激活后将发送邮件通知。"
   },
   "nav": {
@@ -151,7 +155,7 @@
     "donate": "捐赠",
     "enterUsername": "请输入用户名",
     "enterPassword": "请输入密码",
-    "buildVersion": "版本 v1.0.4-stable",
+    "buildVersion": "版本 v1.0.5-stable",
     "legalNotice": "登录前，您可先查看服务条款及隐私声明。首次进入系统前，系统仍会要求您完成同意确认。",
     "viewTerms": "查看服务条款",
     "viewPrivacy": "查看隐私声明",
@@ -185,7 +189,7 @@
     "aboutText1Part1": "PathLab",
     "aboutText1Part2": " 是一个 AI 驱动的病理学分析平台，用于病理学图像分析。",
     "aboutText2": "该平台整合了最先进的深度学习模型与直观的 AI 助手，帮助研究人员设置和运行病理学分析任务。",
-    "aboutText3": "由 SmartLab 开发。",
+    "aboutText3": "由 SmartXLab 开发。",
     "language": "语言",
     "languageDesc": "选择您的首选语言",
     "remoteServices": "远程服务",
@@ -198,7 +202,7 @@
       "minSixChars": "至少 6 个字符",
       "nickname": "昵称",
       "displayNameOptional": "显示名称（可选）",
-      "email": "邮箱",
+      "email": "申请/通知邮箱",
       "emailPlaceholder": "user@example.com",
       "role": "角色",
       "roleAdmin": "管理员",
@@ -213,7 +217,7 @@
       "username": "用户名",
       "nickname": "昵称",
       "enterNickname": "请输入昵称",
-      "email": "邮箱",
+      "email": "申请/通知邮箱",
       "emailPlaceholder": "user@example.com",
       "newPassword": "新密码",
       "leaveEmptyToKeep": "留空以保持不变",
@@ -622,6 +626,7 @@
       "failedToSendNotice": "发送公告失败",
       "createUser": "创建用户",
       "openPermissionCenter": "授权中心",
+      "emailTemplates": "邮件模板",
       "managePermissionsByDataset": "按数据授权",
       "refresh": "刷新",
       "usersSelected": "已选择 {{count}} 个",
@@ -720,6 +725,10 @@
       "orphanedFilesCleanupSummary": "孤立文件清理：已删除 {{files}} 个文件、{{dirs}} 个目录（{{emptyDirs}} 个空目录），{{failed}} 个失败，释放 {{size}}",
       "batchRegisterTitle": "批量注册",
       "batchRegisterDescription": "扫描目录并注册所有有效文件",
+      "scanInProgressTitle": "正在扫描所选目录中的文件",
+      "scanInProgressDescription": "PathLab 正在索引文件夹内容...",
+      "refreshingScanResults": "正在刷新扫描结果...",
+      "refreshingSegmentationAnnotations": "正在刷新分割标注匹配结果...",
       "enterDirectoryPath": "输入目录路径",
       "browse": "浏览",
       "orphanedFiles": "孤立文件",
@@ -789,6 +798,7 @@
       "labelCoordinates": "坐标",
       "labelMasks": "掩膜",
       "labelAIResults": "AI 结果",
+      "labelAIResultBundles": "AI 结果",
       "labelFeature": "特征",
       "labelTrainingData": "训练数据",
       "labelModels": "模型",
@@ -842,6 +852,30 @@
       "pdfParseBusy": "当前系统繁忙，暂时无法处理该文档，请稍后重试",
       "pdfFailedCount": "{{count}} 份文档处理失败",
       "summarizingPdf": "正在生成内容摘要..."
+    },
+    "emailTemplateModal": {
+      "title": "邮件模板配置",
+      "variables": "变量：",
+      "templates": {
+        "new_user_registration_notice": "新用户注册通知（用户）",
+        "account_activated": "账号激活通知（用户）",
+        "task_completed_notice": "任务完成通知（用户）",
+        "admin_new_user_registration_notice": "新用户注册通知（管理员）"
+      },
+      "subject": "主题",
+      "body": "正文",
+      "modeVisual": "编辑",
+      "modePreview": "预览",
+      "bold": "粗体",
+      "italic": "斜体",
+      "underline": "下划线",
+      "insertLink": "插入链接",
+      "link": "链接",
+      "linkPrompt": "链接地址",
+      "clearFormat": "清除格式",
+      "cancel": "取消",
+      "saving": "保存中…",
+      "save": "保存模板"
     }
   },
   "layout": {
@@ -855,13 +889,18 @@
     "profileMenu": "个人菜单",
     "switchLanguage": "切换语言",
     "changePassword": "修改密码",
-    "setEmail": "设置邮箱"
+    "setEmail": "设置邮箱",
+    "shellEyebrow": "病理研究工作台",
+    "shellAssistantTitle": "研究助手",
+    "shellWorkspaceTitle": "精密工作台"
   },
   "setEmail": {
     "title": "设置邮箱",
     "currentEmail": "当前邮箱：",
+    "noEmailSet": "尚未设置联系邮箱。",
     "newEmail": "新邮箱",
     "emailPlaceholder": "user@example.com",
+    "emailHint": "此邮箱仅用于通知和联系，不作为用户名。",
     "submit": "更新邮箱",
     "submitting": "更新中...",
     "success": "邮箱更新成功",
@@ -999,6 +1038,8 @@
     "loadingFileInfo": "正在加载文件信息...",
     "backToChat": "返回对话",
     "backToDataset": "返回 {{name}}",
+    "previousSlide": "上一张",
+    "nextSlide": "下一张",
     "noPreviousSlide": "没有上一张切片",
     "noNextSlide": "没有下一张切片",
     "zoomIn": "放大",
@@ -1136,9 +1177,12 @@
       "featureExtractor": "特征提取器",
       "dataConfig": "数据配置",
       "splitMethod": "划分方式",
+      "stratification": "分层方式",
       "splitRandom": "随机",
       "splitKFold": " 折交叉验证",
       "splitManual": "预定义划分",
+      "stratifiedEnabled": "分层",
+      "stratifiedDisabled": "非分层",
       "aggregator": "聚合器",
       "targetDataset": "目标数据集",
       "datasetId": "数据集 ID",
@@ -1168,6 +1212,27 @@
       "earlyStoppingPatience": "早停耐心值",
       "yes": "是",
       "no": "否"
+    },
+    "batchInference": {
+      "summary": "推理摘要",
+      "totalSlides": "总切片数",
+      "processedSlides": "已处理",
+      "classDistribution": "类别分布",
+      "results": "推理结果",
+      "noResults": "暂无结果",
+      "slideId": "切片 ID",
+      "filename": "文件名",
+      "prediction": "预测类别",
+      "confidence": "置信度",
+      "riskScore": "风险评分",
+      "riskGroup": "风险分组",
+      "predictionMask": "预测掩膜",
+      "maskGenerated": "已生成",
+      "maskMissing": "未生成",
+      "exportCsv": "导出 CSV",
+      "showing": "显示第 {{start}}–{{end}} 条，共 {{total}} 条",
+      "previous": "上一页",
+      "next": "下一页"
     }
   },
   "storagePage": {
@@ -1196,7 +1261,8 @@
       "training": "训练特征",
       "models": "训练模型",
       "logs": "训练日志",
-      "wsiFiles": "原始文件"
+      "wsiFiles": "原始文件",
+      "ai_result_bundles": "AI 结果"
     },
     "orphanedFiles": {
       "title": "孤立文件检测",
@@ -1219,7 +1285,8 @@
       "featuresCache": "特征缓存",
       "aiResults": "AI 结果",
       "trainingDirs": "训练目录",
-      "logs": "日志"
+      "logs": "日志",
+      "ai_result_bundles": "AI 结果包"
     },
     "emptyDatasets": {
       "title": "空数据集清理",
@@ -1285,24 +1352,29 @@
     "generatingTitle": "正在生成标题...",
     "untitledSession": "未命名会话",
     "live": "运行中",
+    "clearAll": "清空全部",
+    "clearAllConfirmTitle": "清空全部会话",
+    "clearAllConfirmMessage": "确定要清空 {{count}} 个会话吗？这将删除会话及其工作区数据。共享数据集不会被删除。",
+    "clearAllFailed": "清空会话失败",
     "sessionsPage": {
       "title": "研究会话",
       "description": "从 PathLab 界面启动并查看自主计算病理实验。当前版本展示实时事件和原始状态，后续会接入更完整的转录视图。",
       "refresh": "刷新",
       "newSession": "新建会话",
       "loading": "正在加载会话...",
-      "emptyTitle": "暂无 PathScientist 会话",
+      "emptyTitle": "暂无自动实验会话",
       "emptyDescription": "创建一个短会话，用于验证后端桥接和事件流。",
       "startOne": "开始一个",
       "workspace": "工作区",
       "unknownTime": "未知",
-      "untitledSession": "未命名 PathScientist 会话",
+      "untitledSession": "未命名自动实验会话",
       "stopRun": "停止运行",
       "delete": "删除",
       "deleteSession": "删除会话",
       "stopFailed": "停止会话失败",
       "deleteFailed": "删除会话失败",
-      "deleteConfirm": "确定删除这个 PathScientist 会话及其后端工作区吗？该会话生成的代码、日志、模型和运行结果会被删除。共享数据集不会被删除。"
+      "deleteConfirmTitle": "删除会话",
+      "deleteConfirm": "确定删除这个自动实验会话及其后端工作区吗？该会话生成的代码、日志、模型和运行结果会被删除。共享数据集不会被删除。"
     },
     "clinical": {
       "researchQuestion": "研究问题",
@@ -1354,6 +1426,7 @@
       "shareFailed": "分享失败",
       "downloadSuccess": "实验数据已开始下载",
       "downloadFailed": "下载失败",
+      "deleteConfirmTitle": "删除会话",
       "deleteConfirm": "确定删除此会话及其工作区数据吗？共享数据集不会被删除。",
       "deleteSuccess": "会话已删除",
       "deleteFailed": "删除失败"
@@ -1429,18 +1502,18 @@
       "samples": "{{count}} 个样本"
     },
     "newSessionPage": {
-      "title": "启动 PathScientist 会话",
-      "description": "描述计算病理任务。PathScientist 会启动后端会话，并把实时事件流写入运行详情页。",
+      "title": "启动自动实验会话",
+      "description": "描述计算病理任务。自动实验会启动后端会话，并把实时事件流写入运行详情页。",
       "researchQuestion": "研究问题",
       "questionPlaceholder": "为这个 WSI 文件夹提取 Virchow2 特征，但暂时不要训练...",
       "maxIter": "最大迭代次数",
       "starting": "启动中...",
       "startSession": "启动会话",
-      "startFailed": "启动 PathScientist 会话失败"
+      "startFailed": "启动自动实验会话失败"
     },
     "sessionPage": {
       "sessionDetail": "会话详情",
-      "description": "此运行的结构化 PathScientist 执行控制台。",
+      "description": "此运行的结构化自动实验执行控制台。",
       "researchQuestion": "研究问题",
       "deleteSession": "删除会话",
       "resumeSession": "恢复会话",
@@ -1454,7 +1527,7 @@
     },
     "stageTimeline": {
       "title": "阶段时间线",
-      "description": "PathScientist 研究流程的压缩视图。"
+      "description": "自动实验研究流程的压缩视图。"
     },
     "executionConsole": {
       "title": "执行控制台",
@@ -1613,7 +1686,9 @@
       "backbone": "骨干网络",
       "architecture": "架构",
       "featureExtractorSeg": "特征提取器",
-      "decoder": "解码器"
+      "decoder": "解码器",
+      "batchModel": "模型",
+      "batchDataset": "数据集"
     },
     "progress": {
       "creatingTask": "正在创建任务",
@@ -1630,6 +1705,17 @@
       "batchWarning": "您即将删除 {{count}} 个任务。所有关联数据将按照所选模式被移除。",
       "loadingStorageInfo": "正在加载存储信息...",
       "freesSurface": "释放空间",
+      "cleanupPendingTitle": "将清理任务相关数据",
+      "cleanupPendingDesc": "删除后会释放此任务占用的训练数据、日志和结果文件。",
+      "quickScopeTitle": "本次会删除",
+      "quickScopeStandardDesc": "标准删除会清理任务产生的文件，并保留训练模型。",
+      "quickScopeCompleteDesc": "完全删除会清理任务产生的文件，并同时删除训练模型。",
+      "trainingDataQuick": "训练数据和本任务提取的特征",
+      "aiResultsQuick": "关联到此任务的 AI 结果文件",
+      "logsQuick": "训练日志",
+      "analysisLogsQuick": "分析日志",
+      "modelsQuick": "训练模型文件",
+      "modelsKeptQuick": "保留训练模型",
       "files": "文件 ({{count}})",
       "trainingData": "训练数据 ({{size}})",
       "aiResults": "AI 结果 ({{size}})",
@@ -1832,6 +1918,21 @@
     "labelFileReady": "标签文件已就绪",
     "labelFileLoaded": "已加载——元数据将应用到匹配的文件。",
     "dropImageFilesBelow": "在下方拖放图像文件以与标签数据进行匹配。",
+    "collectionProgressTitle": "正在从文件夹中收集文件",
+    "collectionProgressDescription": "PathLab 会分批扫描拖入的文件夹。",
+    "collectionProgressStats": "已发现文件：{{files}}，已发现文件夹：{{directories}}",
+    "collectionProgressCurrentDirectory": "当前扫描：{{name}}",
+    "collectionTopLevelEntries": "顶层条目：{{count}}",
+    "collectionFilesDiscovered": "已发现文件：{{count}}",
+    "collectionFoldersDiscovered": "已发现文件夹：{{count}}",
+    "collectionCurrentDirectory": "当前扫描：{{name}}",
+    "collectionPhase": {
+      "preparing": "准备中",
+      "collecting": "收集中",
+      "matching": "匹配中",
+      "complete": "完成"
+    },
+    "fileProcessingError": "处理拖入文件时出错。",
     "skippedUnsupportedFiles": "已跳过 {{count}} 个不支持的文件：{{files}}{{more}}。支持的格式：{{extensions}}",
     "dropFilesHere": "将文件拖放至此处",
     "supportedFormats": "SVS、TIFF、NDPI、MRXS、SCN、VSI、DICOM、PNG、JPG",
@@ -1872,6 +1973,10 @@
     "statusDefault": "——",
     "eventOption": "事件",
     "censoredOption": "删失",
+    "survivalStatusConvention": "约定",
+    "survivalStatusEvent": "1 = 事件发生（如死亡、复发、达到终点）",
+    "survivalStatusCensored": "0 = 数据删失（随访期间未发生事件）",
+    "statusTooltip": "1 = 事件发生 · 0 = 数据删失",
     "caseIdPlaceholder": "病例 ID",
     "agePlaceholder": "年龄",
     "sourceDefault": "选择来源",
@@ -1897,6 +2002,15 @@
     "successPrefix": "成功：",
     "readyToRegister": "{{count}} 个文件已准备就绪",
     "pageIndicator": "{{current}} / {{total}}",
+    "previousPage": "上一页",
+    "nextPage": "下一页",
+    "missingLabelSummary": "{{count}} 个文件缺少标签",
+    "missingLabelClickHint": "点击文件名可跳转到对应行并填写标签。",
+    "missingLabelFilterHint": "缺少标签的文件较多，不逐一列出。可仅显示缺少标签的文件进行检查。",
+    "showOnlyMissingLabels": "仅显示缺少标签",
+    "showAllFiles": "显示全部文件",
+    "validatingMetadata": "正在校验元数据...",
+    "importing": "导入中...",
     "cancel": "取消",
     "uploadCsv": "上传 CSV",
     "addToDataset": "添加到数据集",
@@ -1968,10 +2082,17 @@
     "latestAnalysis": "最近分析",
     "externalValidationEmptyHint": "选择模型和数据集以运行外部验证。",
     "selectTask": "选择任务",
+    "searchModels": "搜索模型...",
+    "noMatchingModels": "没有匹配的模型",
+    "searchTasks": "搜索任务...",
+    "noMatchingTasks": "没有匹配的任务",
     "available": "{{count}} 个可用",
     "selectTaskPlaceholder": "选择任务...",
     "resultsCount": "{{count}} 个结果",
     "noResults": "无结果",
+    "independentInference": {
+      "unavailable": "不可用：外部存储无法访问"
+    },
     "analysisAvailable": "已分析",
     "noTasksAvailable": "没有可用的任务",
     "analysisSubmitted": "分析已提交",
@@ -2034,6 +2155,85 @@
       "dice_curve": "各轮次 Dice 分数变化",
       "per_class_iou": "验证集上各类别 IoU 分布",
       "per_class_dice": "验证集上各类别 Dice 分布"
+    },
+    "batchInference": {
+      "tabTitle": "批量推理",
+      "panelDescription": "在无标注数据集上运行已训练模型，生成预测结果",
+      "selectModel": "选择模型",
+      "selectModelPlaceholder": "选择模型...",
+      "selectDataset": "目标数据集",
+      "selectDatasetPlaceholder": "选择无标注数据集...",
+      "noUnlabeledDatasets": "未找到无标注数据集",
+      "noUnlabeledDatasetsHint": "仅无标签数据集可参与批量推理。上传未分配标签的切片即可创建。",
+      "showAllDatasets": "显示全部数据集",
+      "filterUnlabeled": "仅显示无标注",
+      "dataType": {
+        "patch": "图像块",
+        "wsi": "切片",
+        "slide": "切片",
+        "tile": "瓦片"
+      },
+      "taskType": {
+        "classification": "分类",
+        "patch_classification": "分类",
+        "segmentation": "分割",
+        "patch_segmentation": "分割",
+        "survival": "生存分析"
+      },
+      "items": "张",
+      "compatibilityNote": "模型与数据集的任务类型和数据类型必须匹配。",
+      "incompatibleDataset": "不兼容：任务类型或数据类型不匹配",
+      "unavailableDataset": "不可用：外部存储无法访问",
+      "description": "描述（可选）",
+      "descriptionPlaceholder": "添加本次批量推理的备注...",
+      "submit": "运行批量推理",
+      "submitting": "提交中...",
+      "inProgress": "批量推理进行中...",
+      "submitted": "已提交",
+      "submittedInfo": "批量推理任务已加入队列！",
+      "analysisSubmittedTrack": "批量推理已提交！请在后台任务面板中跟踪进度。",
+      "viewTaskDetail": "查看任务详情 →",
+      "noCompletedTasks": "暂无已完成的批量推理任务",
+      "noCompletedHint": "提交批量推理任务后，结果将显示在此处。",
+      "selectTask": "选择任务",
+      "selectTaskPlaceholder": "选择已完成的任务...",
+      "results": "推理结果",
+      "exportCsv": "导出 CSV",
+      "exporting": "导出中...",
+      "noResults": "暂无结果",
+      "slideId": "切片 ID",
+      "predictionClass": "类别",
+      "confidence": "置信度",
+      "riskScore": "风险评分",
+      "riskGroup": "风险分组",
+      "eventTime": "预测时间",
+      "instanceCount": "实例数",
+      "predictionMask": "预测掩膜",
+      "maskGenerated": "已生成",
+      "maskMissing": "未生成",
+      "pagination": {
+        "showing": "显示第 {{start}}–{{end}} 条，共 {{total}} 条",
+        "previous": "上一页",
+        "next": "下一页"
+      },
+      "summary": {
+        "title": "批量推理已完成",
+        "totalSlides": "总切片数",
+        "completedSlides": "已完成",
+        "model": "模型",
+        "dataset": "数据集",
+        "viewResults": "查看结果 →"
+      },
+      "status": {
+        "pending": "等待中",
+        "running": "运行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "cancelled": "已取消"
+      },
+      "failedToLoad": "加载批量推理任务失败",
+      "failedToSubmit": "提交批量推理失败",
+      "failedToExport": "导出结果失败"
     }
   },
   "listPage": {
@@ -2103,8 +2303,14 @@
     "derivedFrom": "导出自",
     "public": "公开",
     "private": "私有",
+    "makePublic": "设为公开",
+    "makePrivate": "设为私有",
+    "makePublicSuccess": "数据集已设为公开",
+    "makePrivateSuccess": "数据集已设为私有",
+    "failedUpdateVisibility": "更新可见性失败",
     "newDataset": "新建数据集",
     "newDatasetDescription": "注册切片以创建新数据集",
+    "externalUnavailable": "不可用",
     "noFilteredDatasets": "没有符合当前筛选条件的数据集",
     "noFilteredDatasetsDescription": "请尝试调整筛选条件，或清除筛选后查看全部数据集。",
     "failedDeleteWsi": "删除失败：{{error}}",
@@ -2287,7 +2493,8 @@
       "backToDatasets": "返回数据集列表",
       "datasetName": "{{name}}",
       "selectSlides": "选择训练文件（已选 {{count}} 个）",
-      "viewFiles": "查看 / 管理文件"
+      "viewFiles": "查看 / 管理文件",
+      "unavailable": "不可用"
     },
     "dataSplit": {
       "title": "数据拆分策略",
@@ -2310,6 +2517,8 @@
       "cannotKFold": "无法使用 K 折交叉验证",
       "kFoldSummary": "{{k}} 折交叉验证：{{classes}} 个类别，{{samples}} 个已标注样本",
       "kFoldEachFold": "每折约 {{count}} 个样本",
+      "stratifiedSplit": "分层划分",
+      "stratifiedSplitDesc": "在生成划分时尽量保持标注/类别分布一致。",
       "readyPreDefined": "预定义拆分方案已就绪",
       "train": "训练集",
       "val": "验证集",
@@ -2347,6 +2556,13 @@
       "foundationSegmentationDesc": "使用支持空间特征的基础模型提取器，并配合固定轻量解码器。",
       "architecture": "架构",
       "backbone": "骨干网络",
+      "decoderType": "解码头",
+      "decoder": {
+        "conv": "卷积",
+        "linear": "线性",
+        "dpt": "DPT",
+        "unetr": "UNETR"
+      },
       "lossFunction": "损失函数",
       "search": "搜索...",
       "trainingParams": "训练参数",
@@ -2406,9 +2622,12 @@
       "level": "第 {{level}} 层",
       "learning": "学习",
       "dataStrategy": "数据策略",
+      "split": "划分",
       "batch": "批量 {{size}}",
       "balanced": "均衡",
       "standard": "标准",
+      "stratifiedEnabled": "分层",
+      "stratifiedDisabled": "非分层",
       "fixRequired": "需要修复",
       "systemSuggestions": "系统建议",
       "validating": "正在验证配置...",
@@ -2470,6 +2689,10 @@
       "taskName": "任务名称",
       "taskNamePlaceholder": "例如 肺癌分类",
       "taskTypeLabel": "任务类型",
+      "wsi_classification": "WSI 分类",
+      "patch_classification": "Patch 分类",
+      "wsi_survival": "WSI 生存预测",
+      "patch_segmentation": "Patch 分割",
       "classification": "分类",
       "categoricalLabels": "识别病理类型或等级",
       "survivalPrediction": "生存预测",
@@ -2761,9 +2984,25 @@
       "task": "任务：",
       "id": "ID：",
       "trainingStarted": "训练已开始",
+      "inferenceStarted": "推理已启动",
       "dataset": "数据集：",
       "type": "类型：",
       "csvReady": "CSV 已就绪"
+    },
+    "batchInferenceConfig": {
+      "title": "批量推理",
+      "description": "在无标注数据集上运行模型推理",
+      "model": "模型",
+      "dataset": "数据集",
+      "submit": "开始批量推理",
+      "submitting": "提交中...",
+      "submitted": "批量推理已提交",
+      "viewTaskDetail": "查看任务详情",
+      "missingConfig": "缺少必要配置（模型或数据集）",
+      "failedToSubmit": "提交失败",
+      "uploadedImages": "已上传图像",
+      "imageCount": "{{count}} 张图像",
+      "inferenceStarted": "推理任务已启动"
     },
     "renameTask": {
       "title": "重命名训练任务",
@@ -3190,6 +3429,7 @@
       "failedToLoadTiles": "加载切片失败",
       "failedToInitialize": "初始化查看器失败",
       "failedToLoadImage": "加载图像失败",
+      "externalStorageUnavailable": "外部存储不可用{{reason}}",
       "patchImageAlt": "普通图像"
     },
     "attentionClassSelector": {
@@ -3269,8 +3509,10 @@
       "training": "训练",
       "analyzingResults": "分析结果",
       "externalValidation": "外部验证",
+      "batchInference": "批量推理",
       "externalAnalysis": "外部分析",
       "internalAnalysis": "内部分析",
+      "segmentationExport": "分割区域导出",
       "storage": "存储",
       "batchImport": "批量导入",
       "metadataUpdate": "元数据更新",
@@ -3278,6 +3520,7 @@
       "cleanupEmptyDatasets": "清理空数据集",
       "unbindDataset": "解绑数据集",
       "resetDerivedData": "重置派生数据",
+      "scanDirectory": "扫描目录",
       "deleteExternal": "删除外部数据",
       "extraction": "提取区域",
       "task": "任务",
@@ -3288,7 +3531,7 @@
       "training": {
         "creating": "正在创建任务",
         "queued": "排队中",
-        "pending": "待处理",
+        "pending": "检查数据集完整性",
         "patching": "图像切片中",
         "extracting": "提取特征中",
         "training": "训练模型中",
@@ -3298,6 +3541,18 @@
         "cancelled": "已取消"
       },
       "validation": {
+        "queued": "排队中",
+        "pending": "待处理",
+        "patching": "图像切片中",
+        "extracting": "提取特征中",
+        "training": "推理中",
+        "resuming": "恢复中",
+        "completed": "已完成",
+        "failed": "失败",
+        "cancelled": "已取消"
+      },
+      "batchInference": {
+        "creating": "正在创建任务",
         "queued": "排队中",
         "pending": "待处理",
         "patching": "图像切片中",
@@ -3336,14 +3591,19 @@
       "cancelled": "已取消",
       "analyzing": "分析中：{{name}}",
       "training": "训练中：{{name}}",
-      "validation": "验证中：{{name}}"
+      "validation": "验证中：{{name}}",
+      "batchInference": "批量推理：{{name}}",
+      "analysisExport": "正在导出分析结果：{{id}}",
+      "segmentationMaskExport": "正在导出分割结果：{{name}}",
+      "packagingSegmentationMasks": "正在打包分割结果"
     },
     "relocatingToPath": "迁移至 {{name}}",
     "errors": {
       "migrationFailed": "迁移失败",
       "notAuthenticated": "未认证",
       "extractionFailed": "提取失败",
-      "datasetPollingTimeout": "等待 5 分钟后仍未找到数据集"
+      "datasetPollingTimeout": "等待 5 分钟后仍未找到数据集",
+      "analysisExportFailed": "分析导出失败"
     }
   },
   "errors": {
@@ -3352,7 +3612,7 @@
   "disclaimer": {
     "title": "服务条款与医疗免责声明",
     "fullTitle": "PathLab 服务条款、用户协议与医疗免责声明",
-    "operator": "运营方：SmartLab",
+    "operator": "运营方：SmartXLab",
     "contact": "联系方式",
     "scopeLabel": "适用范围",
     "scopeText": "本条款适用于 PathLab 的本地工作台应用程序、AI 验证工具及相关服务（统称服务）。",
@@ -3386,7 +3646,7 @@
       "s3": {
         "title": "3. 定义",
         "items": [
-          "3.1 平台/我们 指 SmartLab 及其运营方。",
+          "3.1 平台/我们 指 SmartXLab 及其运营方。",
           "3.2 用户/您 指任何注册、登录、访问或使用本服务的个人或实体。",
           "3.3 工作台（客户端）指用于切片查看、本地推理、可视化和报告的本地桌面应用程序（例如带有 Python 边车的 Electron）或网络应用程序（例如使用 React 的 Vite）。",
           "3.4 认证服务器 指用于验证用户身份的认证服务（例如 Casdoor、JWT）。",
@@ -3563,7 +3823,7 @@
   "privacyPolicy": {
     "title": "隐私声明",
     "fullTitle": "PathLab 隐私声明与隐私政策",
-    "operator": "运营方：SmartLab",
+    "operator": "运营方：SmartXLab",
     "contact": "联系方式",
     "introLabel": "阅读说明",
     "introText": "本声明概述 PathLab 如何处理与本服务相关的个人资料。在香港地区，相关个人资料处理可能受 <lawCap486>《个人资料（私隐）条例》（第486章）</lawCap486> 规管。请与服务条款、医疗提示以及产品内针对具体功能展示的提示或告知一并阅读。",
@@ -3574,7 +3834,7 @@
       "s1": {
         "title": "1. 适用范围与角色",
         "items": [
-          "1.1 本隐私声明与隐私政策说明 SmartLab 可能如何就您访问和使用本服务而收集、使用、保存、披露或以其他方式处理个人资料。",
+          "1.1 本隐私声明与隐私政策说明 SmartXLab 可能如何就您访问和使用本服务而收集、使用、保存、披露或以其他方式处理个人资料。",
           "1.2 其适用于账户注册与登录、条款同意、维护通知、数据集、标注、权限、任务、结果、AI 功能以及支持或反馈互动等场景。",
           "1.3 如您代表某机构使用本服务，则就该机构上传或管理的源数据、患者资料或研究数据而言，该机构也可能单独决定相关处理目的与方式。"
         ]
@@ -3711,7 +3971,8 @@
     "downloadFullResults": "下载完整结果",
     "modelFiles": "模型文件",
     "downloadModel": "导出模型",
-    "exportingModel": "正在准备导出..."
+    "exportingModel": "正在准备导出...",
+    "exportingFullResults": "正在准备完整导出..."
   },
   "analysisCharts": {
     "confusionMatrix": "混淆矩阵",
@@ -3752,6 +4013,15 @@
     "setLabel": "设置标签",
     "defaultLabel": "默认标签",
     "newLabel": "新标签，按回车确认",
+    "labelMissingInMode": "当前模式缺少此标签",
+    "createLabelInMode": "在此模式创建",
+    "annotations": "标注",
+    "labels": "标签",
+    "labelManagement": "标签管理",
+    "annotationList": "标注列表",
+    "renameLabel": "重命名标签",
+    "deleteLabel": "删除标签",
+    "noLabels": "当前模式暂无标签",
     "currentSlide": "当前文件",
     "regions": "个区域",
     "noAnnotations": "当前文件暂无标注",
@@ -3798,6 +4068,8 @@
     "deleteSelected": "删除选中 ({{count}})",
     "confirmDeleteSelected": "确定要删除选中的 {{count}} 个区域吗？",
     "confirmDeleteByLabel": "确定要删除选中标签的所有区域吗？（共 {{count}} 个 ROI，涉及 {{slides}} 张切片）",
+    "confirmDeleteLabel": "确定从当前模式删除标签“{{label}}”吗？",
+    "confirmDeleteLabelWithRegions": "确定删除标签“{{label}}”及其 {{count}} 个标注吗？此操作不可撤销。",
     "saveAnnotations": "保存",
     "saving": "保存中...",
     "saved": "标注已保存",
@@ -3869,6 +4141,8 @@
     "aorta": "主动脉",
     "bladder": "膀胱",
     "bloodVessel": "血管",
+    "hematologic": "血液",
+    "bodyFluid": "体液",
     "bone": "骨",
     "boneMarrow": "骨髓",
     "brain": "大脑",
@@ -3956,6 +4230,180 @@
     "labelSource": {
       "imported": "导入 GT",
       "userLabel": "用户标注"
+    }
+  },
+  "landing": {
+    "nav": {
+      "product": "产品",
+      "capabilities": "核心能力",
+      "solutions": "解决方案",
+      "pricing": "定价",
+      "getStarted": "开始使用"
+    },
+    "hero": {
+      "badge": "由 AI 智能体强力驱动",
+      "title1": "用自然语言掌控",
+      "title1b": "病理工作流",
+      "title2": "病理 AI 工作流",
+      "subtitle": "全流程数字病理智能工作台。从数据导入、自动配置到任务日志监控与医学图像证据层，全程自然语言交互。",
+      "primaryCta": "开始使用",
+      "secondaryCta": "预约演示"
+    },
+    "trustStrip": {
+      "nlp": "自然语言任务配置",
+      "formats": "多格式病理数据接入",
+      "tracking": "任务监控与日志追踪",
+      "viz": "结果分析与可视化",
+      "i18n": "多语言无缝切换"
+    },
+    "story": {
+      "header": "只需三步，从灵感到可验证的诊断证据",
+      "step1": {
+        "title": "1. 告诉 AI 你的目标",
+        "desc": "用日常语言描述你想在图像上执行的任务，告别复杂的表单。",
+        "mock": "\"训练一个癌症分类模型，使用 SKCM001 数据集...\"",
+        "tag1": "分类",
+        "tag2": "训练"
+      },
+      "step2": {
+        "title": "2. 智能自动配置",
+        "desc": "引擎在几秒内将您的意图解析为底层配置和数据集分配。",
+        "mockTitle": "系统配置",
+        "mockPipeline": "流程",
+        "mockPipelineValue": "癌症分类",
+        "mockModel": "模型"
+      },
+      "step3": {
+        "title": "3. 监控进度与研判",
+        "desc": "通过控制台跟踪分析进度，并直接在查看器里叠加数字切片证据。",
+        "mockStatus": "任务状态",
+        "mockCompleted": "已完成",
+        "mockDuration": "20m 34s",
+        "mockPredTitle": "预测置信度",
+        "mockClass1": "基底细胞癌",
+        "mockClass2": "鳞状细胞癌",
+        "mockClass3": "其他"
+      }
+    },
+    "capabilities": {
+      "title": "完整的 AI 病理工具集",
+      "main": {
+        "title": "您的智能研究协作台"
+      }
+    },
+    "evidence": {
+      "title": "深度的视觉证据层，就在同一工作台",
+      "desc": "停止在孤立工具间切换。在同一界面查看 AI 结果与切片原图的精准热图叠加。",
+      "f1": {
+        "title": "零延迟平滑渲染",
+        "desc": "通过深度优化的 Aslide 查看器，毫秒级缩放和探索图像。"
+      },
+      "f2": {
+        "title": "同步动态可视化",
+        "desc": "将多模态推理结果叠加在切片的原始物理坐标上分析区域。"
+      }
+    },
+    "solutions": {
+      "title": "为团队中每个角色专门打造",
+      "clinician": {
+        "label": "临床医生",
+        "desc": "为您的诊断流提供实时智能辅佐。",
+        "bullet1": "快速的复核心筛提示",
+        "bullet2": "自动AI病灶圈选标记",
+        "bullet3": "医疗无缝兼容"
+      },
+      "researcher": {
+        "label": "研究团队",
+        "desc": "显著加速迭代试错与大规模实验。",
+        "bullet1": "大规模自动化运行",
+        "bullet2": "可定制的高阶指标导出",
+        "bullet3": "高度可复现任务"
+      },
+      "institution": {
+        "label": "医疗实验室",
+        "desc": "私有化、数据不出院的计算基座。",
+        "bullet1": "精细颗粒的角色权限管控",
+        "bullet2": "隐私增强隔离层",
+        "bullet3": "端到端监控预警"
+      }
+    },
+    "trust": {
+      "header": "为可信的私有环境设计",
+      "privacy": {
+        "title": "数据可见性掌控",
+        "desc": "对您的私有标本数据进行完善的角色可见度限制。"
+      },
+      "deployment": {
+        "title": "安全的容器执行层",
+        "desc": "所有AI预测被控制和分配在授权的工作节点下独立运行。"
+      },
+      "audit": {
+        "title": "可验证与溯源的结果",
+        "desc": "计算的每一环指标及报告全部完整归档，满足严苛验证要求。"
+      },
+      "i18n": {
+        "title": "全球一致的国际化体验",
+        "desc": "中英双语言流畅自适应布局架构，满足中外联合机构需求。"
+      }
+    },
+    "pricing": {
+      "title": "透明、清晰的定价模式",
+      "individual": {
+        "title": "个人版",
+        "price": "免费",
+        "desc": "在研究预览期间，PathLab 将免费提供于科研工作者与医疗从业者进行实验。",
+        "feat1": "WSI 图像原生浏览",
+        "feat2": "多模态推断引擎支持",
+        "feat3": "极高的隐私标准保障",
+        "feat4": "内嵌零样本自然助手",
+        "feat5": "社区文档开放获取",
+        "cta": "免费开始体验"
+      },
+      "enterprise": {
+        "title": "团队版",
+        "price": "定制",
+        "desc": "针对实验室和大型医院组织的完整套件。",
+        "feat1": "无感私有存储对接",
+        "feat2": "最高优先级的技术支持",
+        "feat3": "SSO 单点登录鉴权管控",
+        "feat4": "私有集群性能调度分配",
+        "feat5": "专属部署客户成功经理",
+        "cta": "与销售团队对话"
+      }
+    },
+    "finalCta": {
+      "title": "输入您的第一段自然语言，启动 AI 病理",
+      "subtitle": "把复杂的参数配置交还给引擎解决。专注您的精力在判断、研制和创新性发现。",
+      "primary": "立刻体验操作",
+      "secondary": "预约企业演示"
+    },
+    "footer": {
+      "description": "通过临床级的智能引擎，构建下一代智慧病理平台。",
+      "links": "站点导航",
+      "legal": "合规与协议",
+      "privacy": "隐私政策",
+      "terms": "用户服务协议"
+    },
+    "mock": {
+      "pipeline": "推理任务",
+      "extraction": "数据提取",
+      "active": "运行中",
+      "queued": "排队中",
+      "heatmapAlpha": "热图透明度",
+      "analysisComplete": "分析完成",
+      "analysisDesc": "识别到高密度区域。置信度得分：0.94",
+      "inferenceComplete": "推理完成",
+      "restart": "重置",
+      "addHeatmap": "+热度图",
+      "hideHeatmap": "−热度图",
+      "modelMetrics": "模型性能",
+      "score": "值",
+      "precision": "精确率",
+      "recall": "召回率",
+      "searchPlaceholder": "使用自然语言查询任务进度、数据状态或操作集群...",
+      "gpuAllocation": "GPU 算力分配",
+      "aiAutoConfig": "AI 自动配置",
+      "parsed": "已解析"
     }
   }
 }

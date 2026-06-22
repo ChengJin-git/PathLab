@@ -7,17 +7,24 @@ Replaces BM25 page-level search with paragraph-level vector search.
 - Chunking: LlamaIndex MarkdownNodeParser + SentenceSplitter for structure-
   and sentence-aware chunking (with character-based fallback).
 """
+
 import os
 import re
 import threading
+from importlib import import_module
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 
 from ..dependencies import logger
-from backend.common.config import Config
 from .transformers_runtime import ensure_transformers_runtime_ready
+
+
+def _get_config():
+    module_name = ".".join(("backend", "common", "config"))
+    return import_module(module_name).Config
+
 
 # ── Lazy singletons ─────────────────────────────────────────────────────────
 _embedding_model = None
@@ -39,7 +46,7 @@ EMBEDDING_WARMUP_TEXT = "PathLab bundled training recommendation warmup"
 
 def _get_vectorstore_dir(base_dir: Path | None = None) -> Path:
     """Return (and create) the LanceDB storage directory."""
-    d = base_dir or (Config.get_uploads_dir() / "pdf_cache" / "vector_store")
+    d = base_dir or (_get_config().get_uploads_dir() / "pdf_cache" / "vector_store")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -50,6 +57,7 @@ def _resolve_embedding_device() -> str:
         return requested
     try:
         import torch
+
         if torch.cuda.is_available():
             return "cuda"
     except Exception:
@@ -65,24 +73,33 @@ def _get_embedding_model():
             if _embedding_model is None:
                 ensure_transformers_runtime_ready("PDF vector embedding model")
                 from sentence_transformers import SentenceTransformer
+
                 requested_device = _resolve_embedding_device()
                 logger.info(
                     f"[VectorStore] Loading embedding model: {EMBEDDING_MODEL_NAME} "
                     f"(requested_device={requested_device})"
                 )
                 try:
-                    _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device=requested_device)
+                    _embedding_model = SentenceTransformer(
+                        EMBEDDING_MODEL_NAME, device=requested_device
+                    )
                 except Exception as e:
                     if str(requested_device).lower().startswith("cuda"):
                         logger.warning(
                             f"[VectorStore] Failed to load embedding model on {requested_device}: {e}; "
                             "falling back to CPU"
                         )
-                        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
+                        _embedding_model = SentenceTransformer(
+                            EMBEDDING_MODEL_NAME, device="cpu"
+                        )
                     else:
                         raise
-                actual_device = str(getattr(_embedding_model, "device", requested_device))
-                logger.info(f"[VectorStore] Embedding model loaded on device={actual_device}")
+                actual_device = str(
+                    getattr(_embedding_model, "device", requested_device)
+                )
+                logger.info(
+                    f"[VectorStore] Embedding model loaded on device={actual_device}"
+                )
     return _embedding_model
 
 
@@ -107,9 +124,10 @@ def prewarm_embedding_model() -> dict[str, Any]:
 
 # ── Page marker extraction ─────────────────────────────────────────────────
 
+
 def _extract_pages(markdown: str) -> list[tuple[int, str]]:
     """Split markdown by ``--- Page N ---`` markers into (page_num, content) pairs."""
-    page_pattern = re.compile(r'---\s*Page\s+(\d+)\s*---')
+    page_pattern = re.compile(r"---\s*Page\s+(\d+)\s*---")
     parts = page_pattern.split(markdown)
 
     pages: list[tuple[int, str]] = []
@@ -128,7 +146,10 @@ def _extract_pages(markdown: str) -> list[tuple[int, str]]:
 
 # ── Chunking (LlamaIndex pipeline) ────────────────────────────────────────
 
-def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict[str, Any]]:
+
+def _chunk_markdown(
+    markdown: str, url_hash: str, paper_title: str
+) -> list[dict[str, Any]]:
     """Split markdown into structure- and sentence-aware chunks with metadata.
 
     Pipeline:
@@ -154,14 +175,14 @@ def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict
         )
         return _chunk_markdown_fallback(markdown, url_hash, paper_title)
     except Exception as e:
-        logger.error(
-            f"[VectorStore] LlamaIndex chunking failed, falling back: {e}"
-        )
+        logger.error(f"[VectorStore] LlamaIndex chunking failed, falling back: {e}")
         return _chunk_markdown_fallback(markdown, url_hash, paper_title)
 
 
 def _chunk_markdown_llamaindex(
-    markdown: str, url_hash: str, paper_title: str,
+    markdown: str,
+    url_hash: str,
+    paper_title: str,
 ) -> list[dict[str, Any]]:
     """Structure-aware chunking via LlamaIndex MarkdownNodeParser + SentenceSplitter."""
     from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
@@ -202,24 +223,30 @@ def _chunk_markdown_llamaindex(
                 else:
                     chunk_text = sub_text
 
-                chunks.append({
-                    "url_hash": url_hash,
-                    "paper_title": paper_title,
-                    "page_num": page_num,
-                    "chunk_index": chunk_index,
-                    "chunk_text": chunk_text,
-                    "display_text": chunk_text,
-                    "block_type": "paragraph",
-                    "block_id": f"md-p{page_num}-{chunk_index}",
-                    "section_path": header_path if header_path and header_path != "/" else "",
-                })
+                chunks.append(
+                    {
+                        "url_hash": url_hash,
+                        "paper_title": paper_title,
+                        "page_num": page_num,
+                        "chunk_index": chunk_index,
+                        "chunk_text": chunk_text,
+                        "display_text": chunk_text,
+                        "block_type": "paragraph",
+                        "block_id": f"md-p{page_num}-{chunk_index}",
+                        "section_path": header_path
+                        if header_path and header_path != "/"
+                        else "",
+                    }
+                )
                 chunk_index += 1
 
     return chunks
 
 
 def _chunk_markdown_fallback(
-    markdown: str, url_hash: str, paper_title: str,
+    markdown: str,
+    url_hash: str,
+    paper_title: str,
 ) -> list[dict[str, Any]]:
     """Simple character-based chunking (fallback when llama-index is unavailable)."""
     pages = _extract_pages(markdown)
@@ -233,17 +260,19 @@ def _chunk_markdown_fallback(
             end = start + CHUNK_SIZE_CHARS
             chunk_text = page_text[start:end].strip()
             if chunk_text:
-                chunks.append({
-                    "url_hash": url_hash,
-                    "paper_title": paper_title,
-                    "page_num": page_num,
-                    "chunk_index": chunk_index,
-                    "chunk_text": chunk_text,
-                    "display_text": chunk_text,
-                    "block_type": "paragraph",
-                    "block_id": f"fallback-p{page_num}-{chunk_index}",
-                    "section_path": "",
-                })
+                chunks.append(
+                    {
+                        "url_hash": url_hash,
+                        "paper_title": paper_title,
+                        "page_num": page_num,
+                        "chunk_index": chunk_index,
+                        "chunk_text": chunk_text,
+                        "display_text": chunk_text,
+                        "block_type": "paragraph",
+                        "block_id": f"fallback-p{page_num}-{chunk_index}",
+                        "section_path": "",
+                    }
+                )
                 chunk_index += 1
             start += CHUNK_SIZE_CHARS - CHUNK_OVERLAP_CHARS
             if end >= text_len:
@@ -301,7 +330,9 @@ def _stringify_block_for_display(block: dict[str, Any]) -> str:
         caption = str(block.get("caption") or "").strip()
         vision_summary = str(block.get("vision_summary") or "").strip()
         image = str(block.get("image") or "").strip()
-        return "\n".join(part for part in [caption, vision_summary, image] if part).strip()
+        return "\n".join(
+            part for part in [caption, vision_summary, image] if part
+        ).strip()
     if block_type == "equation":
         latex = str(block.get("latex") or "").strip()
         surrounding = str(block.get("surrounding_text") or "").strip()
@@ -315,7 +346,11 @@ def _chunk_structured_content(
     paper_title: str,
 ) -> list[dict[str, Any]]:
     """Flatten the normalized Document Graph / Block Graph into embedding chunks."""
-    blocks = structured_content.get("blocks") if isinstance(structured_content, dict) else None
+    blocks = (
+        structured_content.get("blocks")
+        if isinstance(structured_content, dict)
+        else None
+    )
     if not isinstance(blocks, list):
         return []
 
@@ -331,17 +366,19 @@ def _chunk_structured_content(
             section_path = " / ".join(str(item) for item in section_path_items if item)
         else:
             section_path = str(section_path_items or "")
-        chunks.append({
-            "url_hash": url_hash,
-            "paper_title": paper_title,
-            "page_num": int(block.get("page") or 0),
-            "chunk_index": chunk_index,
-            "chunk_text": chunk_text,
-            "display_text": _stringify_block_for_display(block),
-            "block_type": str(block.get("type") or "paragraph"),
-            "block_id": str(block.get("id") or f"block-{chunk_index}"),
-            "section_path": section_path,
-        })
+        chunks.append(
+            {
+                "url_hash": url_hash,
+                "paper_title": paper_title,
+                "page_num": int(block.get("page") or 0),
+                "chunk_index": chunk_index,
+                "chunk_text": chunk_text,
+                "display_text": _stringify_block_for_display(block),
+                "block_type": str(block.get("type") or "paragraph"),
+                "block_id": str(block.get("id") or f"block-{chunk_index}"),
+                "section_path": section_path,
+            }
+        )
     return chunks
 
 
@@ -355,9 +392,11 @@ def _create_or_replace_table(db: Any, records: list[dict[str, Any]]) -> None:
 
 # ── LanceDB operations ──────────────────────────────────────────────────────
 
+
 def _get_db(base_dir: Path | None = None):
     """Connect to (or create) the LanceDB database."""
     import lancedb
+
     return lancedb.connect(str(_get_vectorstore_dir(base_dir)))
 
 
@@ -382,7 +421,9 @@ def index_pdf_to_vectorstore(
     Returns the number of chunks indexed.
     """
     try:
-        chunks = _chunk_structured_content(structured_content or {}, url_hash, paper_title)
+        chunks = _chunk_structured_content(
+            structured_content or {}, url_hash, paper_title
+        )
         if not chunks:
             chunks = _chunk_markdown(markdown, url_hash, paper_title)
         if not chunks:
@@ -396,18 +437,20 @@ def index_pdf_to_vectorstore(
         # Build records
         records = []
         for chunk, vec in zip(chunks, vectors):
-            records.append({
-                "url_hash": chunk["url_hash"],
-                "paper_title": chunk["paper_title"],
-                "page_num": chunk["page_num"],
-                "chunk_index": chunk["chunk_index"],
-                "block_type": chunk.get("block_type", "paragraph"),
-                "block_id": chunk.get("block_id", ""),
-                "section_path": chunk.get("section_path", ""),
-                "display_text": chunk.get("display_text", chunk["chunk_text"]),
-                "chunk_text": chunk["chunk_text"],
-                "vector": vec.tolist(),
-            })
+            records.append(
+                {
+                    "url_hash": chunk["url_hash"],
+                    "paper_title": chunk["paper_title"],
+                    "page_num": chunk["page_num"],
+                    "chunk_index": chunk["chunk_index"],
+                    "block_type": chunk.get("block_type", "paragraph"),
+                    "block_id": chunk.get("block_id", ""),
+                    "section_path": chunk.get("section_path", ""),
+                    "display_text": chunk.get("display_text", chunk["chunk_text"]),
+                    "chunk_text": chunk["chunk_text"],
+                    "vector": vec.tolist(),
+                }
+            )
 
         db = _get_db(vectorstore_dir)
 
@@ -421,7 +464,9 @@ def index_pdf_to_vectorstore(
             try:
                 table.add(records)
             except Exception as e:
-                logger.warning(f"[VectorStore] Recreating table after schema drift: {e}")
+                logger.warning(
+                    f"[VectorStore] Recreating table after schema drift: {e}"
+                )
                 _create_or_replace_table(db, records)
         else:
             db.create_table(TABLE_NAME, records)
@@ -484,25 +529,29 @@ def search_pdf_chunks(
         # Clean up results: remove raw vector, keep useful fields
         cleaned = []
         for r in results:
-            cleaned.append({
-                "url_hash": r.get("url_hash", ""),
-                "paper_title": r.get("paper_title", ""),
-                "page_num": r.get("page_num", 0),
-                "chunk_index": r.get("chunk_index", 0),
-                "block_type": r.get("block_type", "paragraph"),
-                "block_id": r.get("block_id", ""),
-                "section_path": r.get("section_path", ""),
-                "display_text": r.get("display_text", r.get("chunk_text", "")),
-                "chunk_text": r.get("chunk_text", ""),
-                "_distance": r.get("_distance", 999.0),
-            })
+            cleaned.append(
+                {
+                    "url_hash": r.get("url_hash", ""),
+                    "paper_title": r.get("paper_title", ""),
+                    "page_num": r.get("page_num", 0),
+                    "chunk_index": r.get("chunk_index", 0),
+                    "block_type": r.get("block_type", "paragraph"),
+                    "block_id": r.get("block_id", ""),
+                    "section_path": r.get("section_path", ""),
+                    "display_text": r.get("display_text", r.get("chunk_text", "")),
+                    "chunk_text": r.get("chunk_text", ""),
+                    "_distance": r.get("_distance", 999.0),
+                }
+            )
         return cleaned
     except Exception as e:
         logger.error(f"[VectorStore] Search failed: {e}")
         return []
 
 
-def delete_pdf_from_vectorstore(url_hash: str, *, vectorstore_dir: Path | None = None) -> None:
+def delete_pdf_from_vectorstore(
+    url_hash: str, *, vectorstore_dir: Path | None = None
+) -> None:
     """Remove all chunks for a given url_hash from the vector store."""
     try:
         db = _get_db(vectorstore_dir)
@@ -524,7 +573,9 @@ def is_pdf_indexed(url_hash: str, *, vectorstore_dir: Path | None = None) -> boo
         table = db.open_table(TABLE_NAME)
         # Quick probe: search with dummy vector + filter, limit 1
         dummy_vec = [0.0] * EMBEDDING_DIM
-        results = table.search(dummy_vec).where(f"url_hash = '{url_hash}'").limit(1).to_list()
+        results = (
+            table.search(dummy_vec).where(f"url_hash = '{url_hash}'").limit(1).to_list()
+        )
         return len(results) > 0
     except Exception:
         return False

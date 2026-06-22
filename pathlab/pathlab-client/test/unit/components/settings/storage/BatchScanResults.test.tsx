@@ -1,6 +1,6 @@
 import React, { createRef } from 'react'
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { TooltipProvider } from '@radix-ui/react-tooltip'
 import { BatchScanResults } from '@renderer/components/settings/storage/BatchScanResults'
 
@@ -33,6 +33,7 @@ const baseProps = {
     page_size: 100,
     total_pages: 1,
   },
+  batchScanStage: 'idle' as const,
   batchSelectedCount: 1,
   batchDatasetMode: 'new' as const,
   setBatchDatasetMode: vi.fn(),
@@ -42,7 +43,7 @@ const baseProps = {
   batchRegistering: false,
   batchImportTaskId: null,
   batchDatasets: [],
-  batchTaskType: 'classification' as const,
+    batchTaskType: 'wsi_classification' as const,
   setBatchTaskType: vi.fn(),
   batchDataLevel: 'file' as const,
   setBatchDataLevel: vi.fn(),
@@ -63,5 +64,48 @@ describe('BatchScanResults', () => {
 
     expect(screen.queryByText('datasetPermission.openCollaboration')).not.toBeInTheDocument()
     expect(screen.queryByText('datasetPermission.closedCollaboration')).not.toBeInTheDocument()
+  })
+
+  it('shows a segmentation rescan message while annotation matching is being refreshed', () => {
+    render(
+      <TooltipProvider>
+        <BatchScanResults
+          {...baseProps}
+          batchTaskType="patch_segmentation"
+          batchScanStage="segmentationRefresh"
+        />
+      </TooltipProvider>,
+    )
+
+    expect(screen.getByText('settings.storage.refreshingSegmentationAnnotations')).toBeInTheDocument()
+  })
+
+  it('uses canonical task ids for storage batch task selection', () => {
+    const setBatchTaskType = vi.fn()
+
+    render(
+      <TooltipProvider>
+        <BatchScanResults
+          {...baseProps}
+          setBatchTaskType={setBatchTaskType}
+        />
+      </TooltipProvider>,
+    )
+
+    fireEvent.click(screen.getByText('settings.storage.segmentation'))
+    expect(setBatchTaskType).toHaveBeenCalledWith('patch_segmentation')
+  })
+
+  it('shows segmentation JSON column for canonical segmentation tasks', () => {
+    render(
+      <TooltipProvider>
+        <BatchScanResults
+          {...baseProps}
+          batchTaskType="patch_segmentation"
+        />
+      </TooltipProvider>,
+    )
+
+    expect(screen.getByTitle('settings.storage.annotationJsonTooltip')).toBeInTheDocument()
   })
 })

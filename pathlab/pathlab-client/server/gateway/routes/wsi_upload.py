@@ -10,7 +10,7 @@ import asyncio
 import csv
 import io
 from pathlib import Path
-from typing import Optional, List, Any
+from typing import Annotated, Optional, List, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +30,8 @@ from backend.auth.dependencies import (
     require_pathologist_or_admin,
     check_dataset_write_permission,
 )
-from ..dependencies import logger, storage_manager, UPLOADS_DIR
+from ..dependencies import logger, storage_manager
+from backend.common.config import Config
 from ..models import UploadByPathRequest
 from ..utils import (
     align_dataset_data_type_for_file,
@@ -52,23 +53,64 @@ from gateway.chat.context_cache import (
 )
 from backend.auth import User as AuthUser
 from sqlalchemy import select as sa_select
+from backend.ai.task_taxonomy import get_task_metadata, is_segmentation_task, normalize_task_type
 
 
 router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
 
-ALLOWED_TASK_TYPES = {"classification", "survival", "segmentation"}
-
-
-def _resolve_task_type(
-    requested_task_type: Optional[str], dataset_task_type: Optional[str] = None
+def _canonicalize_task_type_for_axes(
+    task_type: str,
+    *,
+    data_type: Optional[str],
+    aggregation_level: str,
 ) -> str:
-    resolved_task_type = requested_task_type or dataset_task_type or "classification"
-    if resolved_task_type not in ALLOWED_TASK_TYPES:
+    try:
+        return normalize_task_type(
+            task_type=task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _resolve_task_type_for_axes(
+    requested_task_type: Optional[str],
+    *,
+    data_type: Optional[str],
+    aggregation_level: str,
+    dataset_task_type: Optional[str] = None,
+) -> str:
+    baseline_task_type = requested_task_type or dataset_task_type or "wsi_classification"
+    baseline_metadata = get_task_metadata(baseline_task_type)
+    if baseline_metadata.task_family == "classification" and data_type == "patch":
+        baseline_task_type = "patch_classification"
+    resolved_task_type = _canonicalize_task_type_for_axes(
+        baseline_task_type,
+        data_type=data_type,
+        aggregation_level=aggregation_level,
+    )
+    if requested_task_type and dataset_task_type:
+        dataset_canonical = _canonicalize_task_type_for_axes(
+            dataset_task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+        if resolved_task_type != dataset_canonical:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dataset task_type is '{dataset_canonical}', expected '{resolved_task_type}'",
+            )
+    return resolved_task_type
+
+
+def _require_file_data_type(file_data_type: Optional[str], *, context: str) -> str:
+    if not file_data_type:
         raise HTTPException(
             status_code=400,
-            detail="task_type must be 'classification', 'survival', or 'segmentation'",
+            detail=f"Unable to determine data_type for {context}",
         )
-    return resolved_task_type
+    return file_data_type
 
 
 def _find_matching_uploaded_segmentation_annotation(
@@ -305,7 +347,7 @@ async def upload_wsi_by_csv(
                     "user_id": str(user.id),
                 }
 
-                wsi = await WSIRepository.create(db, wsi_data)
+                wsi = await WSIRepository.create(db, **wsi_data)
                 await db.commit()
 
                 # Save metadata to JSON file for persistence
@@ -418,7 +460,7 @@ async def upload_wsi_file(
         # Store original filename for internal reference (including extension)
         original_filename = Path(file.filename).name
         file_extension = Path(file.filename).suffix.lower()
-        resolved_task_type = _resolve_task_type(task_type)
+        resolved_task_type: Optional[str] = None
         is_json_annotation_upload = file_extension == ".json"
         segmentation_annotation = None
         wsi_path: Optional[Path] = None
@@ -454,7 +496,7 @@ async def upload_wsi_file(
                 )
 
             # Save file to uploads directory using UUID-based filename
-            wsi_files_dir = Path(UPLOADS_DIR) / "wsi_files"
+            wsi_files_dir = Config.get_uploads_dir() / "wsi_files"
             wsi_files_dir.mkdir(exist_ok=True, parents=True)
 
             wsi_path = wsi_files_dir / f"{wsi_id}{file_extension}"
@@ -474,10 +516,20 @@ async def upload_wsi_file(
                 ),
             )
             file_size = props.get("file_size", file_size)
+            resolved_task_type = _resolve_task_type_for_axes(
+                task_type,
+                data_type=file_data_type,
+                aggregation_level=aggregation_level or "file",
+            )
 
         # Handle associated files for special formats (MRXS, TMAP)
         associated_count = 0
-        if associated_files and resolved_task_type != "segmentation":
+        if (
+            associated_files
+            and not is_json_annotation_upload
+            and resolved_task_type is not None
+            and not is_segmentation_task(resolved_task_type)
+        ):
             if file_extension == ".mrxs":
                 # MRXS: Create data folder with same name as UUID
                 data_folder = wsi_files_dir / wsi_id
@@ -535,14 +587,19 @@ async def upload_wsi_file(
                 raise HTTPException(
                     status_code=400, detail="Dataset has no associated DataGroup"
                 )
-            resolved_task_type = _resolve_task_type(task_type, data_group.task_type)
-            if task_type and data_group.task_type != task_type:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Dataset task_type is '{data_group.task_type}', expected '{task_type}'",
-                )
+            resolved_file_data_type = (
+                str(data_group.data_type)
+                if is_json_annotation_upload
+                else _require_file_data_type(file_data_type, context="WSI upload")
+            )
+            resolved_task_type = _resolve_task_type_for_axes(
+                task_type,
+                data_type=resolved_file_data_type,
+                aggregation_level=str(data_group.aggregation_level),
+                dataset_task_type=str(data_group.task_type),
+            )
             if is_json_annotation_upload:
-                if resolved_task_type != "segmentation":
+                if not is_segmentation_task(resolved_task_type):
                     raise HTTPException(
                         status_code=400,
                         detail="JSON uploads are only supported when appending to an existing segmentation dataset",
@@ -552,7 +609,7 @@ async def upload_wsi_file(
                     db,
                     existing_dataset,
                     file_path=str(wsi_path),
-                    file_data_type=file_data_type,
+                    file_data_type=resolved_file_data_type,
                     task_type=resolved_task_type,
                     action="upload",
                     context="WSI upload",
@@ -572,9 +629,17 @@ async def upload_wsi_file(
                     detail="Segmentation JSON-only upload is only supported when appending to an existing dataset",
                 )
             resolved_aggregation_level = aggregation_level or "file"
+            resolved_file_data_type = _require_file_data_type(
+                file_data_type, context="WSI upload"
+            )
+            resolved_task_type = _resolve_task_type_for_axes(
+                task_type,
+                data_type=resolved_file_data_type,
+                aggregation_level=resolved_aggregation_level,
+            )
             ensure_segmentation_contract(
                 resolved_task_type,
-                file_data_type,
+                resolved_file_data_type,
                 resolved_aggregation_level,
                 context="WSI upload",
             )
@@ -582,7 +647,7 @@ async def upload_wsi_file(
             # Get or create DataGroup first
             data_group = await DataGroupRepository.get_or_create(
                 db,
-                data_type=file_data_type,
+                data_type=resolved_file_data_type,
                 aggregation_level=resolved_aggregation_level,
                 task_type=resolved_task_type,
             )
@@ -596,7 +661,7 @@ async def upload_wsi_file(
                     user_id=str(user.id),
                     source_organ=source_organ or None,
                     is_public=is_public,
-                    reuse_existing=False,
+                    reuse_existing=True,
                 )
             except DatasetNameConflictError:
                 raise HTTPException(
@@ -607,12 +672,30 @@ async def upload_wsi_file(
                 db,
                 dataset,
                 file_path=str(wsi_path),
-                file_data_type=file_data_type,
+                file_data_type=resolved_file_data_type,
                 task_type=resolved_task_type,
                 action="upload",
                 context="WSI upload",
             )
             resolved_dataset_id = dataset.dataset_id
+            existing_with_name = await WSIRepository.get_by_filename_in_dataset(
+                db, resolved_dataset_id, original_filename
+            )
+            if existing_with_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A file with filename '{original_filename}' already exists in this dataset",
+                )
+
+        elif not is_json_annotation_upload:
+            resolved_file_data_type = _require_file_data_type(
+                file_data_type, context="WSI upload"
+            )
+            resolved_task_type = _resolve_task_type_for_axes(
+                task_type,
+                data_type=resolved_file_data_type,
+                aggregation_level=resolved_aggregation_level,
+            )
 
         if is_json_annotation_upload:
             if resolved_dataset_id is None:
@@ -630,6 +713,7 @@ async def upload_wsi_file(
                 source="upload_json",
             )
             await db.commit()
+            await invalidate_chat_context(str(user.id))
 
             if resolved_dataset_id:
                 try:
@@ -657,7 +741,11 @@ async def upload_wsi_file(
                 "associated_files_count": 0,
             }
 
-        if resolved_task_type == "segmentation" and segmentation_annotation is None:
+        if (
+            resolved_task_type is not None
+            and is_segmentation_task(resolved_task_type)
+            and segmentation_annotation is None
+        ):
             ensure_segmentation_contract(
                 resolved_task_type,
                 file_data_type,
@@ -680,7 +768,9 @@ async def upload_wsi_file(
             "original_filename": original_filename,
             "dataset_id": resolved_dataset_id,
             "case_id": case_id,
-            "label": None if resolved_task_type == "segmentation" else label,
+            "label": None
+            if (resolved_task_type is not None and is_segmentation_task(resolved_task_type))
+            else label,
             "wsi_path": str(wsi_path),
             "data_type": data_group.data_type if data_group else file_data_type,
             "age": age,
@@ -701,9 +791,10 @@ async def upload_wsi_file(
         # Race-condition safe: catch IntegrityError if concurrent upload
         # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
         try:
-            await WSIRepository.create(db, wsi_data)
+            await WSIRepository.create(db, **wsi_data)
             if (
-                resolved_task_type == "segmentation"
+                resolved_task_type is not None
+                and is_segmentation_task(resolved_task_type)
                 and segmentation_annotation is not None
             ):
                 await SegmentationAnnotationRepository.upsert(
@@ -739,7 +830,11 @@ async def upload_wsi_file(
 
         logger.info(f"Created WSI record in database: {wsi_id}")
 
-        if resolved_task_type == "segmentation" and resolved_dataset_id:
+        if (
+            resolved_task_type is not None
+            and is_segmentation_task(resolved_task_type)
+            and resolved_dataset_id
+        ):
             try:
                 await rebuild_dataset_annotation_summary_cache(db, resolved_dataset_id)
                 await db.commit()
@@ -896,7 +991,7 @@ async def upload_wsi_by_path(
 
         # Store original filename for internal reference (including extension)
         original_filename = wsi_file.name
-        resolved_task_type = _resolve_task_type(req.task_type)
+        resolved_task_type: Optional[str] = None
         segmentation_annotation = None
         file_size = os.path.getsize(req.wsi_path)
         file_data_type: Optional[str] = None
@@ -931,6 +1026,11 @@ async def upload_wsi_by_path(
             )
             file_size = wsi_props.get("file_size", 0)
             case_id = req.case_id or f"case_{wsi_id[:8]}"
+            resolved_task_type = _resolve_task_type_for_axes(
+                req.task_type,
+                data_type=file_data_type,
+                aggregation_level=req.aggregation_level or "file",
+            )
 
             logger.info(f"Registering WSI: {original_filename} -> UUID: {wsi_id}")
 
@@ -960,14 +1060,21 @@ async def upload_wsi_by_path(
                 raise HTTPException(
                     status_code=400, detail="Dataset has no associated DataGroup"
                 )
-            resolved_task_type = _resolve_task_type(req.task_type, data_group.task_type)
-            if req.task_type and data_group.task_type != req.task_type:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Dataset task_type is '{data_group.task_type}', expected '{req.task_type}'",
+            resolved_file_data_type = (
+                str(data_group.data_type)
+                if is_json_annotation_path
+                else _require_file_data_type(
+                    file_data_type, context="WSI path registration"
                 )
+            )
+            resolved_task_type = _resolve_task_type_for_axes(
+                req.task_type,
+                data_type=resolved_file_data_type,
+                aggregation_level=str(data_group.aggregation_level),
+                dataset_task_type=str(data_group.task_type),
+            )
             if is_json_annotation_path:
-                if resolved_task_type != "segmentation":
+                if not is_segmentation_task(resolved_task_type):
                     raise HTTPException(
                         status_code=400,
                         detail="JSON uploads are only supported when appending to an existing segmentation dataset",
@@ -977,7 +1084,7 @@ async def upload_wsi_by_path(
                     db,
                     existing_dataset,
                     file_path=req.wsi_path,
-                    file_data_type=file_data_type,
+                    file_data_type=resolved_file_data_type,
                     task_type=resolved_task_type,
                     action="register",
                     context="WSI path registration",
@@ -997,9 +1104,17 @@ async def upload_wsi_by_path(
                     detail="Segmentation JSON-only upload is only supported when appending to an existing dataset",
                 )
             resolved_aggregation_level = req.aggregation_level or "file"
+            resolved_file_data_type = _require_file_data_type(
+                file_data_type, context="WSI path registration"
+            )
+            resolved_task_type = _resolve_task_type_for_axes(
+                req.task_type,
+                data_type=resolved_file_data_type,
+                aggregation_level=resolved_aggregation_level,
+            )
             ensure_segmentation_contract(
                 resolved_task_type,
-                file_data_type,
+                resolved_file_data_type,
                 resolved_aggregation_level,
                 context="WSI path registration",
             )
@@ -1007,7 +1122,7 @@ async def upload_wsi_by_path(
             # Get or create DataGroup first
             data_group = await DataGroupRepository.get_or_create(
                 db,
-                data_type=file_data_type,
+                data_type=resolved_file_data_type,
                 aggregation_level=resolved_aggregation_level,
                 task_type=resolved_task_type,
             )
@@ -1021,7 +1136,7 @@ async def upload_wsi_by_path(
                     user_id=str(user.id),
                     source_organ=req.source_organ or None,
                     is_public=req.is_public,
-                    reuse_existing=False,
+                    reuse_existing=True,
                 )
             except DatasetNameConflictError:
                 raise HTTPException(
@@ -1032,12 +1147,30 @@ async def upload_wsi_by_path(
                 db,
                 dataset,
                 file_path=req.wsi_path,
-                file_data_type=file_data_type,
+                file_data_type=resolved_file_data_type,
                 task_type=resolved_task_type,
                 action="register",
                 context="WSI path registration",
             )
             resolved_dataset_id = dataset.dataset_id
+            existing_with_name = await WSIRepository.get_by_filename_in_dataset(
+                db, resolved_dataset_id, original_filename
+            )
+            if existing_with_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A file with filename '{original_filename}' already exists in this dataset",
+                )
+
+        elif not is_json_annotation_path:
+            resolved_file_data_type = _require_file_data_type(
+                file_data_type, context="WSI path registration"
+            )
+            resolved_task_type = _resolve_task_type_for_axes(
+                req.task_type,
+                data_type=resolved_file_data_type,
+                aggregation_level=resolved_aggregation_level,
+            )
 
         if is_json_annotation_path:
             if resolved_dataset_id is None:
@@ -1055,6 +1188,7 @@ async def upload_wsi_by_path(
                 source="upload_path_json",
             )
             await db.commit()
+            await invalidate_chat_context(str(user.id))
 
             if resolved_dataset_id:
                 try:
@@ -1083,7 +1217,11 @@ async def upload_wsi_by_path(
                 "message": "Segmentation annotation appended successfully",
             }
 
-        if resolved_task_type == "segmentation" and segmentation_annotation is None:
+        if (
+            resolved_task_type is not None
+            and is_segmentation_task(resolved_task_type)
+            and segmentation_annotation is None
+        ):
             ensure_segmentation_contract(
                 resolved_task_type,
                 file_data_type,
@@ -1099,7 +1237,9 @@ async def upload_wsi_by_path(
             "wsi_id": wsi_id,
             "original_filename": original_filename,
             "dataset_id": resolved_dataset_id,
-            "label": None if resolved_task_type == "segmentation" else req.label,
+            "label": None
+            if (resolved_task_type is not None and is_segmentation_task(resolved_task_type))
+            else req.label,
             "case_id": case_id,
             "wsi_path": req.wsi_path,
             "data_type": data_group.data_type if data_group else file_data_type,
@@ -1123,9 +1263,10 @@ async def upload_wsi_by_path(
         # Race-condition safe: catch IntegrityError if concurrent register
         # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
         try:
-            wsi = await WSIRepository.create(db, wsi_data)
+            wsi = await WSIRepository.create(db, **wsi_data)
             if (
-                resolved_task_type == "segmentation"
+                resolved_task_type is not None
+                and is_segmentation_task(resolved_task_type)
                 and segmentation_annotation is not None
             ):
                 await SegmentationAnnotationRepository.upsert(
@@ -1159,7 +1300,11 @@ async def upload_wsi_by_path(
 
         logger.info(f"Registered WSI by path in database: {wsi_id}")
 
-        if resolved_task_type == "segmentation" and resolved_dataset_id:
+        if (
+            resolved_task_type is not None
+            and is_segmentation_task(resolved_task_type)
+            and resolved_dataset_id
+        ):
             try:
                 await rebuild_dataset_annotation_summary_cache(db, resolved_dataset_id)
                 await db.commit()
@@ -1207,10 +1352,12 @@ async def upload_wsi_by_path(
 
 @router.get("/csv/template")
 async def get_csv_template(
-    task_type: str = Query(
-        "classification",
-        description="Task type: 'classification', 'survival', or 'segmentation'",
-    ),
+    task_type: Annotated[
+        str,
+        Query(
+            description="Canonical task id: 'wsi_classification', 'patch_classification', 'wsi_survival', or 'patch_segmentation'"
+        ),
+    ] = "wsi_classification",
     user: User = Depends(current_active_user),
 ):
     """
@@ -1229,7 +1376,8 @@ async def get_csv_template(
     Note: If no 'val' split is provided, 10% of 'train' samples will be
     automatically assigned to 'val' during upload.
     """
-    if task_type == "survival":
+    template_task_type = normalize_task_type(task_type=task_type)
+    if template_task_type == "wsi_survival":
         # Survival analysis template
         headers = [
             "filename",
@@ -1270,7 +1418,7 @@ async def get_csv_template(
             },
         ]
         filename = "wsi_survival_metadata_template.csv"
-    elif task_type == "segmentation":
+    elif is_segmentation_task(template_task_type):
         # Segmentation template — no label column; masks are provided via COCO JSON separately
         headers = ["filename", "split", "case_id", "age", "gender"]
         examples = [
@@ -1326,7 +1474,7 @@ async def get_csv_template(
                 "gender": "Male",
             },
         ]
-        filename = "wsi_classification_metadata_template.csv"
+        filename = f"{template_task_type}_metadata_template.csv"
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=headers)

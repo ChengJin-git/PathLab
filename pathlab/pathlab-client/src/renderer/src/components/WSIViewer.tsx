@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PREPROCESSING_BASE, API_BASE } from '../config'
 import type { HeatmapData } from '../api/heatmap'
-import { getPatchFileImageUrl } from '../api/heatmap'
+import { getPatchFileImageUrl, getThumbnailUrl } from '../api/heatmap'
 import { buildSearchParams, withAuthTokenQuery } from '../api/client'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2, Move, Keyboard } from 'lucide-react'
 import { Tooltip } from './ui/tooltip'
+
+const PATCH_PREVIEW_SIZE = 512
 
 function isInputFocused(): boolean {
   const el = document.activeElement as HTMLElement | null
@@ -24,7 +26,8 @@ interface WSIViewerProps {
   dataLevel?: 'wsi' | 'patch'  // Data level: 'wsi' uses heatmap, 'patch' uses patch_cam
   onHeatmapLoaded?: (data: HeatmapData | null) => void
   onViewerReady?: (viewer: any) => void  // Expose OSD viewer instance to parent (for annotation overlay)
-  onSlideInfo?: (info: { width: number; height: number }) => void  // Expose slide dimensions to parent
+  onSlideInfo?: (info: { width: number; height: number }) => void
+  availability?: { status: 'unknown' | 'available' | 'unavailable' | 'stale'; reason?: string | null } | null
 }
 
 interface DZIInfo {
@@ -144,6 +147,7 @@ export default function WSIViewer({
   onHeatmapLoaded,
   onViewerReady,
   onSlideInfo,
+  availability,
 }: WSIViewerProps) {
   const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -155,6 +159,7 @@ export default function WSIViewer({
   const [heatmapLoading, setHeatmapLoading] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [patchPreviewUrl, setPatchPreviewUrl] = useState<string | null>(null)
 
   const viewerInstanceRef = useRef<any>(null)
   const keysRef = useRef<Set<string>>(new Set())
@@ -168,6 +173,18 @@ export default function WSIViewer({
 
     const initViewer = async () => {
       try {
+        setLoading(true)
+        setError(undefined)
+        setPatchPreviewUrl(null)
+
+        if (availability?.status === 'unavailable') {
+          setLoading(false)
+          setError(t('wsiViewerComponents.viewer.externalStorageUnavailable', {
+            reason: availability.reason ?? '',
+          }))
+          return
+        }
+
         // First, check if this is a patch or WSI (via gateway with auth)
         const infoUrl = withAuthTokenQuery(`${API_BASE}/heatmap/wsi/${encodeURIComponent(wsi_id)}/info`)
         const infoResponse = await fetch(infoUrl)
@@ -189,6 +206,8 @@ export default function WSIViewer({
         const isImagePatch = info.is_patch
 
         if (isImagePatch) {
+          setPatchPreviewUrl(getThumbnailUrl(wsi_id, PATCH_PREVIEW_SIZE))
+
           // Patch: use OSD simple image tile source (enables annotation + zoom/pan)
           tileSource = {
             type: 'image',
@@ -253,6 +272,7 @@ export default function WSIViewer({
         osdViewer.addHandler('open', () => {
           setLoading(false)
           setError(undefined)
+          setPatchPreviewUrl(null)
           // For patches, get image dimensions from OSD after load
           if (isImagePatch) {
             const item = osdViewer.world.getItemAt(0)
@@ -265,6 +285,7 @@ export default function WSIViewer({
 
         osdViewer.addHandler('open-failed', (event: any) => {
           setLoading(false)
+          setPatchPreviewUrl(null)
           setError(isImagePatch
             ? t('wsiViewerComponents.viewer.failedToLoadImage')
             : t('wsiViewerComponents.viewer.failedToLoadTiles'))
@@ -290,7 +311,7 @@ export default function WSIViewer({
         osdViewer.destroy()
       }
     }
-  }, [wsi_id])
+  }, [wsi_id, availability])
 
   // Load heatmap data when taskId, foldKey, classIdx, or dataLevel changes
   useEffect(() => {
@@ -567,16 +588,30 @@ export default function WSIViewer({
   // Render OpenSeadragon viewer (used for both WSI and patch images)
   return (
     <div ref={containerRef} className="relative w-full h-full bg-gray-50 group">
+      {patchPreviewUrl && (
+        <div className="absolute inset-0 z-10 overflow-hidden bg-gray-100">
+          <img
+            src={patchPreviewUrl}
+            alt={t('wsiViewerComponents.viewer.patchPreviewAlt')}
+            className="h-full w-full object-contain"
+          />
+        </div>
+      )}
+
       {loading && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/80 backdrop-blur-sm z-50">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50/55 backdrop-blur-sm z-50">
            <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-2" />
            <span className="text-gray-500 font-medium text-sm">{t('wsiViewerComponents.viewer.loadingPreview')}</span>
-        </div>
+         </div>
       )}
 
       {error && (
         <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
-            <div className="bg-white/90 backdrop-blur-md px-6 py-4 rounded-xl shadow-xl border border-red-100 text-red-600 font-medium">
+            <div className={`px-6 py-4 rounded-xl shadow-xl border font-medium ${
+              availability?.status === 'unavailable'
+                ? 'bg-amber-50/95 backdrop-blur-md border-amber-200 text-amber-700'
+                : 'bg-white/90 backdrop-blur-md border-red-100 text-red-600'
+            }`}>
                 {error}
             </div>
         </div>

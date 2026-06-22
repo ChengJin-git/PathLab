@@ -4,6 +4,7 @@ export interface TrainingSubmissionRecord {
   taskId: string
   state: TrainingSubmissionState
   taskName?: string
+  dataType?: string
   error?: string
   createdAt: number
   updatedAt: number
@@ -12,6 +13,12 @@ export interface TrainingSubmissionRecord {
 const STORAGE_KEY = 'pathlab_training_submission_tracker_v1'
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 export const TRAINING_SUBMISSION_PENDING_TIMEOUT_MS = 30 * 60 * 1000
+
+const ANALYSIS_TIMESTAMP_ID_PATTERN = /^\d{8}_\d{6}$/
+
+function isTrainingSubmissionTaskId(taskId: string): boolean {
+  return !ANALYSIS_TIMESTAMP_ID_PATTERN.test(taskId)
+}
 
 function loadStore(): Record<string, TrainingSubmissionRecord> {
   if (typeof window === 'undefined') return {}
@@ -49,12 +56,13 @@ function updateRecord(
   return next
 }
 
-export function markTrainingSubmissionPending(taskId: string, taskName?: string): TrainingSubmissionRecord {
+export function markTrainingSubmissionPending(taskId: string, taskName?: string, dataType?: string): TrainingSubmissionRecord {
   const now = Date.now()
   return updateRecord(taskId, previous => ({
     taskId,
     state: 'pending',
     taskName: taskName ?? previous?.taskName,
+    dataType: dataType ?? previous?.dataType,
     error: undefined,
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
@@ -118,6 +126,7 @@ export function listTrainingSubmissionRecords(
   const allowed = states ? new Set(states) : null
 
   return Object.values(store)
+    .filter(record => isTrainingSubmissionTaskId(record.taskId))
     .filter(record => (allowed ? allowed.has(record.state) : true))
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }

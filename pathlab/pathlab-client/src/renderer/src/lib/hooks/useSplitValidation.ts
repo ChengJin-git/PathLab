@@ -6,7 +6,7 @@
 
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { TaskType, DataLevel } from '../../constants/training'
+import { TaskType, DataLevel, AggregationLevel, isSegmentationTask, isSurvivalTask } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
 
 export interface UseSplitValidationProps {
@@ -14,6 +14,7 @@ export interface UseSplitValidationProps {
   selectedIds: Set<string>
   taskType: TaskType
   dataLevel: DataLevel
+  aggregationLevel?: AggregationLevel
   selectedCount?: number
   numCocoCategories?: number  // Number of COCO categories for segmentation datasets
 }
@@ -29,6 +30,7 @@ export function useSplitValidation({
   selectedIds,
   taskType,
   dataLevel,
+  aggregationLevel = 'file',
   selectedCount,
   numCocoCategories,
 }: UseSplitValidationProps): UseSplitValidationReturn {
@@ -39,9 +41,9 @@ export function useSplitValidation({
   const classDistribution = useMemo(() => {
     const selectedItems = items.filter((item) => selectedIds.has(item.wsi_id))
     const distribution: Record<string, number> = {}
-    const isCaseLevel = dataLevel !== 'wsi'
+    const isCaseLevel = aggregationLevel === 'case'
 
-    if (taskType === 'segmentation') {
+    if (isSegmentationTask(taskType)) {
       return distribution
     }
 
@@ -64,7 +66,7 @@ export function useSplitValidation({
       })
 
       caseMap.forEach((caseData) => {
-        if (taskType === 'survival') {
+        if (isSurvivalTask(taskType)) {
           const hasSurvivalData = caseData.event_time != null && caseData.event_status != null
           if (hasSurvivalData) {
             const key = caseData.event_status === 1 ? '__event__' : '__censored__'
@@ -80,7 +82,7 @@ export function useSplitValidation({
     } else {
       // Slide-level: each slide counts individually
       selectedItems.forEach((item) => {
-        if (taskType === 'survival') {
+        if (isSurvivalTask(taskType)) {
           const hasSurvivalData = item.event_time != null && item.event_status != null
           if (hasSurvivalData) {
             const key = item.event_status === 1 ? '__event__' : '__censored__'
@@ -96,12 +98,12 @@ export function useSplitValidation({
     }
 
     return distribution
-  }, [items, selectedIds, taskType, dataLevel])
+  }, [items, selectedIds, taskType, dataLevel, aggregationLevel])
 
   // Calculate maximum allowed k for k-fold based on class distribution
   const kFoldValidation = useMemo((): KFoldValidation => {
-    const isSurvival = taskType === 'survival'
-    const isSegmentation = taskType === 'segmentation'
+    const isSurvival = isSurvivalTask(taskType)
+    const isSegmentation = isSegmentationTask(taskType)
 
     // Segmentation tasks use COCO annotations, not WSI labels
     if (isSegmentation) {
@@ -221,8 +223,8 @@ export function useSplitValidation({
 
   // Calculate validation for random 7:1:2 split
   const randomSplitValidation = useMemo((): RandomSplitValidation => {
-    const isSurvival = taskType === 'survival'
-    const isSegmentation = taskType === 'segmentation'
+    const isSurvival = isSurvivalTask(taskType)
+    const isSegmentation = isSegmentationTask(taskType)
     const minRequiredPerClass = 10
 
     // Segmentation tasks use COCO annotations, not WSI labels — skip label-based validation
@@ -329,4 +331,3 @@ export function useSplitValidation({
     randomSplitValidation,
   }
 }
-

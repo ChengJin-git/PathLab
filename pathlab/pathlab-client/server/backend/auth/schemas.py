@@ -40,14 +40,12 @@ def _validate_role(value: Optional[str], allowed_roles: set[str]) -> Optional[st
 class UserRead(BaseModel):
     """Schema for reading user data (API responses).
 
-    Note: We use 'email' field name for compatibility with FastAPI-Users,
-    but it actually stores username (no email validation).
+    username is login identity; email is real contact email.
     """
 
+    username: str = Field(description="Login username")
     id: uuid.UUID
-    email: str = Field(
-        description="Username (stored in email field for FastAPI-Users compatibility)"
-    )
+    email: Optional[str] = Field(default=None, description="Contact email")
     is_active: bool = True
     is_superuser: bool = False
     is_verified: bool = False
@@ -87,13 +85,16 @@ class UserCreate(BaseModel):
 
     Public registration schema.
 
-    Note: 'email' field is actually username (no email validation).
     Self-registration may only create non-admin accounts.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    email: str = Field(description="Username (stored in email field)")
+    username: str = Field(description="Login username")
+    email: Optional[str] = Field(
+        default=None,
+        description="Contact email",
+    )
     password: str = Field(description="User password")
     role: str = Field(default="guest", description="User role: pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
@@ -107,7 +108,7 @@ class UserCreate(BaseModel):
         """Validate role is one of the allowed public registration values."""
         return _validate_role(v, PUBLIC_REGISTRATION_ROLES) or "guest"
 
-    @field_validator("email")
+    @field_validator("username")
     @classmethod
     def validate_username(cls, v: str) -> str:
         """Validate username is not empty and has reasonable length."""
@@ -120,20 +121,11 @@ class UserUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     password: Optional[str] = Field(default=None, description="New password")
-    email: Optional[str] = Field(
-        default=None, description="Username (stored in email field)"
-    )
+    email: Optional[str] = Field(default=None, description="Contact email")
     nickname: Optional[str] = Field(default=None, description="Display name")
     notify_on_success: Optional[bool] = None
     notify_on_failed: Optional[bool] = None
     notify_on_cancelled: Optional[bool] = None
-
-    @field_validator("email")
-    @classmethod
-    def validate_username(cls, v: Optional[str]) -> Optional[str]:
-        """Validate updated username if provided."""
-        return _normalize_username(v)
-
 
 class AdminUserUpdate(UserUpdate):
     """Schema for admin-managed updates to user accounts."""
@@ -155,6 +147,41 @@ class AdminUserUpdate(UserUpdate):
     def validate_role(cls, v: Optional[str]) -> Optional[str]:
         """Validate role is one of the allowed values."""
         return _validate_role(v, VALID_ROLES)
+
+
+class AdminUserCreate(BaseModel):
+    """Schema for administrator-created user accounts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(description="Login username")
+    password: str = Field(description="User password")
+    nickname: Optional[str] = Field(default=None, description="Display name")
+    registration_email: Optional[str] = Field(
+        default=None, description="Optional registration or notification email"
+    )
+    role: str = Field(default="guest", description="User role: admin, pathologist, guest")
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        """Validate username is not empty and has reasonable length."""
+        return _normalize_username(v) or ""
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        """Validate role is one of the allowed admin-managed values."""
+        return _validate_role(v, VALID_ROLES) or "guest"
+
+    @field_validator("registration_email")
+    @classmethod
+    def normalize_registration_email(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize optional admin-provided notification email."""
+        if v is None:
+            return None
+        normalized = v.strip().lower()
+        return normalized or None
 
 
 class UserReadAdmin(UserRead):

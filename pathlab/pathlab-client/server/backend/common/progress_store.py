@@ -12,9 +12,11 @@ Both AI Service and Gateway import this module (lives in backend.common).
 """
 
 import logging
-from typing import Dict, Optional
+from importlib import import_module
 
-from backend.common.redis_client import get_redis, make_key
+_redis_client = import_module("backend.common.redis_client")
+get_redis = _redis_client.get_redis
+make_key = _redis_client.make_key
 
 logger = logging.getLogger("progress_store")
 
@@ -29,17 +31,17 @@ async def set_progress(task_id: str, progress: int) -> None:
         logger.warning(f"Failed to write progress to Redis (task={task_id}): {e}")
 
 
-async def get_progress(task_id: str) -> Optional[int]:
+async def get_progress(task_id: str) -> int | None:
     try:
         r = get_redis()
         val = await r.get(make_key("progress", task_id))
         return int(val) if val is not None else None
-    except (ValueError, Exception):
+    except Exception:
         return None
 
 
-async def get_all_progress() -> Dict[str, int]:
-    result: Dict[str, int] = {}
+async def get_all_progress() -> dict[str, int]:
+    result: dict[str, int] = {}
     try:
         r = get_redis()
         prefix = make_key("progress", "")

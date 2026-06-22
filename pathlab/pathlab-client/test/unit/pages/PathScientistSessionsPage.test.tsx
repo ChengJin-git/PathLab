@@ -43,7 +43,7 @@ describe('PathScientistSessionsPage', () => {
 
   it('shows legacy finished sessions as completed on the main page', async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -55,7 +55,7 @@ describe('PathScientistSessionsPage', () => {
 
   it('shows each session workspace disk usage on the sessions page', async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -67,7 +67,7 @@ describe('PathScientistSessionsPage', () => {
 
   it('places the session status badge in the bottom-right metadata row', async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -106,7 +106,7 @@ describe('PathScientistSessionsPage', () => {
     })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -134,7 +134,7 @@ describe('PathScientistSessionsPage', () => {
     })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -171,7 +171,7 @@ describe('PathScientistSessionsPage', () => {
     })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -211,7 +211,7 @@ describe('PathScientistSessionsPage', () => {
     })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -228,7 +228,7 @@ describe('PathScientistSessionsPage', () => {
     vi.mocked(listPathScientistSessions).mockResolvedValueOnce({ items: [] })
 
     const { unmount } = render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -236,11 +236,11 @@ describe('PathScientistSessionsPage', () => {
     expect(await screen.findByText('研究会话')).toBeInTheDocument()
     expect(screen.getByText('刷新')).toBeInTheDocument()
     expect(screen.getByText('新建会话')).toBeInTheDocument()
-    expect(screen.getByText('暂无 PathScientist 会话')).toBeInTheDocument()
+    expect(screen.getByText('暂无自动实验会话')).toBeInTheDocument()
     expect(screen.getByText('创建一个短会话，用于验证后端桥接和事件流。')).toBeInTheDocument()
     expect(screen.getByText('开始一个')).toBeInTheDocument()
     expect(screen.queryByText('Research sessions')).not.toBeInTheDocument()
-    expect(screen.queryByText('No PathScientist sessions yet')).not.toBeInTheDocument()
+    expect(screen.queryByText('No AutoResearch sessions yet')).not.toBeInTheDocument()
 
     unmount()
     vi.mocked(listPathScientistSessions).mockResolvedValueOnce({
@@ -263,7 +263,7 @@ describe('PathScientistSessionsPage', () => {
     })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -309,7 +309,7 @@ describe('PathScientistSessionsPage', () => {
     })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -350,7 +350,7 @@ describe('PathScientistSessionsPage', () => {
     })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -364,11 +364,10 @@ describe('PathScientistSessionsPage', () => {
   })
 
   it('deletes a completed session from the sessions page', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(deletePathScientistSession).mockResolvedValue({ session_id: 'legacy1', deleted: true, workspace_deleted: true })
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistSessionsPage />
       </MemoryRouter>,
     )
@@ -376,9 +375,109 @@ describe('PathScientistSessionsPage', () => {
     expect(await screen.findByText('Legacy run')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /delete session/i }))
 
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('workspace'))
-    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('kept'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText(/delete this autoresearch session/i)).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }))
+
     await waitFor(() => expect(deletePathScientistSession).toHaveBeenCalledWith('legacy1'))
     expect(screen.queryByText('Legacy run')).not.toBeInTheDocument()
+  })
+
+  it('does not poll when no sessions have live status', async () => {
+    const intervals: Array<{ handler: TimerHandler; timeout?: number }> = []
+    vi.spyOn(window, 'setInterval').mockImplementation((handler: TimerHandler, timeout?: number) => {
+      intervals.push({ handler, timeout })
+      return intervals.length as unknown as ReturnType<typeof window.setInterval>
+    })
+
+    vi.mocked(listPathScientistSessions).mockResolvedValue({
+      items: [
+        {
+          session_id: 'completed1',
+          conversation_id: 'conv1',
+          title: 'Completed session',
+          question: 'Train a model',
+          model: 'gpt-5.5',
+          status: 'completed',
+          stage: 'completed',
+          created_at: 1779030000,
+          updated_at: 1779030100,
+          error: '',
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Completed session')).toBeInTheDocument()
+    const listPollIntervals = intervals.filter((interval) => interval.timeout === 5000)
+    expect(listPollIntervals).toHaveLength(0)
+  })
+
+  it('polls every 5s when at least one session has live status', async () => {
+    const intervals: Array<{ handler: TimerHandler; timeout?: number }> = []
+    vi.spyOn(window, 'setInterval').mockImplementation((handler: TimerHandler, timeout?: number) => {
+      intervals.push({ handler, timeout })
+      return intervals.length as unknown as ReturnType<typeof window.setInterval>
+    })
+
+    vi.mocked(listPathScientistSessions).mockResolvedValue({
+      items: [
+        {
+          session_id: 'running1',
+          conversation_id: 'conv1',
+          title: 'Running session',
+          question: 'Train a model',
+          model: 'gpt-5.5',
+          status: 'running',
+          stage: 'execution',
+          created_at: 1779030000,
+          updated_at: 1779030100,
+          error: '',
+        },
+      ],
+    })
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Running session')).toBeInTheDocument()
+    const listPollIntervals = intervals.filter((interval) => interval.timeout === 5000)
+    expect(listPollIntervals.length).toBeGreaterThan(0)
+  })
+
+  it('uses ConfirmDialog instead of window.confirm for delete', async () => {
+    vi.mocked(deletePathScientistSession).mockResolvedValue({ session_id: 'legacy1', deleted: true, workspace_deleted: true })
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Legacy run')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /delete session/i }))
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText(/delete this autoresearch session/i)).toBeInTheDocument()
+  })
+
+  it('shows AutoResearch branding instead of PathScientist', async () => {
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <PathScientistSessionsPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Legacy run')).toBeInTheDocument()
+    expect(screen.getByText('AutoResearch')).toBeInTheDocument()
+    expect(screen.queryByText('PathScientist')).not.toBeInTheDocument()
   })
 })

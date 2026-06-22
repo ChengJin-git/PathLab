@@ -117,7 +117,7 @@ class StorageStatsMixin:
         directories = [
             ("coordinates", self.coords_dir),
             ("masks", self.masks_dir),
-            ("ai_results", self.ai_results_dir),
+            ("ai_result_bundles", self.ai_result_bundles_dir),
             ("features_cache", self.uploads_dir / "features"),
             ("training", self.training_dir),
             ("models", self.models_dir),
@@ -177,7 +177,7 @@ class StorageStatsMixin:
         directories = [
             ("coordinates", self.coords_dir),
             ("masks", self.masks_dir),
-            ("ai_results", self.ai_results_dir),
+            ("ai_result_bundles", self.ai_result_bundles_dir),
             ("features_cache", self.uploads_dir / "features"),
             ("training", self.training_dir),
             ("models", self.models_dir),
@@ -195,7 +195,10 @@ class StorageStatsMixin:
                 skipped_dirs.append(category)
             else:
                 # Directory changed or no cache - rescan
-                category_stats = self._get_directory_stats(directory)
+                if category == "ai_result_bundles":
+                    category_stats = self._get_ai_result_bundle_stats(directory)
+                else:
+                    category_stats = self._get_directory_stats(directory)
                 rescanned_dirs.append(category)
 
             stats["breakdown"][category] = category_stats
@@ -438,3 +441,15 @@ class StorageStatsMixin:
                 "size": 0,
                 "file_count": 0
             }
+
+    def _get_ai_result_bundle_stats(self, directory: Path) -> Dict[str, Any]:
+        """Get stats for finalized task bundle zip files only."""
+        if not directory.exists() or not directory.is_dir():
+            return {"size": 0, "file_count": 0}
+        total_size = 0
+        file_count = 0
+        for bundle_path in directory.glob("*.zarr.zip"):
+            if bundle_path.is_file():
+                total_size += bundle_path.stat().st_size
+                file_count += 1
+        return {"size": total_size, "file_count": file_count}

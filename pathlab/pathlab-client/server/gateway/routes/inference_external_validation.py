@@ -13,12 +13,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 from datetime import datetime
 from typing import Any, Dict, List, Optional, cast as type_cast
 
 from sqlalchemy import update as sql_update
 
 from backend.ai.schemas.base import TaskStatus
+from backend.ai.result_store import (
+    AIResultStore,
+    ATTENTION_ARTIFACT,
+    ATTENTION_RAW_ARTIFACT,
+    CAM_ARTIFACT,
+    PRED_MASK_ARTIFACT,
+)
+from backend.ai.survival import (
+    compute_risk_from_survival,
+    compute_survival_from_hazards,
+)
 from backend.common.config import Config
 from backend.database.models import TrainingTask
 from backend.database.repositories import (
@@ -48,6 +60,34 @@ from .inference_patch_segmentation import (
 logger = logging.getLogger(__name__)
 
 
+def _save_extval_result_bundle(
+    uploads_dir,
+    extval_task_id: str,
+    wsi_id: str,
+    result_data: dict[str, Any],
+    arrays: dict[str, Any] | None = None,
+    finalize: bool = True,
+) -> None:
+    """Persist external-validation artifacts into task-level Zarr bundle."""
+    store = AIResultStore(uploads_dir)
+    store.write_wsi_result(
+        task_id=extval_task_id,
+        wsi_id=wsi_id,
+        result=result_data,
+        arrays=arrays or {},
+        finalize=finalize,
+        update_index=finalize,
+    )
+
+
+def _is_batch_inference_mode(execution_mode: str) -> bool:
+    return execution_mode == "batch_inference"
+
+
+def _artifact_prefix_for_mode(execution_mode: str) -> str:
+    return "binfer" if _is_batch_inference_mode(execution_mode) else "extval"
+
+
 async def _run_external_validation_patch_segmentation(
     task_id: str,
     model_task_id: str,
@@ -57,6 +97,8 @@ async def _run_external_validation_patch_segmentation(
     assigned_device: str,
     logger_manager,
     update_task_progress,
+    execution_mode: str = "external_validation",
+    auto_trigger_analysis: bool = True,
 ):
     """Run external validation for patch segmentation models.
 
@@ -84,6 +126,12 @@ async def _run_external_validation_patch_segmentation(
 
     uploads_dir = Config.get_uploads_dir()
     device = resolve_device(assigned_device)
+    mode_label = (
+        "patch segmentation batch inference"
+        if _is_batch_inference_mode(execution_mode)
+        else "patch segmentation external validation"
+    )
+    artifact_prefix = _artifact_prefix_for_mode(execution_mode)
 
     try:
         # 1. Load model checkpoint and rebuild model
@@ -99,7 +147,7 @@ async def _run_external_validation_patch_segmentation(
             )
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Patch segmentation: loading model from {checkpoint_path}")
+            await tl.info(f"{mode_label}: loading model from {checkpoint_path}")
 
         def _load_model():
             checkpoint = torch.load(
@@ -234,7 +282,6 @@ async def _run_external_validation_patch_segmentation(
             normalization_mean=norm_mean,
             normalization_std=norm_std,
         )
-        ai_results_root = uploads_dir / "ai_results"
         results_saved = 0
         total_items = len(image_paths)
 
@@ -333,18 +380,12 @@ async def _run_external_validation_patch_segmentation(
                                 recall,
                             )
 
-                        # Save prediction mask
-                        wsi_result_dir = ai_results_root / wsi_id
-                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
                         # Keep segmentation artifacts streamed to disk during inference to avoid
                         # retaining many large masks/CAMs in memory. Store binary masks as uint8
                         # to reduce write volume without changing viewer semantics.
                         pred_mask = (
                             preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
                         )
-                        mask_file = wsi_result_dir / f"extval_{task_id}_pred_mask.npy"
-                        np.save(mask_file, pred_mask)
 
                         # Extract Grad-CAM for segmentation model
                         try:
@@ -398,30 +439,35 @@ async def _run_external_validation_patch_segmentation(
                                 dtype=np.float32,
                             )
 
-                        cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
-                        np.save(cam_file, cam_map)
-
-                        # Save result JSON
                         result_data = {
                             "wsi_id": wsi_id,
-                            "task_id": model_task_id,
-                            "validation_source": dataset_id,
-                            "validation_task_id": task_id,
+                            "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
                             "task_type": "patch_segmentation",
                             "aggregation_level": "file",
                             "num_classes": num_classes,
                             "class_names": class_names,
                             "image_size": list(original_size),
-                            "pred_mask_file": str(mask_file),
-                            "cam_file": str(cam_file),
+                            "pred_mask_file": None,
+                            "pred_mask_path": None,
+                            "cam_file": None,
                             "cam_size": list(cam_map.shape),
                             "has_ground_truth": has_gt,
                             "metrics": per_image_metrics,
                         }
-
-                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
-                        with open(result_file, "w", encoding="utf-8") as f:
-                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+                        if not _is_batch_inference_mode(execution_mode):
+                            result_data["validation_source"] = dataset_id
+                            result_data["validation_task_id"] = task_id
+                        _save_extval_result_bundle(
+                            uploads_dir=uploads_dir,
+                            extval_task_id=task_id,
+                            wsi_id=wsi_id,
+                            result_data=result_data,
+                            arrays={
+                                PRED_MASK_ARTIFACT: pred_mask,
+                                CAM_ARTIFACT: cam_map,
+                            },
+                            finalize=False,
+                        )
 
                         all_results.append(
                             {
@@ -429,8 +475,9 @@ async def _run_external_validation_patch_segmentation(
                                 "metrics": per_image_metrics,
                                 "has_ground_truth": has_gt,
                                 "class_names": class_names,
-                                "pred_mask_file": str(mask_file),
-                                "result_file": str(result_file),
+                                "pred_mask_file": None,
+                                "pred_mask_path": None,
+                                "result_file": None,
                             }
                         )
                         results_saved += 1
@@ -459,7 +506,7 @@ async def _run_external_validation_patch_segmentation(
                         "pred": "segmentation",
                         "probs": r["metrics"] if r["metrics"] else {},
                         "extra_metadata": {
-                            "validation_type": "external",
+                            "execution_mode": execution_mode,
                             "model_task_id": model_task_id,
                             "dataset_id": dataset_id,
                             "aggregation_level": "file",
@@ -467,14 +514,17 @@ async def _run_external_validation_patch_segmentation(
                             "has_ground_truth": r["has_ground_truth"],
                             "class_names": r.get("class_names", []),
                             "metrics": r["metrics"],
-                            "pred_mask_file": r["pred_mask_file"],
-                            "result_file": r["result_file"],
+                            "pred_mask_file": None,
+                            "pred_mask_path": None,
+                            "result_file": None,
                         },
                     }
                 )
 
             if db_records:
                 await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+            if all_results:
+                AIResultStore(uploads_dir).write_task_bundle(task_id=task_id)
             await db.commit()
 
         await clear_progress(task_id)
@@ -484,18 +534,18 @@ async def _run_external_validation_patch_segmentation(
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(
-                f"Patch segmentation external validation completed: {results_saved}/{total_items} images processed"
+                f"{mode_label.capitalize()} completed: {results_saved}/{total_items} images processed"
             )
 
-        # Auto-trigger analysis
-        await _auto_trigger_external_validation_analysis(
-            task_id=task_id,
-            model_task_id=model_task_id,
-            model_id=model_id,
-            dataset_id=dataset_id,
-            metrics=["iou", "dice", "accuracy", "precision", "recall"],
-            charts=["per_class_iou", "per_class_dice"],
-        )
+        if auto_trigger_analysis:
+            await _auto_trigger_external_validation_analysis(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                dataset_id=dataset_id,
+                metrics=["iou", "dice", "accuracy", "precision", "recall"],
+                charts=["per_class_iou", "per_class_dice"],
+            )
 
     except Exception as e:
         import traceback
@@ -536,6 +586,8 @@ async def _run_external_validation_patch_classification(
     assigned_device: str,
     logger_manager,
     update_task_progress,
+    execution_mode: str = "external_validation",
+    auto_trigger_analysis: bool = True,
 ):
     """Run external validation for patch classification models.
 
@@ -569,6 +621,12 @@ async def _run_external_validation_patch_classification(
 
     uploads_dir = Config.get_uploads_dir()
     device = resolve_device(assigned_device)
+    mode_label = (
+        "patch classification batch inference"
+        if _is_batch_inference_mode(execution_mode)
+        else "patch classification external validation"
+    )
+    artifact_prefix = _artifact_prefix_for_mode(execution_mode)
 
     try:
         # Load model checkpoint(s)
@@ -590,7 +648,7 @@ async def _run_external_validation_patch_classification(
         async with logger_manager.session() as (tl, _db):
             kfold_msg = f" (k-fold: {num_folds} folds)" if is_kfold else ""
             await tl.info(
-                f"Patch classification: loading model {model_id} with {len(classes)} classes{kfold_msg}"
+                f"{mode_label}: loading model {model_id} with {len(classes)} classes{kfold_msg}"
             )
 
         # Load checkpoint(s) and build model(s) (in thread to avoid blocking event loop)
@@ -721,7 +779,6 @@ async def _run_external_validation_patch_classification(
                 )
 
         # Run inference (in thread to avoid blocking event loop)
-        ai_results_root = uploads_dir / "ai_results"
         results_saved = 0
         total_items = len(image_paths)
 
@@ -781,19 +838,10 @@ async def _run_external_validation_patch_classification(
                             classes[labels[wsi_id]] if wsi_id in labels else "unknown"
                         )
 
-                        wsi_result_dir = ai_results_root / wsi_id
-                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-                        # Save CAM
-                        cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
-                        np.save(cam_file, cam_map)
-
-                        # Save result JSON (aligned with WSI branch fields)
+                        # Save result (aligned with WSI branch fields)
                         result_data = {
                             "wsi_id": wsi_id,
-                            "task_id": model_task_id,
-                            "validation_source": dataset_id,
-                            "validation_task_id": task_id,
+                            "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
                             "task_type": "patch_classification",
                             "aggregation_level": "file",
                             "pred": pred_label,
@@ -803,15 +851,22 @@ async def _run_external_validation_patch_classification(
                             if gt_label != "unknown"
                             else None,
                             "classes": classes,
-                            "cam_file": str(cam_file),
+                            "cam_file": None,
                             "cam_size": list(cam_size),
                             "is_kfold": is_kfold,
                             "num_folds": num_folds if is_kfold else None,
                         }
-
-                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
-                        with open(result_file, "w", encoding="utf-8") as f:
-                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+                        if not _is_batch_inference_mode(execution_mode):
+                            result_data["validation_source"] = dataset_id
+                            result_data["validation_task_id"] = task_id
+                        _save_extval_result_bundle(
+                            uploads_dir=uploads_dir,
+                            extval_task_id=task_id,
+                            wsi_id=wsi_id,
+                            result_data=result_data,
+                            arrays={CAM_ARTIFACT: cam_map},
+                            finalize=False,
+                        )
 
                         all_results.append(
                             {
@@ -822,9 +877,9 @@ async def _run_external_validation_patch_classification(
                                 "correct": pred_label == gt_label
                                 if gt_label != "unknown"
                                 else None,
-                                "cam_file": str(cam_file),
+                                "cam_file": None,
                                 "cam_size": list(cam_size),
-                                "result_file": str(result_file),
+                                "result_file": None,
                             }
                         )
                         results_saved += 1
@@ -847,7 +902,7 @@ async def _run_external_validation_patch_classification(
                     "pred": r["pred"],
                     "probs": r["probs"],
                     "extra_metadata": {
-                        "validation_type": "external",
+                        "execution_mode": execution_mode,
                         "model_task_id": model_task_id,
                         "dataset_id": dataset_id,
                         "aggregation_level": "file",
@@ -855,12 +910,15 @@ async def _run_external_validation_patch_classification(
                         "correct": r["correct"],
                         "classes": classes,
                         "task_type": "patch_classification",
-                        "cam_file": r["cam_file"],
+                        "cam_file": None,
                         "cam_size": r["cam_size"],
-                        "result_file": r["result_file"],
+                        "result_file": None,
                     },
                 }
                 await AIResultRepository.create(db, db_result_data)
+            if all_results:
+                AIResultStore(uploads_dir).write_task_bundle(task_id=task_id)
+
             await db.commit()
 
         await clear_progress(task_id)
@@ -870,16 +928,16 @@ async def _run_external_validation_patch_classification(
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(
-                f"Patch classification external validation completed: {results_saved}/{total_items} images processed"
+                f"{mode_label.capitalize()} completed: {results_saved}/{total_items} images processed"
             )
 
-        # Auto-trigger analysis
-        await _auto_trigger_external_validation_analysis(
-            task_id=task_id,
-            model_task_id=model_task_id,
-            model_id=model_id,
-            dataset_id=dataset_id,
-        )
+        if auto_trigger_analysis:
+            await _auto_trigger_external_validation_analysis(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                dataset_id=dataset_id,
+            )
 
     except Exception as e:
         import traceback
@@ -915,13 +973,15 @@ async def _run_external_validation(
     model_task_id: str,
     model_id: str,
     model_classes: Optional[List[str]],
-    model_task_type: str,  # "classification", "wsi_classification", "survival", "wsi_survival", "patch_classification"
+    model_task_type: str,  # "wsi_classification", "patch_classification", "wsi_survival", "patch_segmentation"
     model_data_type: str = "wsi",  # "wsi" or "patch"
     dataset_id: str = "",
     wsi_ids: Optional[List[str]] = None,
     assigned_device: Optional[
         str
     ] = None,  # GPU device assigned by task queue (e.g., "cuda:0")
+    execution_mode: str = "external_validation",
+    auto_trigger_analysis: bool = True,
 ):
     """Background task to run external validation.
 
@@ -946,11 +1006,8 @@ async def _run_external_validation(
     from backend.common.progress_store import set_progress, clear_progress
     from gateway.pipeline import ScopedLogger
     from gateway.dependencies import AI_SERVICE_URL
-    from backend.ai.tasks.feature_cache import (
-        compute_params_hash,
-        find_cached_features,
-        create_symlink_to_cache,
-    )
+    from backend.common.coords_cache import compute_params_hash
+    from backend.ai.tasks.feature_cache import find_cached_features, create_symlink_to_cache
     from gateway.utils import ensure_coords_ready
     from backend.ai.permission_revocation import (
         is_permission_revoked,
@@ -961,13 +1018,19 @@ async def _run_external_validation(
     wsi_ids = wsi_ids or []
 
     # Minimum patches threshold for valid WSI (same as trainer.py)
-    MIN_PATCHES_THRESHOLD = 100
+    MIN_PATCHES_THRESHOLD = 5
 
     # ScopedLogger writes to training_logs table so SSE log stream works
     logger_manager = ScopedLogger(task_id)
 
     # Determine if this is a survival task
-    is_survival = model_task_type in ("survival", "wsi_survival")
+    is_survival = model_task_type == "wsi_survival"
+    mode_label = (
+        "batch inference"
+        if _is_batch_inference_mode(execution_mode)
+        else "external validation"
+    )
+    artifact_prefix = _artifact_prefix_for_mode(execution_mode)
 
     async def update_task_progress(
         status: str,
@@ -1004,21 +1067,27 @@ async def _run_external_validation(
         if is_permission_revoked(task_id):
             raise PermissionRevokedException(f"Permission revoked for task {task_id}")
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Starting external validation for task: {task_id}")
+            await tl.info(f"Starting {mode_label} for task: {task_id}")
             await tl.info(
                 f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Data type: {model_data_type} | Task type: {model_task_type}"
             )
 
         uploads_dir = Config.get_uploads_dir()
 
+        # Clear stale analysis from a previous run so rerun/resume always
+        # produces fresh metrics. _auto_trigger_external_validation_analysis
+        # guards on dir existence, so we delete it here before new inference.
+        if auto_trigger_analysis:
+            _stale_analysis_dir = uploads_dir / "logs" / "analysis" / task_id
+            if _stale_analysis_dir.exists():
+                shutil.rmtree(_stale_analysis_dir, ignore_errors=True)
+                logger.info(f"Cleared stale analysis dir for task {task_id} (rerun/resume)")
+
         # ================================================================
         # Patch-level tasks: branch to dedicated handlers
         # ================================================================
         if model_data_type == "patch":
-            is_patch_segmentation = model_task_type in (
-                "patch_segmentation",
-                "segmentation",
-            )
+            is_patch_segmentation = model_task_type == "patch_segmentation"
             if is_patch_segmentation:
                 await _run_external_validation_patch_segmentation(
                     task_id=task_id,
@@ -1029,6 +1098,8 @@ async def _run_external_validation(
                     assigned_device=assigned_device or "",
                     logger_manager=logger_manager,
                     update_task_progress=update_task_progress,
+                    execution_mode=execution_mode,
+                    auto_trigger_analysis=auto_trigger_analysis,
                 )
                 return
 
@@ -1043,6 +1114,8 @@ async def _run_external_validation(
                 assigned_device=assigned_device or "",
                 logger_manager=logger_manager,
                 update_task_progress=update_task_progress,
+                execution_mode=execution_mode,
+                auto_trigger_analysis=auto_trigger_analysis,
             )
             return
 
@@ -1320,7 +1393,7 @@ async def _run_external_validation(
         if missing_wsi_ids:
             async with logger_manager.session() as (tl, _db):
                 await tl.info(
-                    f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache..."
+                    f"Extracting features for {len(missing_wsi_ids)}/{len(wsi_ids)} WSIs (cache miss, rest already cached)..."
                 )
 
             await update_task_progress(TaskStatus.PATCHING, 5)
@@ -1329,9 +1402,15 @@ async def _run_external_validation(
             # Step 2a: Patch extraction via preprocessing service (with fallback logic)
             # This mirrors the training pipeline pattern from pipeline.py
             total_missing = len(missing_wsi_ids)
+            total_wsi = len(wsi_ids)  # full count for [i/N] log format, matches training pattern
+            missing_wsi_set = set(missing_wsi_ids)
+            missing_processed = 0
             coords_success_wsi_ids = []  # WSIs where coords extraction succeeded
 
-            for idx, wsi_id in enumerate(missing_wsi_ids, 1):
+            for overall_idx, wsi_id in enumerate(wsi_ids, 1):
+                if wsi_id not in missing_wsi_set:
+                    continue  # already symlinked from cache, skip
+                missing_processed += 1
                 await asyncio.sleep(0)  # Yield to event loop
 
                 coords_result = None
@@ -1342,7 +1421,7 @@ async def _run_external_validation(
                 ):
                     async with logger_manager.session() as (tl, _db):
                         await tl.warning(
-                            f"[{idx}/{total_missing}] compute_patches attempt {attempt}/{max_retries} "
+                            f"[{overall_idx}/{total_wsi}] compute_patches attempt {attempt}/{max_retries} "
                             f"failed for {wsi_id}: {type(retry_err).__name__}. "
                             f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
                             metadata={
@@ -1355,7 +1434,7 @@ async def _run_external_validation(
                 async def _log_lock_wait(wait_seconds: float):
                     async with logger_manager.session() as (tl, _db):
                         await tl.info(
-                            f"[{idx}/{total_missing}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
+                            f"[{overall_idx}/{total_wsi}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
                             metadata={"wsi_id": wsi_id, "wait_seconds": wait_seconds},
                         )
 
@@ -1378,7 +1457,7 @@ async def _run_external_validation(
                         resp_body = "(unable to read response body)"
                     async with logger_manager.session() as (tl, _db):
                         await tl.warning(
-                            f"[{idx}/{total_missing}] Patch extraction failed for {wsi_id}: "
+                            f"[{overall_idx}/{total_wsi}] Patch extraction failed for {wsi_id}: "
                             f"HTTP {http_err.response.status_code if http_err.response else 'N/A'} - {resp_body}",
                             metadata={
                                 "wsi_id": wsi_id,
@@ -1398,7 +1477,7 @@ async def _run_external_validation(
                         # 0 patches = no detectable tissue (even after adaptive seg_level fallback)
                         async with logger_manager.session() as (tl, _db):
                             await tl.warning(
-                                f"[{idx}/{total_missing}] Skipping {wsi_id}: 0 patches extracted "
+                                f"[{overall_idx}/{total_wsi}] Skipping {wsi_id}: 0 patches extracted "
                                 f"(no detectable tissue after adaptive seg_level fallback)",
                                 metadata={"wsi_id": wsi_id, "num_patches": 0},
                             )
@@ -1408,7 +1487,7 @@ async def _run_external_validation(
                         # Too few patches for reliable inference
                         async with logger_manager.session() as (tl, _db):
                             await tl.warning(
-                                f"[{idx}/{total_missing}] Skipping {wsi_id}: only {num_patches} patches "
+                                f"[{overall_idx}/{total_wsi}] Skipping {wsi_id}: only {num_patches} patches "
                                 f"(minimum {MIN_PATCHES_THRESHOLD} required for reliable inference)",
                                 metadata={
                                     "wsi_id": wsi_id,
@@ -1425,7 +1504,7 @@ async def _run_external_validation(
                         async with logger_manager.session() as (tl, _db):
                             if cached:
                                 await tl.info(
-                                    f"[{idx}/{total_missing}] Coords cache hit for {wsi_id} ({num_patches} patches)",
+                                    f"[{overall_idx}/{total_wsi}] Coords cache hit for {wsi_id} ({num_patches} patches)",
                                     metadata={
                                         "wsi_id": wsi_id,
                                         "num_patches": num_patches,
@@ -1434,7 +1513,7 @@ async def _run_external_validation(
                                 )
                             else:
                                 await tl.info(
-                                    f"[{idx}/{total_missing}] Extracted {num_patches} patches from {wsi_id}",
+                                    f"[{overall_idx}/{total_wsi}] Extracted {num_patches} patches from {wsi_id}",
                                     metadata={
                                         "wsi_id": wsi_id,
                                         "num_patches": num_patches,
@@ -1449,7 +1528,7 @@ async def _run_external_validation(
                     err_msg = str(coords_error) if coords_error else "Unknown error"
                     async with logger_manager.session() as (tl, _db):
                         await tl.error(
-                            f"[{idx}/{total_missing}] Skipping {wsi_id}: coords extraction failed - [{err_type}] {err_msg}",
+                            f"[{overall_idx}/{total_wsi}] Skipping {wsi_id}: coords extraction failed - [{err_type}] {err_msg}",
                             metadata={
                                 "wsi_id": wsi_id,
                                 "error": err_msg,
@@ -1460,14 +1539,14 @@ async def _run_external_validation(
                     failed_reasons[wsi_id] = f"coords failed: {err_type}"
 
                 # Update progress (5-30% for patch extraction)
-                progress = 5 + int((idx / total_missing) * 25)
+                progress = 5 + int((missing_processed / total_missing) * 25)
                 await update_task_progress(TaskStatus.PATCHING, progress)
                 await set_progress(task_id, progress)
 
             # Log summary of coords extraction
             async with logger_manager.session() as (tl, _db):
                 await tl.info(
-                    f"Patch extraction phase complete: {len(coords_success_wsi_ids)}/{total_missing} WSIs succeeded, "
+                    f"Patch extraction phase complete: {len(coords_success_wsi_ids)}/{total_wsi} WSIs succeeded, "
                     f"{len(failed_wsi_ids)} failed/skipped",
                     metadata={
                         "success_count": len(coords_success_wsi_ids),
@@ -1647,8 +1726,6 @@ async def _run_external_validation(
                 f"Features ready for {valid_count}/{len(wsi_ids)} WSIs. Starting inference..."
             )
 
-        ai_results_root = uploads_dir / "ai_results"
-
         # Import Dataset classes for memory-efficient loading
         from backend.ai.utils.feature_dataset import (
             WSIFeatureDataset,
@@ -1709,7 +1786,7 @@ async def _run_external_validation(
                     case_to_wsi=case_to_wsi,
                     times=case_times,
                     statuses=case_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=device,
                 )
             else:
@@ -1718,7 +1795,7 @@ async def _run_external_validation(
                     case_ids=case_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels_map,
-                    task_type="classification",
+                    task_family="classification",
                     device=device,
                 )
             total = len(case_ids)
@@ -1749,7 +1826,7 @@ async def _run_external_validation(
                     wsi_ids=valid_wsi_ids,
                     times=times_map,
                     statuses=statuses_map,
-                    task_type="survival",
+                    task_family="survival",
                     device=device,
                 )
             else:
@@ -1757,7 +1834,7 @@ async def _run_external_validation(
                     features_dir=features_dir,
                     wsi_ids=valid_wsi_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=device,
                 )
             total = len(valid_wsi_ids)
@@ -1780,7 +1857,7 @@ async def _run_external_validation(
             """Process dataset[start_idx:end_idx]. Returns partial results."""
             _chunk_saved = 0
             _chunk_risk_scores = []
-            _chunk_result_files = []
+            _chunk_survival_results = []
             _chunk_db_records = []
 
             with torch.inference_mode():
@@ -1849,8 +1926,10 @@ async def _run_external_validation(
                                 if attn_f is not None:
                                     all_attentions.append(attn_f.cpu().numpy())
                             hazards = np.mean(all_hazards, axis=0)
-                            surv_probs = np.cumprod(1 - hazards).tolist()
-                            risk_score = float(np.sum(hazards))
+                            surv_probs = compute_survival_from_hazards(hazards).tolist()
+                            risk_score = float(
+                                compute_risk_from_survival(np.asarray(surv_probs))
+                            )
                             attention = (
                                 np.mean(all_attentions, axis=0)
                                 if all_attentions
@@ -1895,8 +1974,10 @@ async def _run_external_validation(
 
                         if is_survival:
                             hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                            surv_probs = np.cumprod(1 - hazards).tolist()
-                            risk_score = float(np.sum(hazards))
+                            surv_probs = compute_survival_from_hazards(hazards).tolist()
+                            risk_score = float(
+                                compute_risk_from_survival(np.asarray(surv_probs))
+                            )
                             attention = (
                                 attention_t.cpu().numpy()
                                 if attention_t is not None
@@ -1936,11 +2017,7 @@ async def _run_external_validation(
                             gt_data = case_survival_data.get(item_id, {})
                         else:
                             gt_data = survival_data.get(item_id, {})
-                        _chunk_risk_scores.append(
-                            float(np.sum(hazards))
-                            if isinstance(hazards, np.ndarray)
-                            else risk_score
-                        )
+                        _chunk_risk_scores.append(float(risk_score))
                         pred_label = None
                         probs_dict = None
                         gt_label = None
@@ -1967,9 +2044,6 @@ async def _run_external_validation(
 
                     # --- Save per-WSI results ---
                     for wsi_id in item_wsi_ids:
-                        wsi_result_dir = ai_results_root / wsi_id
-                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
                         if is_case_level:
                             slide_attn = slide_attentions.get(wsi_id)
                             slide_raw_attn = slide_raw_attentions.get(wsi_id)
@@ -1993,10 +2067,8 @@ async def _run_external_validation(
                             result_data = {
                                 "wsi_id": wsi_id,
                                 "case_id": item_id if is_case_level else None,
-                                "task_id": model_task_id,
-                                "validation_source": dataset_id,
-                                "validation_task_id": task_id,
-                                "task_type": "survival",
+                                "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
+                                "task_type": "wsi_survival",
                                 "aggregation_level": agg_level,
                                 "risk_score": risk_score,
                                 "hazards": hazards.tolist()
@@ -2013,14 +2085,15 @@ async def _run_external_validation(
                                 "is_kfold": is_kfold,
                                 "num_folds": num_folds if is_kfold else None,
                             }
+                            if not _is_batch_inference_mode(execution_mode):
+                                result_data["validation_source"] = dataset_id
+                                result_data["validation_task_id"] = task_id
                         else:
                             result_data = {
                                 "wsi_id": wsi_id,
                                 "case_id": item_id if is_case_level else None,
-                                "task_id": model_task_id,
-                                "validation_source": dataset_id,
-                                "validation_task_id": task_id,
-                                "task_type": "classification",
+                                "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
+                                "task_type": "wsi_classification",
                                 "aggregation_level": agg_level,
                                 "pred": pred_label,
                                 "probs": probs_dict,
@@ -2035,32 +2108,29 @@ async def _run_external_validation(
                                 "is_kfold": is_kfold,
                                 "num_folds": num_folds if is_kfold else None,
                             }
+                            if not _is_batch_inference_mode(execution_mode):
+                                result_data["validation_source"] = dataset_id
+                                result_data["validation_task_id"] = task_id
 
-                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
-                        attention_file = None
+                        result_data["attention_file"] = None
 
+                        arrays: dict[str, Any] = {}
                         if slide_raw_attn is not None:
-                            np.save(
-                                wsi_result_dir / f"extval_{task_id}_attention_raw.npy",
-                                slide_raw_attn,
-                            )
+                            arrays[ATTENTION_RAW_ARTIFACT] = slide_raw_attn
                         if slide_attn is not None:
-                            attention_file = (
-                                wsi_result_dir / f"extval_{task_id}_attention.npy"
-                            )
-                            np.save(attention_file, slide_attn)
-                            ensure_recommendation_preview_cache(
-                                wsi_id, attention_file, Config.get_uploads_dir()
-                            )
+                            arrays[ATTENTION_ARTIFACT] = slide_attn
 
-                        if attention_file is not None:
-                            result_data["attention_file"] = str(attention_file)
-
-                        with open(result_file, "w", encoding="utf-8") as f:
-                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+                        _save_extval_result_bundle(
+                            uploads_dir=uploads_dir,
+                            extval_task_id=task_id,
+                            wsi_id=wsi_id,
+                            result_data=result_data,
+                            arrays=arrays,
+                            finalize=False,
+                        )
 
                         if is_survival:
-                            _chunk_result_files.append((str(result_file), wsi_id))
+                            _chunk_survival_results.append((wsi_id, result_data))
 
                         _chunk_saved += 1
 
@@ -2073,20 +2143,21 @@ async def _run_external_validation(
                                 "pred": pred_label,
                                 "probs": probs_dict,
                                 "extra_metadata": {
-                                    "validation_type": "external",
+                                    "execution_mode": execution_mode,
                                     "model_task_id": model_task_id,
                                     "dataset_id": dataset_id,
                                     "aggregation_level": agg_level,
                                     "case_id": item_id if is_case_level else None,
-                                    "task_type": "survival"
+                                    "task_type": "wsi_survival"
                                     if is_survival
-                                    else "classification",
+                                    else "wsi_classification",
                                     "attention_type": attention_type,
                                     "attention_shape": attention_shape,
-                                    "attention_file": str(attention_file)
-                                    if attention_file is not None
-                                    else None,
-                                    "result_file": str(result_file),
+                                    "attention_file": None,
+                                    "risk_score": risk_score if is_survival else None,
+                                    "event_time": gt_data.get("event_time") if is_survival else None,
+                                    "event_status": gt_data.get("event_status") if is_survival else None,
+                                    "result_file": None,
                                 },
                             }
                         )
@@ -2094,7 +2165,7 @@ async def _run_external_validation(
             return (
                 _chunk_saved,
                 _chunk_risk_scores,
-                _chunk_result_files,
+                _chunk_survival_results,
                 _chunk_db_records,
             )
 
@@ -2109,7 +2180,7 @@ async def _run_external_validation(
 
         results_saved = 0
         all_risk_scores = []
-        saved_result_files = []
+        saved_survival_results: list[tuple[str, dict[str, Any]]] = []
         db_records = []
 
         for chunk_start in range(0, total, CHUNK_SIZE):
@@ -2117,14 +2188,14 @@ async def _run_external_validation(
             (
                 chunk_saved,
                 chunk_risk_scores,
-                chunk_result_files,
+                chunk_survival_results,
                 chunk_db_records,
             ) = await asyncio.to_thread(_sync_run_chunk, chunk_start, chunk_end)
             results_saved += chunk_saved
             db_records.extend(chunk_db_records)
             if is_survival:
                 all_risk_scores.extend(chunk_risk_scores)
-                saved_result_files.extend(chunk_result_files)
+                saved_survival_results.extend(chunk_survival_results)
 
             # Update progress via file-based store (35% to 95% for inference phase)
             progress = 35 + int(chunk_end / total * 60)
@@ -2133,38 +2204,48 @@ async def _run_external_validation(
             # Yield to event loop - this is the KEY fix that prevents blocking
             await asyncio.sleep(0)
 
-        # For survival: compute median risk score and update all result files with risk_group
-        # NOTE: This loop reads+writes potentially thousands of JSON files.
-        # Run in thread to avoid blocking the event loop.
+        # For survival: compute median risk score and update all bundle results with risk_group.
         if is_survival and all_risk_scores:
             median_risk_score = float(np.median(all_risk_scores))
             logger.info(
-                f"Survival external validation: median risk score = {median_risk_score:.4f}"
+                f"Survival {mode_label}: median risk score = {median_risk_score:.4f}"
             )
 
-            def _sync_update_survival_result_files():
-                for result_file, wsi_id in saved_result_files:
-                    with open(result_file, "r") as f:
-                        result_data = json.load(f)
+            for wsi_id, result_data in saved_survival_results:
+                risk_group = (
+                    "High Risk"
+                    if float(result_data["risk_score"]) >= median_risk_score
+                    else "Low Risk"
+                )
+                enriched_result = dict(result_data)
+                enriched_result["median_risk_score"] = median_risk_score
+                enriched_result["risk_group"] = risk_group
+                _save_extval_result_bundle(
+                    uploads_dir=uploads_dir,
+                    extval_task_id=task_id,
+                    wsi_id=wsi_id,
+                    result_data=enriched_result,
+                    arrays={},
+                    finalize=False,
+                )
 
-                    risk_group = (
-                        "High Risk"
-                        if result_data["risk_score"] >= median_risk_score
-                        else "Low Risk"
-                    )
-                    result_data["median_risk_score"] = median_risk_score
-                    result_data["risk_group"] = risk_group
-
-                    with open(result_file, "w", encoding="utf-8") as f:
-                        json.dump(result_data, f, ensure_ascii=False, indent=2)
-
-            await asyncio.to_thread(_sync_update_survival_result_files)
+            for record in db_records:
+                meta = record.get("extra_metadata") or {}
+                risk_score = meta.get("risk_score")
+                if risk_score is None:
+                    continue
+                meta["median_risk_score"] = median_risk_score
+                meta["risk_group"] = (
+                    "High Risk" if float(risk_score) >= median_risk_score else "Low Risk"
+                )
 
         # Batch-insert results into database so Results page can display them
         if db_records:
             logger.info(f"Saving {len(db_records)} results to database...")
             async with safe_session() as db:
                 await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+                if results_saved:
+                    AIResultStore(uploads_dir).write_task_bundle(task_id=task_id)
                 await db.commit()
             logger.info(f"Saved {len(db_records)} results to database")
 
@@ -2187,16 +2268,16 @@ async def _run_external_validation(
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(
-                f"External validation completed: {results_saved} results saved{case_level_msg}{kfold_msg}"
+                f"{mode_label.capitalize()} completed: {results_saved} results saved{case_level_msg}{kfold_msg}"
             )
 
-        # Auto-trigger analysis after inference completes
-        await _auto_trigger_external_validation_analysis(
-            task_id=task_id,
-            model_task_id=model_task_id,
-            model_id=model_id,
-            dataset_id=dataset_id,
-        )
+        if auto_trigger_analysis:
+            await _auto_trigger_external_validation_analysis(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                dataset_id=dataset_id,
+            )
 
     except Exception as e:
         import traceback

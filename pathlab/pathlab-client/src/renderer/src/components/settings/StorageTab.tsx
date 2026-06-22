@@ -23,12 +23,15 @@ import {
   updateStorageConfig,
   scanDirectory,
   checkExternalFiles,
+  startScanDirectoryTask,
   startBatchImportTask,
   startDeleteExternalTask,
   startUnbindDatasetTask,
+  getStorageTaskStatus,
   getExternalDatasets,
   getExternalDatasetsCachedSync,
   invalidateExternalDatasetsCache,
+  cancelStorageTask,
 } from '../../api/storage'
 import type {
   StorageStats,
@@ -38,13 +41,15 @@ import type {
   OrphanedRecordsCleanupResult,
   StorageConfig,
   ScanDirectoryResponse,
+  ScanDirectoryTaskResult,
   CheckExternalFilesResponse,
   ExternalDatasetInfo,
 } from '../../api/storage'
-import { fetchDatasets } from '../../api/wsi'
+import { fetchAllDatasets } from '../../api/wsi'
 import type { DatasetSummary } from '../../api/wsi'
 import { formatFileSize } from '../../lib/utils'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
+import { isSegmentationTask, type TaskType } from '../../constants/training'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { MigrationModal } from './MigrationModal'
 import {
@@ -63,6 +68,8 @@ interface ElectronApi {
 }
 declare const window: Window & { api?: ElectronApi }
 
+const SCAN_TASK_POLL_INTERVAL_MS = 2000
+
 export interface StorageTabProps {
   showConfirmDialog: ShowConfirmDialog
   closeConfirmDialog: () => void
@@ -72,7 +79,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const BATCH_SCAN_PAGE_SIZE = 100
   const navigate = useNavigate()
   const { t } = useTranslation()
-  const { addMigrationTask } = useBackgroundTask()
+  const { addMigrationTask, openPanel } = useBackgroundTask()
   const [isDangerZoneOpen, setIsDangerZoneOpen] = React.useState(false)
   const hasSelectDirectoryApi = !!window.api?.files?.selectDirectory
 
@@ -99,6 +106,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [batchScanPath, setBatchScanPath] = useState('')
   const [batchScanResult, setBatchScanResult] = useState<ScanDirectoryResponse | null>(null)
   const [batchScanning, runBatchScanning] = useAsyncAction<void>({ onError: (err) => setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir')) })
+  const [batchScanStage, setBatchScanStage] = useState<'idle' | 'initial' | 'refresh' | 'segmentationRefresh'>('idle')
   const [batchScanError, setBatchScanError] = useState<string | null>(null)
   const [batchSelectedFiles, setBatchSelectedFiles] = useState<Set<string>>(new Set())
   const [batchExcludedFiles, setBatchExcludedFiles] = useState<Set<string>>(new Set())
@@ -108,14 +116,58 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const batchNewDatasetNameRef = useRef<HTMLInputElement>(null)
   const [batchRegistering, runBatchRegistering] = useAsyncAction<void>({ onError: (err) => setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartImport')) })
   const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
+  const [activeScanTaskId, setActiveScanTaskId] = useState<string | null>(null)
+  const activeScanTaskIdRef = useRef<string | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
-  const [batchTaskType, setBatchTaskTypeRaw] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [batchTaskType, setBatchTaskTypeRaw] = useState<TaskType>('wsi_classification')
   const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
   const [batchIsPublic, setBatchIsPublic] = useState(false)
-  const setBatchTaskType = (type: 'classification' | 'survival' | 'segmentation') => {
+  const setBatchTaskType = (type: TaskType) => {
     setBatchTaskTypeRaw(type)
-    if (type === 'segmentation') setBatchDataLevel('file')
+    if (isSegmentationTask(type)) setBatchDataLevel('file')
   }
+  const resolveBatchTaskTypeForScan = (scanResult?: ScanDirectoryResponse | null): TaskType => {
+    if (batchTaskType !== 'wsi_classification') return batchTaskType
+    if (scanResult && scanResult.patch_count > 0 && scanResult.wsi_count === 0) return 'patch_classification'
+    return 'wsi_classification'
+  }
+  const resolveBatchDataLevelForTask = (taskType: TaskType): 'case' | 'file' => {
+    return taskType.startsWith('patch_') ? 'file' : batchDataLevel
+  }
+  const waitForScanDirectoryTask = async (taskId: string): Promise<ScanDirectoryTaskResult> => {
+    while (true) {
+      const task = await getStorageTaskStatus(taskId)
+
+      if (task.status === 'completed') {
+        const results = task.results as ScanDirectoryTaskResult | null
+        if (!results?.scan_id) {
+          throw new Error('Directory scan completed without a scan session')
+        }
+        return results
+      }
+
+      if (task.status === 'failed') {
+        throw new Error(task.error_message || t('settings.storageTab.failedToScanDir'))
+      }
+
+      if (task.status === 'cancelled') {
+        throw new Error('Directory scan was cancelled')
+      }
+
+      await new Promise(resolve => setTimeout(resolve, SCAN_TASK_POLL_INTERVAL_MS))
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      const activeId = activeScanTaskIdRef.current
+      if (activeId) {
+        cancelStorageTask(activeId).catch(() => {})
+        activeScanTaskIdRef.current = null
+        setActiveScanTaskId(null)
+      }
+    }
+  }, [])
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
     return cached?.datasets ?? []
@@ -134,7 +186,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
 
   const loadBatchDatasets = async () => {
     try {
-      const response = await fetchDatasets()
+      const response = await fetchAllDatasets()
       setBatchDatasets(response.items)
     } catch (err) {
       console.error('Failed to load datasets for batch registration:', err)
@@ -193,6 +245,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setBatchScanPath(selected)
       setBatchScanResult(null)
       setBatchScanError(null)
+      setBatchScanStage('idle')
       setBatchSelectedFiles(new Set())
       setBatchExcludedFiles(new Set())
       setBatchSelectAllValid(false)
@@ -200,23 +253,50 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     }
   }
 
+  const handleCancelBatchScan = () => {
+    const activeId = activeScanTaskIdRef.current
+    if (activeId) {
+      cancelStorageTask(activeId).catch(() => {})
+      activeScanTaskIdRef.current = null
+      setActiveScanTaskId(null)
+    }
+    setBatchScanStage('idle')
+  }
+
   const handleBatchScan = () => {
     if (!batchScanPath.trim()) return
     setBatchScanError(null)
     setBatchScanResult(null)
+    setBatchScanStage('initial')
     setBatchSelectedFiles(new Set())
     setBatchExcludedFiles(new Set())
     setBatchSelectAllValid(false)
     setBatchImportTaskId(null)
     void runBatchScanning(async () => {
-      const result = await scanDirectory(batchScanPath.trim(), {
-        taskType: batchTaskType,
-        page: 1,
+      const scanTaskType = resolveBatchTaskTypeForScan()
+      const task = await startScanDirectoryTask(batchScanPath.trim(), {
+        taskType: scanTaskType,
         pageSize: BATCH_SCAN_PAGE_SIZE,
       })
-      setBatchScanResult(result)
-      setBatchSelectAllValid(true)
+      activeScanTaskIdRef.current = task.task_id
+      setActiveScanTaskId(task.task_id)
+      try {
+        const scanTaskResult = await waitForScanDirectoryTask(task.task_id)
+        const result = await scanDirectory(scanTaskResult.directory, {
+          scanId: scanTaskResult.scan_id,
+          taskType: scanTaskType,
+          page: 1,
+          pageSize: scanTaskResult.page_size || BATCH_SCAN_PAGE_SIZE,
+        })
+        setBatchScanResult(result)
+        setBatchSelectAllValid(true)
+        setBatchScanStage('idle')
+      } finally {
+        activeScanTaskIdRef.current = null
+        setActiveScanTaskId(null)
+      }
     }).catch((err: unknown) => {
+      setBatchScanStage('idle')
       console.error('Failed to scan directory:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
     })
@@ -225,39 +305,46 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const handleBatchScanPageChange = (page: number) => {
     if (!batchScanResult) return
     setBatchScanError(null)
+    setBatchScanStage('refresh')
     void runBatchScanning(async () => {
+      const scanTaskType = resolveBatchTaskTypeForScan(batchScanResult)
       const result = await scanDirectory(batchScanResult.directory, {
         scanId: batchScanResult.scan_id,
-        taskType: batchTaskType,
+        taskType: scanTaskType,
         page,
         pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })
       setBatchScanResult(result)
+      setBatchScanStage('idle')
     }).catch((err: unknown) => {
+      setBatchScanStage('idle')
       console.error('Failed to load scan page:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
     })
   }
 
   useEffect(() => {
-    if (batchTaskType !== 'segmentation' || !batchScanResult?.directory || batchScanResult.annotation_scan_enabled) {
+    if (!isSegmentationTask(batchTaskType) || !batchScanResult?.directory || batchScanResult.annotation_scan_enabled) {
       return
     }
 
     let cancelled = false
 
     setBatchScanError(null)
+    setBatchScanStage('segmentationRefresh')
     void runBatchScanning(async () => {
       const result = await scanDirectory(batchScanResult.directory, {
-        taskType: 'segmentation',
+        taskType: 'patch_segmentation',
         page: batchScanResult.page,
         pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })
       if (!cancelled) {
         setBatchScanResult(result)
+        setBatchScanStage('idle')
       }
     }).catch((err: unknown) => {
       if (!cancelled) {
+        setBatchScanStage('idle')
         console.error('Failed to reload segmentation scan:', err)
         setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
       }
@@ -320,6 +407,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchScanError(null)
     setBatchImportTaskId(null)
     void runBatchRegistering(async () => {
+      const importTaskType = resolveBatchTaskTypeForScan(batchScanResult)
       const result = await startBatchImportTask({
         scan_id: batchScanResult?.scan_id,
         select_all_valid: batchSelectAllValid,
@@ -328,11 +416,12 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
         scan_root: batchScanResult?.directory,
-        aggregation_level: batchDataLevel,
-        task_type: batchTaskType,
+        aggregation_level: resolveBatchDataLevelForTask(importTaskType),
+        task_type: importTaskType,
         is_public: batchDatasetMode === 'new' ? batchIsPublic : undefined,
       })
       setBatchImportTaskId(result.task_id)
+      openPanel()
       setBatchSelectedFiles(new Set())
       setBatchExcludedFiles(new Set())
       setBatchSelectAllValid(false)
@@ -730,6 +819,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         setBatchScanPath={setBatchScanPath}
         batchScanResult={batchScanResult}
         batchScanning={batchScanning}
+        batchScanStage={batchScanStage}
         batchScanError={batchScanError}
           batchSelectedCount={batchSelectedCount}
         batchDatasetMode={batchDatasetMode}
@@ -748,7 +838,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         setBatchIsPublic={setBatchIsPublic}
         handleSelectBatchScanDir={handleSelectBatchScanDir}
         handleBatchScan={handleBatchScan}
-          handleBatchScanPageChange={handleBatchScanPageChange}
+        handleCancelBatchScan={handleCancelBatchScan}
+        canCancelBatchScan={Boolean(activeScanTaskId)}
+        handleBatchScanPageChange={handleBatchScanPageChange}
           isBatchFileSelected={isBatchFileSelected}
           handleBatchFileToggle={handleBatchFileToggle}
         handleBatchSelectAll={handleBatchSelectAll}

@@ -1,5 +1,7 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
+import type { DataLevel, TaskType } from '../constants/training'
+import type { GpuStageDetail } from './queue'
 import { apiFetch, buildSearchParams, downloadApiFile, PaginatedResponse } from './client'
 
 // ============================================================================
@@ -28,6 +30,7 @@ export interface TrainingTask {
   finished_at: string | null
   user_id?: string | null  // User ID of task creator
   username?: string | null  // Username of task creator (only for admin users)
+  gpu_stage_detail?: GpuStageDetail | null
 }
 
 /**
@@ -189,13 +192,19 @@ export interface FeatureExtractorListResponse {
 export interface TrainingTaskDeleteResult {
   message: string
   task_id: string
-  storage_cleanup?: {
-    deleted_files: string[]
-    deleted_dirs: string[]
-    failed: [string, string][]
-    total_size: number
-    summary: string
-  }
+  storage_cleanup?:
+    | {
+      status: 'scheduled'
+      mode: string
+      summary: string
+    }
+    | {
+      deleted_files: string[]
+      deleted_dirs: string[]
+      failed: [string, string][]
+      total_size: number
+      summary: string
+    }
 }
 
 /**
@@ -323,14 +332,15 @@ export interface SplitConfig {
   ratios?: { train: number; val: number; test: number }
   manual_splits?: Record<string, string> // map wsi_id -> split
   seed?: number // Random seed for reproducibility (also serves as invisible watermark)
+  stratified?: boolean
 }
 
 export interface TrainingTaskConfig {
   task_id?: string     // Client-generated task_id for fire-and-forget submission
   rerun_from_task_id?: string  // Admin rerun only: preserve owner from source task
   task_name: string
-  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
-  data_type: 'wsi' | 'patch'
+  task_type: TaskType
+  data_type: DataLevel
   task_description: string
   dataset_id?: string  // If provided, wsi_ids are resolved from this dataset on server
   wsi_ids?: string[]   // Optional when dataset_id is provided
@@ -409,4 +419,3 @@ export async function fetchExtractors(): Promise<FeatureExtractor[]> {
   )
   return data.items
 }
-

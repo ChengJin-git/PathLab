@@ -28,7 +28,7 @@ export function listPathScientistSkills(): Promise<PathScientistSkillListRespons
   return apiFetch(
     `${pathScientistBase()}/skills`,
     undefined,
-    'List PathScientist skills',
+    'List AutoResearch skills',
     true
   )
 }
@@ -43,7 +43,7 @@ export function startPathScientistSession(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...input, model: input.model || DEFAULT_MODEL }),
     },
-    'Start PathScientist session'
+    'Start AutoResearch session'
   )
 }
 
@@ -51,7 +51,7 @@ export function listPathScientistSessions(): Promise<PathScientistSessionListRes
   return apiFetch(
     `${pathScientistBase()}/sessions`,
     undefined,
-    'List PathScientist sessions'
+    'List AutoResearch sessions'
   )
 }
 
@@ -59,7 +59,7 @@ export function getPathScientistSession(sessionId: string): Promise<PathScientis
   return apiFetch(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}`,
     undefined,
-    'Get PathScientist session'
+    'Get AutoResearch session'
   )
 }
 
@@ -67,7 +67,7 @@ export function stopPathScientistSession(sessionId: string): Promise<PathScienti
   return apiFetch(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/stop`,
     { method: 'POST' },
-    'Stop PathScientist session'
+    'Stop AutoResearch session'
   )
 }
 
@@ -75,7 +75,7 @@ export function resumePathScientistSession(sessionId: string): Promise<PathScien
   return apiFetch(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/resume`,
     { method: 'POST' },
-    'Resume PathScientist session'
+    'Resume AutoResearch session'
   )
 }
 
@@ -83,7 +83,7 @@ export function deletePathScientistSession(sessionId: string): Promise<DeletePat
   return apiFetch(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}`,
     { method: 'DELETE' },
-    'Delete PathScientist session'
+    'Delete AutoResearch session'
   )
 }
 
@@ -103,7 +103,7 @@ export function mintPathScientistAccessToken(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ purpose: input.purpose, run_id: input.runId || '' }),
     },
-    'Mint PathScientist access token'
+    'Mint AutoResearch access token'
   )
 }
 
@@ -137,9 +137,9 @@ export async function getPathScientistSessionDownloadUrl(sessionId: string): Pro
 export function downloadPathScientistSession(sessionId: string): Promise<{ filename: string }> {
   return downloadApiFile(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/download`,
-    `pathscientist-${sessionId}.zip`,
+    `autoresearch-${sessionId}.zip`,
     undefined,
-    'Download PathScientist session',
+    'Download AutoResearch session',
   )
 }
 
@@ -155,7 +155,7 @@ export async function sharePathScientistSession(sessionId: string): Promise<'cli
   const url = getPathScientistSessionShareUrl(sessionId)
   if (typeof navigator !== 'undefined' && navigator.share) {
     try {
-      await navigator.share({ url, title: 'PathScientist session' })
+      await navigator.share({ url, title: 'AutoResearch session' })
       return 'share'
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {

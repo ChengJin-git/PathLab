@@ -6,14 +6,17 @@ threads do not accidentally reuse a client that was created on a different
 event loop. This is especially important for training code that may bridge
 sync code to async helpers.
 """
+
 import asyncio
 import os
 import logging
 import threading
 import weakref
+from importlib import import_module
 
 import redis.asyncio as aioredis
-from backend.common.config import Config
+
+Config = import_module("backend.common.config").Config
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,9 @@ def _get_running_loop() -> asyncio.AbstractEventLoop:
     try:
         return asyncio.get_running_loop()
     except RuntimeError as exc:
-        raise RuntimeError("get_redis() must be called from within a running event loop") from exc
+        raise RuntimeError(
+            "get_redis() must be called from within a running event loop"
+        ) from exc
 
 
 def _get_pool_for_loop(loop: asyncio.AbstractEventLoop) -> aioredis.ConnectionPool:

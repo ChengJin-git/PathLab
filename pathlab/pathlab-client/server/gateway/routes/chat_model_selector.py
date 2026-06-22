@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from .chat_pdf import split_md_into_pages, tokenize_for_search
+from .chat_pdf_shared import split_md_into_pages, tokenize_for_search
 
 TOP_K_MODELS_IN_CHAT_CONTEXT = 5
 
@@ -200,7 +200,7 @@ def _matches_model_request_filters(
                 model_meta.get("dataset_names", []),
                 model_meta.get("dataset_sources", []),
             ]
-            task_name_str: str = model_meta.get("task_name", "")
+            task_name_str = str(model_meta.get("task_name", ""))
             for kw in expected:
                 kw_lower = kw.lower()
                 in_list = any(
@@ -269,7 +269,8 @@ def _semantic_top_k_models(
 
     try:
         import numpy as np
-        from .chat_pdf_vectorstore import _embed_texts
+
+        _embed_texts = import_module("gateway.routes.chat_pdf_vectorstore")._embed_texts
 
         q_vec = _embed_texts([query_text])[0]
         q_norm = np.linalg.norm(q_vec)

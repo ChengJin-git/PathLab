@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Layers, Brain, Activity } from 'lucide-react'
 import { Card } from '../ui/card'
 import { TaskDetail } from './types'
-import { isSegFmEncoder } from '../../constants/training'
+import { isSegFmEncoder, isSegmentationTask } from '../../constants/training'
 
 interface ConfigurationPanelProps {
   task: TaskDetail
@@ -70,10 +70,23 @@ const formatSplitMethod = (
   return strategy
 }
 
+const formatStratification = (
+  splitConfig: TaskDetail['preprocessing_config']['split_config'],
+  t: ReturnType<typeof useTranslation>['t']
+): string | null => {
+  if (!splitConfig || splitConfig.strategy === 'manual' || typeof splitConfig.stratified !== 'boolean') {
+    return null
+  }
+
+  return splitConfig.stratified
+    ? t('taskDetail.configuration.stratifiedEnabled')
+    : t('taskDetail.configuration.stratifiedDisabled')
+}
+
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
   const { t } = useTranslation()
-  const isExternalValidation = task.task_type === 'external_validation'
-  const isSegmentation = task.task_type === 'segmentation'
+  const isExternalValidation = task.task_id.startsWith('extval_')
+  const isSegmentation = isSegmentationTask(task.task_type)
   const segIsFm = isSegmentation && isSegFmEncoder(task.model_config.backbone)
 
   return (
@@ -181,8 +194,8 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                       </div>
                       <div className="flex justify-between items-center text-[11px] sm:text-sm">
                         <span className="text-gray-500 font-medium">{t('taskDetail.configuration.decoder')}</span>
-                        <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
-                          {t('taskDetail.configuration.convDecoder')}
+                        <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm capitalize">
+                          {t(`training.modelConfig.decoder.${task.model_config.decoder_type || 'conv'}`, (task.model_config.decoder_type || 'conv').toUpperCase())}
                         </span>
                       </div>
                     </>
@@ -221,12 +234,6 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                     <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureBatchSize')}</span>
                     <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                       {task.preprocessing_config.feature_batch_size ?? 'N/A'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
-                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                      {formatSplitMethod(task.preprocessing_config.split_config, t)}
                     </span>
                   </div>
                 </>
@@ -292,6 +299,12 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                 </div>
               )}
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {formatSplitMethod(task.preprocessing_config.split_config, t)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
                 <span className="text-gray-500 font-medium">{t('taskDetail.configuration.learningRate')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.learning_rate ?? 'N/A'}
@@ -314,14 +327,6 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                   <span className="text-gray-500 font-medium">{t('taskDetail.configuration.trainingBatchSize')}</span>
                   <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                     {task.model_config.batch_size ?? 'N/A'}
-                  </span>
-                </div>
-              )}
-              {task.data_type === 'wsi' && (
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {formatSplitMethod(task.preprocessing_config.split_config, t)}
                   </span>
                 </div>
               )}

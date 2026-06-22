@@ -98,9 +98,15 @@ export async function parseErrorResponse(response: Response): Promise<{ message:
   if (contentType?.includes('application/json')) {
     try {
       const json = await response.json()
+      let message: string
+      if (Array.isArray(json.detail)) {
+        message = json.detail.map((e: { msg?: string }) => e.msg ?? String(e)).join('; ')
+      } else {
+        message = json.detail || json.message || json.error || response.statusText
+      }
       return {
-        message: json.detail || json.message || json.error || response.statusText,
-        detail: json.detail
+        message,
+        detail: Array.isArray(json.detail) ? JSON.stringify(json.detail) : json.detail
       }
     } catch {
       return { message: response.statusText }

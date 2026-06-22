@@ -18,17 +18,15 @@ import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal'
 import { getPublicSettings, getPublicMaintenanceNotice, ApiError } from '../api'
 import { MaintenanceNoticeModal } from '../components/MaintenanceNoticeModal'
 import { RegisterRequestModal } from '../components/RegisterRequestModal'
+import pathlabLogo from '../../public/images/pathlab-logo.png'
 
-/**
- * Inner login page component.
- * When turnstileSiteKey is provided, renders a Cloudflare Turnstile widget.
- */
-function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { backendUnavailable?: boolean; turnstileSiteKey?: string }) {
+import { TencentCaptcha } from '../components/TencentCaptcha'
+
+function LoginPageInner({ backendUnavailable = false, captchaProvider, captchaSiteKey }: { backendUnavailable?: boolean; captchaProvider?: 'turnstile' | 'tencent' | null; captchaSiteKey?: string }) {
   const navigate = useNavigate()
   const { login, isLoading, error, isLoggedIn } = useAuth()
   const { t } = useTranslation()
 
-  // Form state
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
@@ -36,10 +34,29 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
   const [isTermsPreviewOpen, setIsTermsPreviewOpen] = React.useState(false)
   const [isPrivacyPreviewOpen, setIsPrivacyPreviewOpen] = React.useState(false)
 
-  // Turnstile state
   const [turnstileToken, setTurnstileToken] = React.useState<string | undefined>(undefined)
   const turnstileRef = React.useRef<HTMLDivElement>(null)
   const turnstileWidgetId = React.useRef<string | null>(null)
+
+  const [tencentTicket, setTencentTicket] = React.useState<string | undefined>(undefined)
+  const [tencentRandstr, setTencentRandstr] = React.useState<string | undefined>(undefined)
+
+  const captchaRequired = Boolean(captchaProvider && captchaSiteKey)
+  const captchaComplete = !captchaRequired || (
+    captchaProvider === 'turnstile'
+      ? Boolean(turnstileToken)
+      : Boolean(tencentTicket && tencentRandstr)
+  )
+
+  const handleTencentVerify = React.useCallback((ticket: string, randstr: string) => {
+    setTencentTicket(ticket)
+    setTencentRandstr(randstr)
+  }, [])
+
+  const resetTencentCaptcha = React.useCallback(() => {
+    setTencentTicket(undefined)
+    setTencentRandstr(undefined)
+  }, [])
 
   // If already logged in, redirect to dashboard
   React.useEffect(() => {
@@ -50,12 +67,12 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
 
   // Load and render Cloudflare Turnstile widget
   React.useEffect(() => {
-    if (!turnstileSiteKey || !turnstileRef.current) return
+    if (captchaProvider !== 'turnstile' || !captchaSiteKey || !turnstileRef.current) return
 
     const renderWidget = () => {
       if (!turnstileRef.current || turnstileWidgetId.current !== null) return
       const widgetId = (window as any).turnstile.render(turnstileRef.current, {
-        sitekey: turnstileSiteKey,
+        sitekey: captchaSiteKey,
         callback: (token: string) => setTurnstileToken(token),
         'expired-callback': () => setTurnstileToken(undefined),
         'error-callback': () => setTurnstileToken(undefined),
@@ -65,13 +82,11 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
       turnstileWidgetId.current = widgetId
     }
 
-    // If Turnstile script is already loaded
     if ((window as any).turnstile) {
       renderWidget()
       return
     }
 
-    // Load Turnstile script
     const script = document.createElement('script')
     script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
     script.async = true
@@ -79,7 +94,6 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
     document.head.appendChild(script)
 
     return () => {
-      // Cleanup widget on unmount
       if (turnstileWidgetId.current !== null && (window as any).turnstile) {
         try {
           (window as any).turnstile.remove(turnstileWidgetId.current)
@@ -87,7 +101,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
         turnstileWidgetId.current = null
       }
     }
-  }, [turnstileSiteKey])
+  }, [captchaProvider, captchaSiteKey])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -98,16 +112,18 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
       return
     }
 
-    const success = await login(username, password, turnstileToken)
+    const success = await login(username, password, turnstileToken, tencentTicket, tencentRandstr)
     if (success) {
       navigate('/dashboard')
     } else {
-      // Reset Turnstile widget after failed login (token is single-use)
-      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+      if (captchaProvider === 'turnstile' && turnstileWidgetId.current !== null && (window as any).turnstile) {
         try {
           (window as any).turnstile.reset(turnstileWidgetId.current)
           setTurnstileToken(undefined)
         } catch { /* ignore */ }
+      } else if (captchaProvider === 'tencent') {
+        setTencentTicket(undefined)
+        setTencentRandstr(undefined)
       }
     }
   }
@@ -136,15 +152,18 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
   ]
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row bg-slate-50 overflow-hidden relative">
+    <div
+      data-testid="login-page-shell"
+      className="relative h-screen overflow-hidden bg-gradient-to-br from-[#eef3fb] via-white to-[#f6f3ff] flex flex-col lg:flex-row"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(47,107,255,0.12),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(118,75,162,0.12),transparent_26%)]" />
 
-      {/* Language Switcher */}
-      <div className="absolute top-3 right-3 z-50">
+      <div className="absolute top-3 right-3 z-50 hidden sm:block">
         <LanguageSwitcher />
       </div>
 
       {/* Left: Login Section */}
-      <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-12 relative bg-white lg:max-w-[480px] xl:max-w-[560px] border-r border-slate-100 z-10 shadow-xl overflow-hidden">
+      <div className="z-10 relative flex-1 overflow-hidden border-r border-white/60 bg-white/88 shadow-[0_28px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl flex flex-col justify-center px-6 py-12 lg:max-w-[480px] lg:px-12 xl:max-w-[560px]">
         {/* Background Decoration */}
         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-cyan-500" />
         <div className="absolute -top-24 -left-24 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl opacity-50" />
@@ -154,7 +173,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
           <div className="mb-10 text-center lg:text-left">
             <div className="flex items-center justify-center lg:justify-start mb-6">
               <img
-                src="/images/pathlab-logo.png"
+                src={pathlabLogo}
                 alt="PathLab"
                 className="h-12 w-auto"
               />
@@ -217,14 +236,21 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
               </div>
             )}
 
-            {/* Cloudflare Turnstile Widget */}
-            {turnstileSiteKey && (
+            {captchaProvider === 'turnstile' && captchaSiteKey && (
               <div ref={turnstileRef} className="w-full" />
+            )}
+            {captchaProvider === 'tencent' && captchaSiteKey && (
+              <TencentCaptcha
+                appId={captchaSiteKey}
+                onVerify={handleTencentVerify}
+                onExpire={resetTencentCaptcha}
+                onError={resetTencentCaptcha}
+              />
             )}
 
             <Button
               type="submit"
-              disabled={isLoading || (!!turnstileSiteKey && !turnstileToken)}
+              disabled={isLoading || !captchaComplete}
               className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
@@ -274,7 +300,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
             </div>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>{turnstileSiteKey ? ` · ${t('common.protectedByTurnstile')}` : ''}
+              © 2026 <a href="https://smartx.ust.hk/" target="_blank" rel="noopener noreferrer">SmartXLab</a>{captchaProvider === 'turnstile' ? ` · ${t('common.protectedByTurnstile')}` : captchaProvider === 'tencent' ? ` · ${t('common.protectedByTencent')}` : ''}
             </p>
           </form>
         </div>
@@ -363,7 +389,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
         </div>
       </div>
 
-      <RegisterRequestModal isOpen={isRegisterOpen} onClose={() => setIsRegisterOpen(false)} turnstileSiteKey={turnstileSiteKey || undefined} />
+      <RegisterRequestModal isOpen={isRegisterOpen} onClose={() => setIsRegisterOpen(false)} captchaProvider={captchaProvider} captchaSiteKey={captchaSiteKey || undefined} />
 
       <DisclaimerModal
         isOpen={isTermsPreviewOpen}
@@ -388,14 +414,11 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
   )
 }
 
-/**
- * LoginPage wrapper that fetches Turnstile settings and passes them down.
- * Turnstile script is only loaded on the login page, not globally.
- */
 const NOTICE_CACHE_KEY = 'pathlab_notice_cache'
 
 export default function LoginPage() {
-  const [turnstileSiteKey, setTurnstileSiteKey] = React.useState<string>('')
+  const [captchaProvider, setCaptchaProvider] = React.useState<'turnstile' | 'tencent' | null>(null)
+  const [captchaSiteKey, setCaptchaSiteKey] = React.useState<string>('')
   const [settingsLoaded, setSettingsLoaded] = React.useState(false)
   const [backendUnavailable, setBackendUnavailable] = React.useState(false)
   const [noticeMessage, setNoticeMessage] = React.useState<string | null>(null)
@@ -404,8 +427,9 @@ export default function LoginPage() {
   React.useEffect(() => {
     getPublicSettings()
       .then((settings) => {
-        if (settings.turnstile_enabled && settings.turnstile_site_key) {
-          setTurnstileSiteKey(settings.turnstile_site_key)
+        if (settings.captcha_provider && settings.captcha_site_key) {
+          setCaptchaProvider(settings.captcha_provider)
+          setCaptchaSiteKey(settings.captcha_site_key)
         }
         setBackendUnavailable(false)
       })
@@ -450,7 +474,7 @@ export default function LoginPage() {
 
   return (
     <>
-      <LoginPageInner backendUnavailable={backendUnavailable} turnstileSiteKey={turnstileSiteKey || undefined} />
+      <LoginPageInner backendUnavailable={backendUnavailable} captchaProvider={captchaProvider} captchaSiteKey={captchaSiteKey || undefined} />
       <MaintenanceNoticeModal
         isOpen={noticeOpen}
         message={noticeMessage ?? ''}

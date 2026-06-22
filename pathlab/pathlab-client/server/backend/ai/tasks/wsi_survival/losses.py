@@ -9,6 +9,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from backend.ai.survival import compute_survival_from_hazards
+
 
 # -----------------------------------------------------------------------------
 # Discrete Survival Loss
@@ -19,53 +21,38 @@ class NLLSurvivalLoss(nn.Module):
 
     Model outputs: Logits for K bins (hazards).
     """
-    def __init__(self, eps=1e-7):
+    def __init__(self, alpha=0.0, eps=1e-7):
         super().__init__()
+        self.alpha = alpha
         self.eps = eps
 
-    def forward(self, logits, y_bin, event):
+    def forward(self, logits, y_bin, event, alpha=None):
         """
         logits: (batch, num_bins) - raw output from model
         y_bin: (batch,) - bin index where event/censoring occurred
         event: (batch,) - 1 if event occurred, 0 if censored
         """
-        # Sigmoid to get hazard probabilities h(t|T>=t)
+        batch_size = len(y_bin)
+        y_bin = y_bin.view(batch_size, 1).long()
+        censored = (1.0 - event.view(batch_size, 1).float()).to(logits.device)
+
+        alpha = self.alpha if alpha is None else alpha
+
         hazards = torch.sigmoid(logits)
+        survival = compute_survival_from_hazards(hazards)
+        survival_padded = torch.cat([torch.ones_like(censored), survival], dim=1)
 
-        # Survival term: log(1 - h)
-        # We want to sum log(1-h) for all bins BEFORE y_bin
-        # Create a mask for bins < y_bin
-        batch_size, num_bins = logits.shape
+        uncensored_loss = -(1 - censored) * (
+            torch.log(torch.gather(survival_padded, 1, y_bin).clamp(min=self.eps))
+            + torch.log(torch.gather(hazards, 1, y_bin).clamp(min=self.eps))
+        )
+        censored_loss = -censored * torch.log(
+            torch.gather(survival_padded, 1, y_bin + 1).clamp(min=self.eps)
+        )
 
-        # Mask of shape (batch, num_bins) where mask[i, j] = 1 if j < y_bin[i]
-        # This represents all the bins the patient SURVIVED through
-        # range_tensor: [0, 1, ..., num_bins-1]
-        range_tensor = torch.arange(num_bins, device=logits.device).unsqueeze(0)
-        y_bin = y_bin.unsqueeze(1)
-
-        survived_mask = (range_tensor < y_bin).float()
-
-        # Event mask: mask[i, j] = 1 if j == y_bin[i] AND event[i] == 1
-        event_mask = (range_tensor == y_bin).float() * event.unsqueeze(1)
-
-        # Loss calculation
-        # 1. Uncensored: log(h_bin) + Sum_{j<bin} log(1 - h_j)
-        # 2. Censored: Sum_{j<bin} log(1 - h_j)  (assuming censored at start of bin)
-
-        # Survival loss term (for all samples)
-        # log(1 - h)
-        surv_loss = survived_mask * torch.log(1 - hazards + self.eps)
-
-        # Event loss term (only for uncensored samples)
-        # log(h)
-        event_loss = event_mask * torch.log(hazards + self.eps)
-
-        # Total log likelihood
-        log_likelihood = surv_loss + event_loss
-
-        # Minimize negative log likelihood
-        loss = -torch.sum(log_likelihood) / batch_size
-        return loss
+        neg_likelihood = censored_loss + uncensored_loss
+        loss = (1 - alpha) * neg_likelihood + alpha * uncensored_loss
+        return loss.mean()
 
 
 # -----------------------------------------------------------------------------
@@ -104,4 +91,3 @@ def calculate_c_index(y_true, y_pred, event):
     except Exception:
         # Fallback if calculation fails (e.g., no comparable pairs)
         return 0.5
-

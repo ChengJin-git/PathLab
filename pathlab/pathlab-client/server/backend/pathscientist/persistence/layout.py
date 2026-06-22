@@ -19,7 +19,7 @@ def get_persistence_root(base_dir: str | Path) -> Path:
     except OSError as exc:
         raise RuntimeError(
             f"Cannot create PathScientist conversation persistence directory at {root}: {exc}. "
-            "Set PATHSCIENTIST_BASE_DIR=/tmp/pathscientist or "
+            "Set PATHSCIENTIST_BASE_DIR=/tmp/autoresearch or "
             "PATHSCIENTIST_PERSISTENCE_DIR to a writable location."
         ) from exc
     return root

@@ -32,7 +32,7 @@ interface AuthContextType {
   needsMaintenanceAcknowledgment: boolean  // User needs to acknowledge maintenance notice
 
   // Actions
-  login: (username: string, password: string, turnstileToken?: string) => Promise<boolean>
+  login: (username: string, password: string, turnstileToken?: string, tencentCaptchaTicket?: string, tencentCaptchaRandstr?: string) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
   refreshDatasetGrants: () => Promise<void>  // Refresh elevated dataset grants
@@ -139,12 +139,12 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
   }, [])
 
   // Login with username and password
-  const login = useCallback(async (username: string, password: string, turnstileToken?: string): Promise<boolean> => {
+  const login = useCallback(async (username: string, password: string, turnstileToken?: string, tencentCaptchaTicket?: string, tencentCaptchaRandstr?: string): Promise<boolean> => {
     try {
       setIsLoading(true)
       setError(null)
 
-      await loginWithCredentials(username, password, turnstileToken)
+      await loginWithCredentials(username, password, turnstileToken, tencentCaptchaTicket, tencentCaptchaRandstr)
       queryClient.clear()
 
       // Refresh user info after successful login

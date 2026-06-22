@@ -9,7 +9,8 @@ import { invalidateRecentActivityCache } from './stats'
 
 export interface AuthUser {
   id: string
-  email: string
+  username: string
+  email?: string | null
   nickname?: string
   avatar_url?: string
   role: 'admin' | 'pathologist' | 'guest'
@@ -71,11 +72,12 @@ export interface UserInfoResponse {
 }
 
 export interface RegisterRequest {
-  email: string
+  username: string
   password: string
   nickname?: string
-  role?: 'pathologist' | 'guest'
+  role?: 'guest'
   registration_email?: string
+  email?: string
 }
 
 export interface AccessRequest {
@@ -84,6 +86,8 @@ export interface AccessRequest {
   registration_email: string
   nickname?: string
   turnstile_token?: string
+  tencent_captcha_token?: string
+  tencent_captcha_randstr?: string
 }
 
 export interface CurrentUserUpdateRequest {
@@ -104,7 +108,7 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
 }
 
 /**
- * Login with email and password using secure client-side hashing.
+ * Login with username and password using secure client-side hashing.
  *
  * Security features:
  * - Password is never transmitted in plaintext
@@ -112,7 +116,7 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
  * - Timestamp validation on server prevents replay attacks (5 minute window)
  * - Rainbow table attacks are mitigated by timestamp + salt
  *
- * @param username - Username (stored in email field internally)
+ * @param username - Username
  * @param password - User password
  * @param turnstileToken - Optional Cloudflare Turnstile token
  * @returns JWT access token
@@ -121,18 +125,14 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
 export async function loginWithCredentials(
   username: string,
   password: string,
-  turnstileToken?: string
+  turnstileToken?: string,
+  tencentCaptchaTicket?: string,
+  tencentCaptchaRandstr?: string
 ): Promise<LoginResponse> {
-  // Step 1: Compute SHA256(password)
   const passwordHash = await sha256(password)
-
-  // Step 2: Get current timestamp in milliseconds
   const timestamp = Date.now()
-
-  // Step 3: Compute SHA256(passwordHash + timestamp + APP_SALT)
   const hashedCredential = await sha256(passwordHash + timestamp + APP_SALT)
 
-  // Step 4: Send secure login request
   const response = await apiFetch<LoginResponse>(
     `${API_BASE}/auth/secure-login`,
     {
@@ -142,7 +142,9 @@ export async function loginWithCredentials(
         username,
         hashed_password: hashedCredential,
         timestamp,
-        turnstile_token: turnstileToken
+        turnstile_token: turnstileToken,
+        tencent_captcha_token: tencentCaptchaTicket,
+        tencent_captcha_randstr: tencentCaptchaRandstr
       })
     },
     'Login failed'
@@ -261,4 +263,3 @@ export async function updateCurrentUser(data: CurrentUserUpdateRequest): Promise
     'Failed to update user'
   )
 }
-

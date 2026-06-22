@@ -91,6 +91,31 @@ class AIResultRepository(BaseRepository[AIResult]):
         return result.scalar_one()
 
     @staticmethod
+    async def get_by_task_paginated(
+        db: AsyncSession,
+        task_id: str,
+        skip: int = 0,
+        limit: Optional[int] = 100,
+    ) -> List[AIResult]:
+        query = (
+            select(AIResult)
+            .where(AIResult.task_id == task_id)
+            .order_by(AIResult.created_at.asc())
+            .offset(skip)
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def count_by_task(db: AsyncSession, task_id: str) -> int:
+        result = await db.execute(
+            select(func.count(AIResult.id)).where(AIResult.task_id == task_id)
+        )
+        return result.scalar_one()
+
+    @staticmethod
     async def delete_by_task_id(db: AsyncSession, task_id: str) -> int:
         """Delete all AI results for a given task_id.
 

@@ -149,6 +149,7 @@ class WSISurvivalTrainRequest(BaseModel):
     task_id: str
     epochs: int = 30
     lr: float = 0.0002
+    weight_decay: float = 1e-5
     aggregator: str = "abmil"
     feature_extractor: str = "resnet50"
     num_bins: int = 4
@@ -177,6 +178,7 @@ class PatchSegmentationTrainRequest(BaseModel):
     task_id: str
     architecture: str = "unet"
     backbone: str = "resnet50"
+    decoder_type: Optional[str] = None
     loss_names: List[str] = ["DiceLoss", "JaccardLoss"]
     loss_weights: List[float] = [0.5, 0.5]
     epochs: int = 50

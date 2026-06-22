@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3 } from 'lucide-react'
+import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3, Download, Table2, Cpu } from 'lucide-react'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
@@ -21,17 +21,21 @@ import {
   markTrainingSubmissionCreated,
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
+  type TrainingSubmissionState,
 } from '../lib/trainingSubmissionTracker'
 import { formatDateTime } from '../lib/utils'
+import { getBatchInferenceSummary, getBatchInferenceResults, exportBatchInferenceCsv } from '../api/batchInference'
+import type { BatchInferenceSummary, BatchInferenceResult } from '../api/batchInference'
+import { isCanonicalTaskType, isSegmentationTask } from '../constants/training'
 
 const makeSyntheticTask = (
   taskId: string,
-  options?: { taskName?: string; status?: TaskDetail['status']; errorMessage?: string }
+  options?: { taskName?: string; status?: TaskDetail['status']; errorMessage?: string; dataType?: TaskDetail['data_type'] }
 ): TaskDetail => ({
   task_id: taskId,
   task_name: options?.taskName || taskId,
-  task_type: 'classification',
-  data_type: 'wsi',
+  task_type: 'wsi_classification',
+  data_type: options?.dataType || 'wsi',
   task_description: '',
   status: options?.status || 'creating',
   progress: 0,
@@ -73,6 +77,16 @@ const makeSyntheticCancelledLogEntry = (taskId: string, message: string): LogEnt
   sequence: -3,
   created_at: new Date().toISOString(),
 })
+
+const isExternalValidationTaskId = (taskId: string | undefined): boolean => Boolean(taskId?.startsWith('extval_'))
+
+const shouldWaitForTaskCreation = (taskId: string, state: TrainingSubmissionState | undefined): boolean => {
+  if (isExternalValidationTaskId(taskId)) {
+    return state === 'pending'
+  }
+  return state === 'pending' || state === 'created'
+}
+
 export default function TaskDetailPage() {
   const { t } = useTranslation()
   const { task_id } = useParams<{ task_id: string }>()
@@ -91,6 +105,13 @@ export default function TaskDetailPage() {
   const [copySuccess, setCopySuccess] = useState(false)
   const [cancelling, runCancelling] = useAsyncAction()
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [batchSummary, setBatchSummary] = useState<BatchInferenceSummary | null>(null)
+  const [batchResults, setBatchResults] = useState<BatchInferenceResult[]>([])
+  const [batchResultsTotal, setBatchResultsTotal] = useState(0)
+  const [batchResultsPage, setBatchResultsPage] = useState(0)
+  const batchResultsLimit = 50
+  const [batchResultsLoading, setBatchResultsLoading] = useState(false)
+  const [batchExporting, setBatchExporting] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsContainerRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -228,6 +249,28 @@ export default function TaskDetailPage() {
     }
   }, [task_id, task?.task_id])
 
+  // Load batch inference data when task is batch_inference type
+  useEffect(() => {
+    if (!task || task.task_type !== 'batch_inference') return
+    const loadBatchData = async () => {
+      setBatchResultsLoading(true)
+      try {
+        const [summary, results] = await Promise.all([
+          getBatchInferenceSummary(task.task_id),
+          getBatchInferenceResults(task.task_id, batchResultsPage * batchResultsLimit, batchResultsLimit),
+        ])
+        setBatchSummary(summary)
+        setBatchResults(results.items)
+        setBatchResultsTotal(results.total)
+      } catch (error) {
+        console.error('Failed to load batch inference data:', error)
+      } finally {
+        setBatchResultsLoading(false)
+      }
+    }
+    void loadBatchData()
+  }, [task?.task_id, task?.task_type, task?.status, batchResultsPage, batchResultsLimit])
+
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
     // Use requestAnimationFrame to ensure DOM has been painted
@@ -240,6 +283,14 @@ export default function TaskDetailPage() {
 
   const loadTaskDetail = async () => {
     if (!task_id) return
+
+    const tracked = getTrainingSubmissionRecord(task_id)
+    if (isExternalValidationTaskId(task_id) && tracked?.state === 'pending') {
+      setLoading(false)
+      setCreationIssue(null)
+      setWaitingForCreation(true)
+      return
+    }
 
     setLoading(true)
     try {
@@ -259,17 +310,20 @@ export default function TaskDetailPage() {
           setCreationIssue(trackedIssue)
           setCreationSlow(false)
           setWaitingForCreation(false)
-        } else if (tracked?.state === 'pending' || tracked?.state === 'created') {
+        } else if (shouldWaitForTaskCreation(task_id, tracked?.state)) {
           setCreationIssue(null)
           setWaitingForCreation(true)
         } else {
+          if (isExternalValidationTaskId(task_id) && tracked?.state === 'created') {
+            clearTrainingSubmissionRecord(task_id)
+          }
           setCreationIssue(null)
           setWaitingForCreation(false)
         }
       } else {
         console.error('Failed to load task detail:', error)
         const tracked = getTrainingSubmissionRecord(task_id)
-        if (tracked?.state === 'pending' || tracked?.state === 'created') {
+        if (shouldWaitForTaskCreation(task_id, tracked?.state)) {
           setCreationIssue(null)
           setWaitingForCreation(true)
         }
@@ -282,6 +336,11 @@ export default function TaskDetailPage() {
   // Poll for task creation when task is not found yet (fire-and-forget submission)
   useEffect(() => {
     if (!waitingForCreation || !task_id || task) return
+
+    const tracked = getTrainingSubmissionRecord(task_id)
+    if (isExternalValidationTaskId(task_id) && tracked?.state === 'pending') {
+      return
+    }
 
     let attempts = 0
     const intervalId = setInterval(async () => {
@@ -326,13 +385,15 @@ export default function TaskDetailPage() {
 
     // Use the same i18n key strategy as TaskListPage for consistency
     let label: string
-    if (taskType === 'external_validation') {
-      if (status === 'patching') label = t('taskList.progress.patching')
+    if (isExternalValidationTaskId(task_id)) {
+      if (status === 'creating') label = t('taskList.progress.creatingTask')
+      else if (status === 'patching') label = t('taskList.progress.patching')
       else if (status === 'extracting') label = t('taskList.progress.extracting')
       else if (status === 'training') label = t('taskList.progress.testing')
       else label = t(`backgroundTask.serverStatus.validation.${status}`, { defaultValue: badge.label })
     } else {
-      if (status === 'patching') label = t('taskList.progress.patching')
+      if (status === 'creating') label = t('taskList.progress.creatingTask')
+      else if (status === 'patching') label = t('taskList.progress.patching')
       else if (status === 'extracting') label = t('taskList.progress.extracting')
       else if (status === 'training') label = t('taskList.progress.training')
       else label = t(`backgroundTask.serverStatus.training.${status}`, { defaultValue: badge.label })
@@ -357,7 +418,7 @@ export default function TaskDetailPage() {
   const handleRerun = async () => {
     setRerunError(null)
 
-    if (task?.task_type === 'external_validation') {
+    if (task && isExternalValidationTaskId(task.task_id)) {
       const modelId = task.model_config?.model_id
       const datasetId = task.model_config?.dataset_id
       if (!modelId || !datasetId) {
@@ -366,15 +427,26 @@ export default function TaskDetailPage() {
       }
       setRerunning(true)
       try {
-        const result = await startExternalValidation(
+        const syntheticTaskId = `extval_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
+        markTrainingSubmissionPending(syntheticTaskId, `${task.task_name} (rerun)`, task.data_type)
+        navigate(`/task/${syntheticTaskId}`)
+
+        void startExternalValidation(
           modelId,
           datasetId,
-          (task.model_config as any)?.analysis_metrics,
-          (task.model_config as any)?.analysis_charts,
-          ((task.model_config as any)?.bootstrap_ci_metrics?.length ?? 0) > 0,
+          task.model_config.analysis_metrics,
+          task.model_config.analysis_charts,
+          (task.model_config.bootstrap_ci_metrics?.length ?? 0) > 0,
           isAdmin ? task.task_id : undefined
-        )
-        navigate(`/task/${result.task_id}`)
+        ).then(result => {
+          clearTrainingSubmissionRecord(syntheticTaskId)
+          markTrainingSubmissionCreated(result.task_id)
+          navigate(`/task/${result.task_id}`, { replace: true })
+        }).catch((error: any) => {
+          const message = error?.message || error?.detail || String(error)
+          markTrainingSubmissionFailed(syntheticTaskId, message)
+          console.error('Failed to rerun external validation in background:', error)
+        })
       } catch (error: any) {
         const errMsg = error?.message || error?.detail || String(error)
         const parsed = parseTaskError(errMsg)
@@ -389,10 +461,21 @@ export default function TaskDetailPage() {
       return
     }
 
+    if (task?.task_type === 'batch_inference') {
+      setRerunError(t('taskDetail.rerunErrorGeneric'))
+      return
+    }
+
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
       setRerunError(t('taskDetail.rerunErrorMissingWsi'))
       return
     }
+
+    if (!isCanonicalTaskType(task.task_type)) {
+      setRerunError(t('taskDetail.rerunErrorGeneric'))
+      return
+    }
+    const canonicalTaskType = task.task_type
 
     if (!task.preprocessing_config || !task.model_config) {
       setRerunError(t('taskDetail.rerunErrorMissingConfig'))
@@ -402,12 +485,12 @@ export default function TaskDetailPage() {
     setRerunning(true)
     try {
       const taskId = `train_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
-      markTrainingSubmissionPending(taskId, `${task.task_name} (rerun)`)
+      markTrainingSubmissionPending(taskId, `${task.task_name} (rerun)`, task.data_type)
       void createTrainingTask({
         task_id: taskId,
         rerun_from_task_id: isAdmin ? task.task_id : undefined,
         task_name: `${task.task_name} (rerun)`,
-        task_type: task.task_type,
+        task_type: canonicalTaskType,
         data_type: task.data_type,
         task_description: task.task_description,
         wsi_ids: task.wsi_ids,
@@ -432,6 +515,7 @@ export default function TaskDetailPage() {
         model: {
           aggregator: task.model_config.aggregator ?? 'abmil',
           backbone: task.model_config.backbone,  // For patch-level tasks
+          classifier: task.model_config.classifier,
           learning_rate: task.model_config.learning_rate ?? 0.0001,
           epochs: task.model_config.epochs ?? 10,
           optimizer: task.model_config.optimizer ?? 'adam',
@@ -439,7 +523,7 @@ export default function TaskDetailPage() {
           auto_balance: task.model_config.auto_balance ?? false,
           early_stopping_patience: task.model_config.early_stopping_patience,
           // Segmentation-specific fields
-          ...(task.task_type === 'segmentation' ? {
+          ...(isSegmentationTask(task.task_type) ? {
             architecture: task.model_config.architecture,
             loss_names: task.model_config.loss_names,
             loss_weights: task.model_config.loss_weights,
@@ -500,6 +584,7 @@ export default function TaskDetailPage() {
       taskName: trackedSubmission?.taskName,
       status: syntheticStatus,
       errorMessage: creationIssue?.message,
+      dataType: (trackedSubmission?.dataType as TaskDetail['data_type']) ?? 'wsi',
     })
     : task
 
@@ -529,7 +614,9 @@ export default function TaskDetailPage() {
   }
 
   const isPatchLevel = displayTask.data_type === 'patch'
-  const isExternalValidation = displayTask.task_type === 'external_validation'
+  const isExternalValidation = isExternalValidationTaskId(displayTask.task_id)
+  const isBatchInference = displayTask.task_type === 'batch_inference'
+  const batchTaskType = batchSummary?.task_type ?? ''
 
   // Display task progress directly in the standard 0-100 range.
   const displayProgress = displayTask.status === 'completed'
@@ -542,10 +629,11 @@ export default function TaskDetailPage() {
       <div className="mb-4 sm:mb-6">
         <Button
           variant="ghost"
+          type="button"
           onClick={() => navigate(fromAIChat ? '/dashboard' : '/task-list')}
           className="mb-1 sm:mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-500 text-xs sm:text-base"
         >
-          <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg aria-hidden="true" className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
           {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.tasks')}
@@ -561,7 +649,7 @@ export default function TaskDetailPage() {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {getStatusBadge(displayTask.status, displayTask.task_type)}
-            {displayTask.status === 'completed' && (
+            {displayTask.status === 'completed' && !isBatchInference && (
               <Button
                 variant="default"
                 onClick={() => {
@@ -574,7 +662,27 @@ export default function TaskDetailPage() {
                 {t('taskDetail.viewAnalysis')}
               </Button>
             )}
-            {!waitingForCreation && (task?.status === 'failed' || task?.status === 'cancelled') && (
+            {isBatchInference && displayTask.status === 'completed' && (
+              <Button
+                variant="default"
+                onClick={async () => {
+                  setBatchExporting(true)
+                  try {
+                    await exportBatchInferenceCsv(displayTask.task_id)
+                  } catch (e) {
+                    console.error('Export failed:', e)
+                  } finally {
+                    setBatchExporting(false)
+                  }
+                }}
+                disabled={batchExporting}
+                className="flex items-center gap-2 h-9 px-4 rounded-full font-bold shadow-sm transition-all bg-purple-600 hover:bg-purple-700 text-white"
+              >
+                {batchExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {t('taskDetail.batchInference.exportCsv')}
+              </Button>
+            )}
+            {!waitingForCreation && !isBatchInference && (task?.status === 'failed' || task?.status === 'cancelled') && (
               <Button
                 variant="outline"
                 onClick={handleRerun}
@@ -628,7 +736,7 @@ export default function TaskDetailPage() {
               <AlertCircle className="w-4 h-4" />
               {rerunError}
             </span>
-            <button onClick={() => setRerunError(null)} className="ml-2 text-red-400 hover:text-red-600">
+            <button type="button" onClick={() => setRerunError(null)} className="ml-2 text-red-400 hover:text-red-600">
               <XCircle className="w-4 h-4" />
             </button>
           </div>
@@ -636,13 +744,14 @@ export default function TaskDetailPage() {
       </div>
 
       {/* Task Info Grid */}
-      <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
+      <Card surface="elevated" className="overflow-hidden border-[color:var(--surface-border)] p-4 shadow-[var(--shadow-elevated)] sm:p-6">
         <div className={`grid grid-cols-2 ${isAdmin && displayTask.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
           <div className="min-w-0">
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.taskId')}</div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.taskId')}</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
-              <div className="font-mono text-[11px] sm:text-sm font-bold text-gray-700 truncate">{displayTask.task_id}</div>
+              <div className="truncate font-mono text-[11px] font-bold text-slate-700 sm:text-sm">{displayTask.task_id}</div>
               <button
+                type="button"
                 onClick={() => {
                   if (navigator.clipboard && navigator.clipboard.writeText) {
                       navigator.clipboard.writeText(displayTask.task_id)
@@ -660,40 +769,42 @@ export default function TaskDetailPage() {
                   setCopySuccess(true)
                   setTimeout(() => setCopySuccess(false), 2000)
                 }}
-                className="p-1 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-all shrink-0"
+                  className="shrink-0 rounded-md p-1 text-slate-400 transition-all hover:bg-[color:var(--surface-muted)] hover:text-slate-900"
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </button>
             </div>
-            {copySuccess && (
-              <div className="text-[9px] text-green-600 font-bold mt-1">{t('taskDetail.copied')}</div>
-            )}
+              {copySuccess && (
+                <div className="mt-1 whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold leading-none text-emerald-700 shadow-sm">
+                  {t('taskDetail.copied')}
+                </div>
+              )}
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">
               {t('taskDetail.data')}
             </div>
             <div className="flex items-end gap-1.5">
-                  <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{displayTask.wsi_count}</span>
-                  <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{displayTask.data_type === 'patch' ? t('taskDetail.patches') : t('taskDetail.slides')}</span>
+                  <span className="text-lg font-semibold leading-none tracking-[-0.04em] text-slate-950 sm:text-2xl">{displayTask.wsi_count}</span>
+                  <span className="mb-0.5 text-[10px] font-medium text-slate-500 sm:text-xs">{displayTask.data_type === 'patch' ? t('taskDetail.patches') : t('taskDetail.slides')}</span>
             </div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.created')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.created_at)}</div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.created')}</div>
+            <div className="truncate text-xs font-bold text-slate-700 sm:text-sm">{formatDateTime(displayTask.created_at)}</div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.updated')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.updated_at)}</div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.updated')}</div>
+            <div className="truncate text-xs font-bold text-slate-700 sm:text-sm">{formatDateTime(displayTask.updated_at)}</div>
           </div>
           {isAdmin && displayTask.username && (
             <div>
-              <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.creator')}</div>
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.creator')}</div>
               <div className="flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-gray-400" />
-                <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={displayTask.username}>{displayTask.username}</div>
+                <User className="h-3.5 w-3.5 text-slate-400" />
+                <div className="truncate text-xs font-bold text-slate-700 sm:text-sm" title={displayTask.username}>{displayTask.username}</div>
               </div>
             </div>
           )}
@@ -782,15 +893,169 @@ export default function TaskDetailPage() {
         </Card>
       )}
 
-      {/* Live Logs */}
-      <LogViewer
-        logs={logs}
-        logsContainerRef={logsContainerRef}
-        logsEndRef={logsEndRef}
-      />
+      {!isBatchInference && (
+        <LogViewer
+          logs={logs}
+          logsContainerRef={logsContainerRef}
+          logsEndRef={logsEndRef}
+        />
+      )}
 
-      {/* Configuration */}
-      {task && !waitingForCreation && <ConfigurationPanel task={task} />}
+      {task && !waitingForCreation && !isBatchInference && <ConfigurationPanel task={task} />}
+
+      {isBatchInference && (
+        <div className="space-y-4">
+          {batchSummary && (
+            <Card className="p-4 sm:p-6 border-purple-100 shadow-sm">
+              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-purple-500" />
+                {t('taskDetail.batchInference.summary')}
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{t('taskDetail.batchInference.totalSlides')}</div>
+                  <div className="text-2xl font-bold text-gray-900">{batchSummary.total_slides}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{t('taskDetail.batchInference.processedSlides')}</div>
+                  <div className="text-2xl font-bold text-purple-600">{batchSummary.processed_slides}</div>
+                </div>
+                {batchSummary.class_distribution && Object.keys(batchSummary.class_distribution).length > 0 && (
+                  <div className="col-span-2">
+                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{t('taskDetail.batchInference.classDistribution')}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(batchSummary.class_distribution).map(([cls, count]) => (
+                        <span key={cls} className="px-2 py-1 bg-purple-50 border border-purple-200 rounded-md text-xs font-medium text-purple-700">
+                          {cls}: {count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
+          <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2">
+                <Table2 className="w-4 h-4 text-gray-400" />
+                {t('taskDetail.batchInference.results')}
+                {batchResultsTotal > 0 && (
+                  <span className="text-gray-400 font-normal normal-case text-xs">({batchResultsTotal})</span>
+                )}
+              </h3>
+            </div>
+            {batchResultsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+              </div>
+            ) : batchResults.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-sm">{t('taskDetail.batchInference.noResults')}</div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.slideId')}</th>
+                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.filename')}</th>
+                        {batchTaskType.includes('classification') && (
+                          <>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.prediction')}</th>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.confidence')}</th>
+                          </>
+                        )}
+                        {batchTaskType.includes('survival') && (
+                          <>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.riskScore')}</th>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.riskGroup')}</th>
+                          </>
+                        )}
+                        {batchTaskType.includes('segmentation') && (
+                          <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.predictionMask')}</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchResults.map((result, idx) => {
+                        const topProb = result.probs
+                          ? Math.max(...Object.values(result.probs))
+                          : null
+                        const riskScore = result.metadata?.risk_score != null
+                          ? Number(result.metadata.risk_score).toFixed(3)
+                          : '—'
+                        const riskGroup = result.metadata?.risk_group != null
+                          ? String(result.metadata.risk_group)
+                          : '—'
+                        const maskGenerated = result.metadata?.pred_mask_path || result.metadata?.pred_mask_file
+                          ? t('taskDetail.batchInference.maskGenerated')
+                          : t('taskDetail.batchInference.maskMissing')
+                        return (
+                          <tr key={result.wsi_id || idx} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                            <td className="py-2 px-3 font-mono text-xs text-gray-600 truncate max-w-[120px]" title={result.wsi_id}>{result.wsi_id}</td>
+                            <td className="py-2 px-3 text-gray-700 truncate max-w-[200px]" title={result.original_filename ?? ''}>{result.original_filename ?? '—'}</td>
+                            {batchTaskType.includes('classification') && (
+                              <>
+                                <td className="py-2 px-3">
+                                  {result.pred ? (
+                                    <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs font-medium text-purple-700">{result.pred}</span>
+                                  ) : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-gray-700 text-xs">
+                                  {topProb !== null ? `${(topProb * 100).toFixed(1)}%` : '—'}
+                                </td>
+                              </>
+                            )}
+                            {batchTaskType.includes('survival') && (
+                              <>
+                                <td className="py-2 px-3 text-gray-700 text-xs">{riskScore}</td>
+                                <td className="py-2 px-3 text-gray-700 text-xs">{riskGroup}</td>
+                              </>
+                            )}
+                            {batchTaskType.includes('segmentation') && (
+                              <td className="py-2 px-3 text-gray-700 text-xs">{maskGenerated}</td>
+                            )}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {batchResultsTotal > batchResultsLimit && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                    <span className="text-xs text-gray-400">
+                      {t('taskDetail.batchInference.showing', {
+                        start: batchResultsPage * batchResultsLimit + 1,
+                        end: Math.min((batchResultsPage + 1) * batchResultsLimit, batchResultsTotal),
+                        total: batchResultsTotal,
+                      })}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBatchResultsPage(p => Math.max(0, p - 1))}
+                        disabled={batchResultsPage === 0}
+                        className="px-3 py-1 text-xs font-medium border border-gray-200 rounded-md disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                      >
+                        {t('taskDetail.batchInference.previous')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBatchResultsPage(p => p + 1)}
+                        disabled={(batchResultsPage + 1) * batchResultsLimit >= batchResultsTotal}
+                        className="px-3 py-1 text-xs font-medium border border-gray-200 rounded-md disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                      >
+                        {t('taskDetail.batchInference.next')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        </div>
+      )}
 
       {/* Cancel Confirmation Modal */}
       {showCancelConfirm && (

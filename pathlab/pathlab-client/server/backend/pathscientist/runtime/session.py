@@ -3,13 +3,31 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from ..persistence.layout import get_persistence_root
 
 
-DEFAULT_BASE_DIR = str(Path(__file__).resolve().parents[4] / "uploads" / "pathscientist")
+def _default_base_dir() -> Path:
+    try:
+        config_module = import_module("backend.common.config")
+        return config_module.Config.get_autoresearch_dir()
+    except Exception:
+        env_uploads = os.environ.get("PATHLAB_UPLOADS_DIR", "")
+        if env_uploads:
+            return Path(env_uploads).expanduser() / "autoresearch"
+        return Path(__file__).resolve().parents[4] / "uploads" / "autoresearch"
+
+
+DEFAULT_BASE_DIR = str(_default_base_dir())
+
+
+def _session_workspace_root(base: Path) -> Path:
+    if base.name == "autoresearch_sessions":
+        return base
+    return base / "autoresearch_sessions"
 
 
 def _resolve_base_dir(
@@ -28,17 +46,20 @@ def _resolve_base_dir(
         return Path(conversation_persistence_dir).expanduser()
     if workspace_dir:
         return Path(workspace_dir).expanduser().parent / ".pathscientist"
-    return Path(DEFAULT_BASE_DIR)
+    return _default_base_dir().expanduser()
 
 
 def _mkdir_or_explain(path: Path, *, purpose: str) -> None:
     try:
         path.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise RuntimeError(
+        message = (
             f"Cannot create PathScientist {purpose} directory at {path}: {exc}. "
-            "Set PATHSCIENTIST_BASE_DIR=/tmp/pathscientist or pass --workspace "
-            "and --output to writable locations."
+            + "Set PATHSCIENTIST_BASE_DIR=/tmp/autoresearch or pass --workspace "
+            + "and --output to writable locations."
+        )
+        raise RuntimeError(
+            message
         ) from exc
 
 
@@ -85,7 +106,7 @@ class PathScientistSession:
         if workspace_dir:
             ws = Path(workspace_dir)
         else:
-            ws = base / f"session_{session_id}"
+            ws = _session_workspace_root(base) / f"session_{session_id}"
 
         _mkdir_or_explain(ws, purpose="workspace")
 

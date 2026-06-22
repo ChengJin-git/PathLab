@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 # Import default transforms from extractors module
 from backend.ai.extractors.transforms import get_default_transforms
-from backend.preprocessing.tiling import safe_load_h5_coords
+from backend.preprocessing.coords_utils import safe_load_h5_coords
 
 logger = logging.getLogger(__name__)
 

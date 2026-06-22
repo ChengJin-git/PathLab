@@ -29,6 +29,19 @@ export interface ExportTaskStatus {
 }
 
 /**
+ * Analysis full export task status
+ */
+export interface AnalysisFullExportTaskStatus {
+  task_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+  progress: number
+  error_message: string | null
+  created_at: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+/**
  * Start async export of feedbacks (admin only)
  * Use this for large datasets to avoid blocking
  * @param format - Export format ('json' or 'csv')
@@ -89,3 +102,70 @@ export async function downloadExportFile(taskId: string): Promise<Blob> {
   )
 }
 
+// ============================================================================
+// Analysis Full Export APIs (async zip for segmentation)
+// ============================================================================
+
+/**
+ * Start async full export of analysis results (segmentation zip)
+ * @param taskId - Training task ID
+ * @param analysisId - Analysis ID
+ * @returns Export task ID for polling status
+ * @throws {ApiError} If the request fails
+ */
+export async function startAnalysisFullExport(
+  taskId: string,
+  analysisId: string
+): Promise<{ task_id: string; status: string }> {
+  return apiFetch(
+    `${API_BASE}/results/tasks/${taskId}/analysis/${analysisId}/full-export`,
+    { method: 'POST' },
+    'Failed to start analysis full export'
+  )
+}
+
+/**
+ * Get analysis full export task status
+ * @param exportTaskId - Export task ID
+ * @returns Task status with progress
+ * @throws {ApiError} If the request fails
+ */
+export async function getAnalysisFullExportStatus(
+  exportTaskId: string
+): Promise<AnalysisFullExportTaskStatus> {
+  return apiFetch(
+    `${API_BASE}/results/analysis/full-export/${exportTaskId}`,
+    undefined,
+    'Failed to get analysis full export status'
+  )
+}
+
+/**
+ * Download analysis full export zip file
+ * @param exportTaskId - Export task ID
+ * @returns Blob with zip content
+ * @throws {ApiError} If the request fails or export not ready
+ */
+export async function downloadAnalysisFullExportFile(exportTaskId: string): Promise<Blob> {
+  return apiFetchBlob(
+    `${API_BASE}/results/analysis/full-export/${exportTaskId}/download`,
+    undefined,
+    'Failed to download analysis full export file'
+  )
+}
+
+/**
+ * Cancel an in-progress analysis full export task.
+ * @param exportTaskId - Export task ID
+ * @returns Cancellation result
+ * @throws {ApiError} If the request fails or export can no longer be cancelled
+ */
+export async function cancelAnalysisFullExport(
+  exportTaskId: string
+): Promise<{ cancelled: boolean; status: 'cancelled' }> {
+  return apiFetch(
+    `${API_BASE}/results/analysis/full-export/${exportTaskId}`,
+    { method: 'DELETE' },
+    'Failed to cancel analysis full export'
+  )
+}

@@ -54,6 +54,14 @@ echo ""
 
 mkdir -p "$LOG_DIR"
 
+if systemctl is-active --quiet pathlab 2>/dev/null; then
+    echo -e "${RED}[✗]${NC} 检测到 systemd 服务 pathlab 正在运行。"
+    echo -e "    当前端口 6100/6101/6102 已被 systemd 管理的后端占用，deploy/start.sh 无法安全接管。"
+    echo -e "    请先执行: sudo systemctl stop pathlab"
+    echo -e "    或者更新 systemd 的 PATHLAB_UPLOADS_DIR 后继续使用 systemd。"
+    exit 1
+fi
+
 # ========== Step 1: 停止旧进程 ==========
 echo -e "${YELLOW}[1/5]${NC} 停止旧进程..."
 
@@ -69,11 +77,71 @@ kill_by_port() {
     fi
 }
 
+kill_server_main_processes() {
+    local server_dir="$1"
+    local pids
+    pids=$(pgrep -f "python[0-9]* .*main\.py" 2>/dev/null || true)
+    if [ -z "$pids" ]; then
+        return
+    fi
+
+    for pid in $pids; do
+        [ -d "/proc/$pid" ] || continue
+        local cwd=""
+        cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)
+        if [ "$cwd" = "$server_dir" ]; then
+            echo "  清理 server/main.py 进程树 (PID: $pid)"
+            pkill -9 -P "$pid" 2>/dev/null || true
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+}
+
+listener_pids_for_port() {
+    local port="$1"
+    ss -tlnp 2>/dev/null | sed -n "s/.*:${port} .*pid=\([0-9]\+\).*/\1/p" | sort -u
+}
+
+is_descendant_of() {
+    local pid="$1"
+    local ancestor="$2"
+    while [ -n "$pid" ] && [ "$pid" != "0" ]; do
+        if [ "$pid" = "$ancestor" ]; then
+            return 0
+        fi
+        [ -r "/proc/$pid/status" ] || break
+        pid=$(awk '/^PPid:/ {print $2}' "/proc/$pid/status" 2>/dev/null)
+    done
+    return 1
+}
+
+current_run_owns_ports() {
+    local root_pid="$1"
+    local port pid found
+    for port in 6100 6101 6102; do
+        found=false
+        while read -r pid; do
+            [ -n "$pid" ] || continue
+            found=true
+            if ! is_descendant_of "$pid" "$root_pid"; then
+                return 1
+            fi
+        done < <(listener_pids_for_port "$port")
+        [ "$found" = true ] || return 1
+    done
+    return 0
+}
+
 # Kill existing backend processes by pattern
 pkill -9 -f "python.*server/main.py" 2>/dev/null || true
+kill_server_main_processes "$SERVER_DIR"
 pkill -9 -f "uvicorn.*gateway" 2>/dev/null || true
 pkill -9 -f "uvicorn.*preprocessing" 2>/dev/null || true
 pkill -9 -f "uvicorn.*ai" 2>/dev/null || true
+
+kill_by_port 6100
+kill_by_port 6101
+kill_by_port 6102
 
 # Kill vLLM / PDF parsing related processes
 pkill -9 -f "vllm.entrypoints" 2>/dev/null || true
@@ -201,6 +269,15 @@ if [ -f "$SERVER_DIR/.env" ]; then
     set +a
 fi
 
+unset PATHLAB_UPLOADS_DIR
+RESOLVED_UPLOADS_DIR=$(
+    "$PYTHON" - <<'PY'
+from backend.common.config import Config
+print(Config.get_uploads_dir())
+PY
+)
+export PATHLAB_UPLOADS_DIR="$RESOLVED_UPLOADS_DIR"
+
 # Set environment and start
 export PATHLAB_DEBUG=1
 export GATEWAY_PORT=6100
@@ -236,9 +313,18 @@ BACKEND_PID=$!
 echo $BACKEND_PID > "$LOG_DIR/backend.pid"
 
 # Wait for services to start
+health_ready() {
+    curl -s http://127.0.0.1:6100/health > /dev/null 2>&1 \
+        && curl -s http://127.0.0.1:6101/health > /dev/null 2>&1 \
+        && curl -s http://127.0.0.1:6102/health > /dev/null 2>&1
+}
+
 echo -n "  等待服务启动"
 for i in {1..50}; do
-    if curl -s http://127.0.0.1:6100/health > /dev/null 2>&1; then
+    if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+        break
+    fi
+    if health_ready && current_run_owns_ports "$BACKEND_PID"; then
         echo ""
         echo -e "${GREEN}[✓]${NC} 后端服务已启动 (PID: $BACKEND_PID)"
         break
@@ -247,7 +333,7 @@ for i in {1..50}; do
     sleep 1
 done
 
-if ! curl -s http://127.0.0.1:6100/health > /dev/null 2>&1; then
+if ! kill -0 "$BACKEND_PID" 2>/dev/null || ! health_ready || ! current_run_owns_ports "$BACKEND_PID"; then
     echo ""
     echo -e "${RED}[✗] 后端启动失败！查看日志: $LOG_DIR/backend.log${NC}"
     exit 1

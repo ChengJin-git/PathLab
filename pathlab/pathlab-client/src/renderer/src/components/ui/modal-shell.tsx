@@ -6,6 +6,7 @@ interface ModalShellProps {
   onClose?: () => void
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '6xl'
   className?: string
+  title?: string
   children: React.ReactNode
 }
 
@@ -22,6 +23,7 @@ export function ModalShell({
   onClose,
   maxWidth = 'md',
   className,
+  title,
   children,
 }: ModalShellProps) {
   useEffect(() => {
@@ -36,23 +38,27 @@ export function ModalShell({
   if (!isOpen) return null
 
   return (
-    <button
-      type="button"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-200"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+      <button
+        type="button"
+        data-testid="modal-backdrop"
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onClose}
+        tabIndex={-1}
+        aria-label="Close dialog"
+      />
       <div
         role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={cn(
-          'bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto',
+          'relative bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto text-left',
           MAX_WIDTH[maxWidth] ?? 'max-w-md',
           className
         )}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
       >
         {children}
       </div>
-    </button>
+    </div>
   )
 }

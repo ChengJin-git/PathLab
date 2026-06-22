@@ -18,33 +18,97 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import delete as sql_delete
-from backend.database import get_db
-from backend.database.repositories import (
-    WSIRepository,
-    DatasetRepository,
-    StorageTaskRepository,
-    DatasetStatsRepository,
-)
-from backend.database.models import TrainingTaskWSI, AIResult, AITask
-from backend.auth import User
-from backend.auth.dependencies import require_admin
+import importlib
+
+_backend_database = importlib.import_module("backend.database")
+_backend_repositories = importlib.import_module("backend.database.repositories")
+_backend_models = importlib.import_module("backend.database.models")
+_backend_auth_dependencies = importlib.import_module("backend.auth.dependencies")
+_backend_common_config = importlib.import_module("backend.common.config")
+_backend_common_file_types = importlib.import_module("backend.common.file_types")
+external_availability = importlib.import_module("backend.storage.external_availability")
+
+get_db = _backend_database.get_db
+async_session = _backend_database.async_session
+WSIRepository = _backend_repositories.WSIRepository
+DatasetRepository = _backend_repositories.DatasetRepository
+StorageTaskRepository = _backend_repositories.StorageTaskRepository
+DatasetStatsRepository = _backend_repositories.DatasetStatsRepository
+TrainingTaskWSI = _backend_models.TrainingTaskWSI
+AIResult = _backend_models.AIResult
+AITask = _backend_models.AITask
+require_admin = _backend_auth_dependencies.require_admin
+Config = _backend_common_config.Config
+PATCH_EXTENSIONS = _backend_common_file_types.PATCH_EXTENSIONS
+WSI_EXTENSIONS = _backend_common_file_types.WSI_EXTENSIONS
+
+from .access_control import User
 from ..dependencies import logger
 from ..models import (
     ScanDirectoryRequest,
+    StartScanDirectoryTaskRequest,
     CheckExternalFilesRequest,
     DeleteUnavailableFilesRequest,
 )
 from ..scan_sessions import build_scan_response, create_scan_session, get_scan_session
+from . import storage_tasks
 from ..utils import (
     build_segmentation_annotation_index,
     get_scan_file_data_type,
     is_tiff_family,
     resolve_segmentation_annotation_match,
 )
-from backend.common.config import Config
-from backend.common.file_types import PATCH_EXTENSIONS, WSI_EXTENSIONS
+
 
 router = APIRouter()
+
+
+def _validate_scan_directory_path(directory: str) -> None:
+    if not os.path.exists(directory):
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {directory}")
+
+    if not os.path.isdir(directory):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {directory}")
+
+    if not os.access(directory, os.R_OK):
+        raise HTTPException(status_code=400, detail=f"Directory is not readable: {directory}")
+
+
+def _build_scan_task_results(
+    *,
+    session: dict[str, Any],
+    page_size: int,
+) -> dict[str, Any]:
+    files = session["files"]
+    return {
+        "scan_id": session["scan_id"],
+        "directory": session["directory"],
+        "total_count": len(files),
+        "valid_count": session["valid_count"],
+        "wsi_count": session["wsi_count"],
+        "patch_count": session["patch_count"],
+        "page_size": page_size,
+        "annotation_scan_enabled": session.get("annotation_scan_enabled", False),
+    }
+
+
+async def _mark_scan_directory_task_cancelled(
+    task_id: str,
+    *,
+    processed_items: int = 0,
+    success_count: int = 0,
+) -> None:
+    storage_tasks.clear_storage_task_cancellation(task_id)
+    async with async_session() as db:
+        await StorageTaskRepository.update_status(
+            db,
+            task_id,
+            "cancelled",
+            processed_items=processed_items,
+            success_count=success_count,
+            failed_count=0,
+        )
+        await db.commit()
 
 
 # ==============================================================================
@@ -92,7 +156,7 @@ def _scan_directory_for_wsi(
         total_size = file_size
         ext = item.suffix.lower()
 
-        file_info = {
+        file_info: dict[str, Any] = {
             "path": str(item),
             "filename": item.name,
             "size": file_size,
@@ -214,6 +278,120 @@ def _scan_directory_for_wsi(
     return results
 
 
+async def _run_scan_directory_task(task_id: str, user_id: str, params: dict[str, Any]):
+    directory = params["directory_path"]
+    task_type = params.get("task_type")
+    page_size = min(max(1, int(params.get("page_size") or 100)), 500)
+    include_annotation_json = task_type == "patch_segmentation"
+
+    try:
+        async with async_session() as db:
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                "processing",
+                progress=0,
+                processed_items=0,
+            )
+            await db.commit()
+
+        if storage_tasks.is_storage_task_cancelled(task_id):
+            await _mark_scan_directory_task_cancelled(task_id)
+            return
+
+        files = await asyncio.to_thread(
+            _scan_directory_for_wsi,
+            directory,
+            include_annotation_json=include_annotation_json,
+        )
+        valid_count = sum(1 for file in files if file.get("valid"))
+
+        if storage_tasks.is_storage_task_cancelled(task_id):
+            await _mark_scan_directory_task_cancelled(
+                task_id,
+                processed_items=len(files),
+                success_count=valid_count,
+            )
+            return
+
+        session = create_scan_session(
+            directory=directory,
+            files=files,
+            user_id=user_id,
+            annotation_scan_enabled=include_annotation_json,
+        )
+        results = _build_scan_task_results(session=session, page_size=page_size)
+
+        async with async_session() as db:
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                "completed",
+                progress=100,
+                processed_items=len(files),
+                success_count=valid_count,
+                failed_count=0,
+                results=results,
+            )
+            await db.commit()
+    except Exception as e:
+        logger.error(f"Directory scan task {task_id} failed: {e}")
+        async with async_session() as db:
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                "failed",
+                error_message=str(e),
+            )
+            await db.commit()
+
+
+@router.post("/tasks/scan-directory")
+async def start_scan_directory_task(
+    request: StartScanDirectoryTaskRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a directory scan background task and return immediately."""
+    try:
+        directory = request.directory_path
+        _validate_scan_directory_path(directory)
+
+        page_size = min(max(1, request.page_size), 500)
+        task_id = f"scan_{uuid.uuid4().hex[:16]}"
+        params = {
+            "directory_path": directory,
+            "task_type": request.task_type,
+            "page_size": page_size,
+        }
+
+        await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type="scan_directory",
+            total_items=0,
+            params=params,
+        )
+        await db.commit()
+
+        background_tasks.add_task(_run_scan_directory_task, task_id, str(user.id), params)
+
+        return {
+            "task_id": task_id,
+            "message": "Directory scan task started",
+            "directory": directory,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start directory scan task: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start directory scan: {str(e)}"
+        )
+
+
 @router.post("/scan-directory")
 async def scan_directory(
     request: ScanDirectoryRequest,
@@ -250,7 +428,7 @@ async def scan_directory(
         directory = request.directory_path
         page = max(1, request.page)
         page_size = min(max(1, request.page_size), 500)
-        include_annotation_json = request.task_type == "segmentation"
+        include_annotation_json = request.task_type == "patch_segmentation"
 
         if request.scan_id:
             session = get_scan_session(request.scan_id, str(user.id))
@@ -266,21 +444,7 @@ async def scan_directory(
             if not include_annotation_json or session.get("annotation_scan_enabled"):
                 return build_scan_response(session, page=page, page_size=page_size)
 
-        # Validate directory exists
-        if not os.path.exists(directory):
-            raise HTTPException(
-                status_code=400, detail=f"Directory does not exist: {directory}"
-            )
-
-        if not os.path.isdir(directory):
-            raise HTTPException(
-                status_code=400, detail=f"Path is not a directory: {directory}"
-            )
-
-        if not os.access(directory, os.R_OK):
-            raise HTTPException(
-                status_code=400, detail=f"Directory is not readable: {directory}"
-            )
+        _validate_scan_directory_path(directory)
 
         # Scan directory in thread pool to avoid blocking
         files = await asyncio.to_thread(
@@ -327,7 +491,7 @@ def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
     """
     import threading
 
-    result = [None]  # Use list to allow mutation from thread
+    result: list[bool | None] = [None]  # Use list to allow mutation from thread
 
     def _check():
         result[0] = os.path.exists(path)
@@ -342,11 +506,13 @@ def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
             f"File accessibility check timed out after {timeout}s for: {path}"
         )
 
-    return result[0]
+    return bool(result[0])
 
 
 def _check_wsi_file_availability(
-    wsi_path: str, associated_files: dict[str, Any] = None, timeout: float = 5.0
+    wsi_path: str,
+    associated_files: dict[str, Any] | None = None,
+    timeout: float = 5.0,
 ) -> tuple[bool, str]:
     """
     Check if a WSI file and its associated data are available.
@@ -424,6 +590,12 @@ def _check_wsi_file_availability(
     return True, "Available"
 
 
+def _is_under_uploads_dir(path: str, uploads_dir: str) -> bool:
+    abs_path = os.path.abspath(path)
+    abs_uploads = os.path.abspath(uploads_dir)
+    return abs_path == abs_uploads or abs_path.startswith(abs_uploads + os.sep)
+
+
 def _check_external_files_sync(
     wsi_data: list[dict[str, Any]], uploads_dir: str
 ) -> dict[str, Any]:
@@ -448,7 +620,7 @@ def _check_external_files_sync(
     for item in wsi_data:
         wsi_path = item["wsi_path"]
 
-        if not wsi_path.startswith(uploads_dir):
+        if not _is_under_uploads_dir(wsi_path, uploads_dir):
             file_info = {
                 "wsi_id": item["wsi_id"],
                 "original_filename": item["original_filename"],
@@ -487,7 +659,7 @@ def _check_external_files_sync(
                 file_info["reason"] = message
                 unavailable.append(file_info)
 
-    result = {
+    result: dict[str, Any] = {
         "total_external": len(available) + len(unavailable),
         "available_count": len(available),
         "unavailable_count": len(unavailable),
@@ -504,6 +676,13 @@ def _check_external_files_sync(
         )
 
     return result
+
+
+def _record_external_availability_result(result: dict[str, Any]) -> None:
+    try:
+        external_availability.record_many_from_scan(result)
+    except Exception as exc:
+        logger.warning(f"Failed to record external availability scan result: {exc}")
 
 
 # ==============================================================================
@@ -536,11 +715,12 @@ async def get_external_datasets_summary(
         # Filter external files and group by dataset (pure string comparison, no file I/O)
         dataset_stats: dict[str, dict[str, Any]] = {}
         for wsi in wsi_list:
-            if not wsi.wsi_path.startswith(uploads_dir):
-                ds_id = wsi.dataset_id or "uncategorized"
+            wsi_path_str = str(wsi.wsi_path)
+            if not _is_under_uploads_dir(wsi_path_str, uploads_dir):
+                ds_id = str(wsi.dataset_id) if wsi.dataset_id else "uncategorized"
                 if ds_id not in dataset_stats:
                     dataset_stats[ds_id] = {
-                        "dataset_id": wsi.dataset_id,
+                        "dataset_id": str(wsi.dataset_id) if wsi.dataset_id else None,
                         "dataset_name": wsi.dataset.name
                         if wsi.dataset
                         else "Uncategorized",
@@ -577,15 +757,10 @@ async def start_unbind_dataset_task(
     Progress can be monitored via SSE at /storage/tasks/stream
     """
     try:
-        uploads_dir = str(Config.get_uploads_dir())
-
-        # Get all WSI records in this dataset
-        wsi_list = await WSIRepository.get_by_dataset(db, dataset_id, limit=0)
-
-        # Filter to only external files (use wsi_id, not database id)
-        external_wsi_ids = [
-            wsi.wsi_id for wsi in wsi_list if not wsi.wsi_path.startswith(uploads_dir)
-        ]
+        external_refs = await DatasetRepository.get_external_wsi_path_refs_batch(
+            db, [dataset_id]
+        )
+        external_wsi_ids = [str(ref["wsi_id"]) for ref in external_refs[dataset_id]]
 
         if not external_wsi_ids:
             raise HTTPException(
@@ -691,6 +866,7 @@ async def check_external_files(
         result = await asyncio.to_thread(
             _check_external_files_sync, wsi_data, uploads_dir
         )
+        _record_external_availability_result(result)
         return result
 
     except Exception as e:
@@ -760,7 +936,8 @@ async def delete_unavailable_files(
                 dataset_id = wsi.dataset_id
                 success = await WSIRepository.delete(db, wsi_id)
                 if success:
-                    await DatasetStatsRepository.recompute(db, dataset_id)
+                    if dataset_id:
+                        await DatasetStatsRepository.recompute(db, str(dataset_id))
                     await db.commit()
                     results.append(
                         {

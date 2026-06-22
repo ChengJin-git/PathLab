@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
-import { mkdirSync, existsSync, chmodSync } from 'fs'
+import { mkdirSync, existsSync, chmodSync, readdirSync, rmSync } from 'fs'
 import * as net from 'net'
 
 export interface EmbeddedServiceUrls {
@@ -121,6 +121,7 @@ async function startPostgres(): Promise<string> {
   mkdirSync(dataDir, { recursive: true })
 
   const { default: EmbeddedPostgres } = await import('embedded-postgres')
+  const pgLogs: string[] = []
 
   pgInstance = new EmbeddedPostgres({
     databaseDir: dataDir,
@@ -128,23 +129,74 @@ async function startPostgres(): Promise<string> {
     password: 'pathlab',
     port: pgPort,
     persistent: true,
-    onLog: (msg: string) => console.log('[PostgreSQL]', msg),
-    onError: (msg: unknown) => console.error('[PostgreSQL]', msg)
+    // Use C locale so initdb succeeds on any system regardless of locale installation.
+    // embedded-postgres hardcodes --lc-messages=en_US.UTF-8 before our flags; since
+    // initdbFlags are appended AFTER, --locale=C wins for all locale categories including
+    // lc-messages. C locale is always available and still produces English messages that
+    // embedded-postgres relies on for ready-detection. --encoding=UTF8 ensures Unicode.
+    initdbFlags: ['--locale=C', '--encoding=UTF8'],
+    onLog: (msg: string) => { pgLogs.push(msg); console.log('[PostgreSQL]', msg) },
+    onError: (msg: unknown) => { pgLogs.push(`ERROR: ${String(msg)}`); console.error('[PostgreSQL]', msg) }
   })
 
   const pgVersionFile = join(dataDir, 'PG_VERSION')
   if (!existsSync(pgVersionFile)) {
+    // Clean up partial initialization from a previous failed run
+    if (existsSync(dataDir) && readdirSync(dataDir).length > 0) {
+      console.log('[PostgreSQL] Cleaning up partial postgres-data directory...')
+      rmSync(dataDir, { recursive: true, force: true })
+      mkdirSync(dataDir, { recursive: true })
+    }
     console.log('[PostgreSQL] Initializing database cluster (first run)...')
-    await pgInstance.initialise()
+    try {
+      await pgInstance.initialise()
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e)
+      const logs = pgLogs.slice(-10).join('\n')
+      throw new Error(`PostgreSQL init failed: ${reason}\n${logs}`)
+    }
   }
 
-  await pgInstance.start()
+  try {
+    await pgInstance.start()
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e)
+    const logs = pgLogs.slice(-10).join('\n')
+    throw new Error(`PostgreSQL start failed: ${reason}\n${logs}`)
+  }
 
   try {
-    await pgInstance.createDatabase('pathlab')
-    console.log('[PostgreSQL] Database "pathlab" created')
-  } catch (_) {
-    // database already exists on subsequent runs
+    const { Client } = await import('pg')
+    const probe = new Client({
+      host: '127.0.0.1',
+      port: pgPort,
+      user: 'pathlab',
+      password: 'pathlab',
+      database: 'postgres'
+    })
+
+    let exists = false
+    try {
+      await probe.connect()
+      const result = await probe.query(
+        'SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1) AS exists',
+        ['pathlab']
+      )
+      exists = Boolean((result.rows[0] as { exists?: boolean } | undefined)?.exists)
+    } finally {
+      await probe.end().catch(() => undefined)
+    }
+
+    if (!exists) {
+      await pgInstance.createDatabase('pathlab')
+      console.log('[PostgreSQL] Database "pathlab" created')
+    } else {
+      console.log('[PostgreSQL] Database "pathlab" already exists, skipping creation')
+    }
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e)
+    const logs = pgLogs.slice(-10).join('\n')
+    throw new Error(`PostgreSQL database check/create failed: ${reason}\n${logs}`)
   }
 
   console.log(`[PostgreSQL] Started on port ${pgPort}`)

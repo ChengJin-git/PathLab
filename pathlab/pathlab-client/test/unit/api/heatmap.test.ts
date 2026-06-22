@@ -27,7 +27,7 @@ const mockFetch = vi.mocked(fetch)
 const MOCK_HEATMAPS = [
   {
     task_id: 'task_001',
-    task_type: 'classification',
+    task_type: 'wsi_classification',
     task_name: 'BRCA Classifier',
     prediction: 'LUAD',
     probs: { LUAD: 0.85, LUSC: 0.15 },

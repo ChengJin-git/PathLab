@@ -1,7 +1,8 @@
 import httpx
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from importlib import import_module
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException
 from pydantic import Field
@@ -9,26 +10,32 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth import User, current_active_user
-from backend.auth.dependencies import require_admin
-from backend.database import get_db, async_session
-from backend.database.models import Dataset, TrainingTask, WSISlide
-from backend.database.repositories import (
-    DatasetGrantRepository,
-    DatasetRepository,
-    PermissionAuditLogRepository,
-    TrainingTaskRepository,
-)
 from ..dependencies import AI_SERVICE_URL, logger
 from ..models import (
     DatasetUpdateVisibilityRequest,
     BatchGrantDatasetGrantRequest,
     BatchRevokeDatasetGrantRequest,
 )
-from gateway.chat.context_cache import (
-    invalidate_chat_context,
-    invalidate_all_user_chat_contexts,
-)
+
+_auth_module = import_module("backend.auth")
+User = _auth_module.User
+current_active_user = _auth_module.current_active_user
+require_admin = import_module("backend.auth.dependencies").require_admin
+_database_module = import_module("backend.database")
+get_db = _database_module.get_db
+async_session = _database_module.async_session
+_models_module = import_module("backend.database.models")
+Dataset = _models_module.Dataset
+TrainingTask = _models_module.TrainingTask
+WSISlide = _models_module.WSISlide
+_repositories = import_module("backend.database.repositories")
+DatasetGrantRepository = _repositories.DatasetGrantRepository
+DatasetRepository = _repositories.DatasetRepository
+PermissionAuditLogRepository = _repositories.PermissionAuditLogRepository
+TrainingTaskRepository = _repositories.TrainingTaskRepository
+_context_cache = import_module("gateway.chat.context_cache")
+invalidate_chat_context = _context_cache.invalidate_chat_context
+invalidate_all_user_chat_contexts = _context_cache.invalidate_all_user_chat_contexts
 
 router = APIRouter(tags=["WSI Grants"])
 
@@ -53,7 +60,7 @@ async def _grant_or_renew_permission(
 ) -> Tuple[str, Dict[str, Any]]:
     target_user = None
     if can_use_gpu:
-        from backend.auth.models import User as UserModel
+        UserModel = import_module("backend.auth.models").User
 
         try:
             target_uuid = uuid.UUID(str(user_id))
@@ -77,20 +84,28 @@ async def _grant_or_renew_permission(
     )
     if existing:
         if existing.is_expired():
-            existing.expires_at = expires_at
-            existing.granted_by = granted_by
-            existing.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            existing.can_read = can_read
-            existing.can_collaborate = can_collaborate
-            existing.can_use_gpu = can_use_gpu
-            await db.flush()
-            return "Permission renewed successfully", existing.to_dict()
-        existing.can_read = can_read
-        existing.can_collaborate = can_collaborate
-        existing.can_use_gpu = can_use_gpu
-        existing.granted_by = granted_by
-        await db.flush()
-        return "Permission updated successfully", existing.to_dict()
+            updated = await DatasetGrantRepository.update(
+                db,
+                dataset_id,
+                user_id,
+                expires_at=expires_at,
+                granted_by=granted_by,
+                created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                can_read=can_read,
+                can_collaborate=can_collaborate,
+                can_use_gpu=can_use_gpu,
+            )
+            return "Permission renewed successfully", cast(Any, updated).to_dict()
+        updated = await DatasetGrantRepository.update(
+            db,
+            dataset_id,
+            user_id,
+            can_read=can_read,
+            can_collaborate=can_collaborate,
+            can_use_gpu=can_use_gpu,
+            granted_by=granted_by,
+        )
+        return "Permission updated successfully", cast(Any, updated).to_dict()
 
     grant = await DatasetGrantRepository.create(
         db=db,
@@ -108,7 +123,7 @@ async def _grant_or_renew_permission(
 async def _find_affected_training_tasks(
     db: AsyncSession,
     target_user_id: str,
-    dataset_wsi_ids: set,
+    dataset_wsi_ids: set[str],
 ) -> List[str]:
     if not dataset_wsi_ids:
         return []
@@ -130,7 +145,9 @@ async def _find_affected_training_tasks(
 
 
 async def _notify_ai_service_permission_revocation(task_ids: List[str]) -> List[str]:
-    from backend.ai.permission_revocation import revoke_task_permission as _local_revoke
+    _local_revoke = import_module(
+        "backend.ai.permission_revocation"
+    ).revoke_task_permission
 
     revoked: List[str] = []
     for task_id in task_ids:
@@ -199,7 +216,7 @@ async def _revoke_child_dataset_grants(
             WSISlide.dataset_id.in_(child_ids)
         )
     )
-    wsi_by_dataset: Dict[str, set] = {}
+    wsi_by_dataset: Dict[str, set[str]] = {}
     for ds_id, wsi_id in child_wsi_rows.all():
         wsi_by_dataset.setdefault(str(ds_id), set()).add(str(wsi_id))
 
@@ -242,7 +259,7 @@ async def _revoke_permission_with_side_effects(
     db: AsyncSession,
     dataset_id: str,
     target_user_id: str,
-    dataset_wsi_ids: set,
+    dataset_wsi_ids: set[str],
 ) -> Dict[str, Any]:
     affected_task_ids = await _find_affected_training_tasks(
         db, target_user_id, dataset_wsi_ids
@@ -297,7 +314,7 @@ async def update_dataset_visibility(
     if becoming_public:
         revoked_grants = await DatasetGrantRepository.delete_by_dataset(db, dataset_id)
 
-    await DatasetRepository.update(db, dataset_id, updates)
+    await DatasetRepository.update(db, dataset_id, **updates)
     await db.commit()
 
     if becoming_public or becoming_private:
@@ -307,7 +324,7 @@ async def update_dataset_visibility(
                 all_user_ids = [str(row[0]) for row in _r.all()]
             await invalidate_all_user_chat_contexts(all_user_ids)
         except Exception as _exc:
-            logger.warning("[ChatCtxCache] broadcast invalidate failed: %s", _exc)
+            logger.warning(f"[ChatCtxCache] broadcast invalidate failed: {_exc}")
             await invalidate_chat_context(str(user.id))
     else:
         await invalidate_chat_context(str(user.id))
@@ -387,12 +404,12 @@ async def list_dataset_grants(
     user_ids = list({g.user_id for g in grants})
     user_map: Dict[str, Dict[str, object]] = {}
     if user_ids:
-        from backend.auth.models import User as UserModel
+        UserModel = import_module("backend.auth.models").User
 
         user_rows = await db.execute(
             select(
                 UserModel.id,
-                UserModel.email,
+                UserModel.username,
                 UserModel.nickname,
                 UserModel.role,
                 UserModel.is_active,
@@ -476,7 +493,7 @@ async def grant_dataset_grant(
         await invalidate_chat_context(user_id)
     except Exception as _exc:
         logger.warning(
-            "[ChatCtxCache] grant invalidate failed for user %s: %s", user_id, _exc
+            f"[ChatCtxCache] grant invalidate failed for user {user_id}: {_exc}"
         )
 
     return {"message": message, "grant": grant}
@@ -558,7 +575,7 @@ async def batch_grant_dataset_grants(
         try:
             await invalidate_all_user_chat_contexts(granted_user_ids)
         except Exception as _exc:
-            logger.warning("[ChatCtxCache] batch-grant invalidate failed: %s", _exc)
+            logger.warning(f"[ChatCtxCache] batch-grant invalidate failed: {_exc}")
 
     return {
         "dataset_id": dataset_id,
@@ -606,9 +623,7 @@ async def revoke_dataset_grant(
         await invalidate_chat_context(target_user_id)
     except Exception as _exc:
         logger.warning(
-            "[ChatCtxCache] revoke invalidate failed for user %s: %s",
-            target_user_id,
-            _exc,
+            f"[ChatCtxCache] revoke invalidate failed for user {target_user_id}: {_exc}"
         )
 
     return result
@@ -670,7 +685,7 @@ async def batch_revoke_dataset_grants(
         try:
             await invalidate_all_user_chat_contexts(revoked_user_ids)
         except Exception as _exc:
-            logger.warning("[ChatCtxCache] batch-revoke invalidate failed: %s", _exc)
+            logger.warning(f"[ChatCtxCache] batch-revoke invalidate failed: {_exc}")
 
     return {
         "dataset_id": dataset_id,

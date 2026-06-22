@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Layers, AlertCircle, CheckCircle2, UploadCloud } from 'lucide-react'
-import { SplitStrategy, TaskType } from '../../constants/training'
+import { SplitStrategy, TaskType, KFOLD_MAX_SPLITS, isSegmentationTask } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation } from '../../types/training'
 
 export interface DataSplitConfigProps {
@@ -19,6 +19,8 @@ export interface DataSplitConfigProps {
   setSplitStrategy: (strategy: SplitStrategy) => void
   kFoldSplits: number
   setKFoldSplits: (k: number) => void
+  stratified: boolean
+  setStratified: (value: boolean) => void
   kFoldValidation: KFoldValidation
   randomSplitValidation: RandomSplitValidation
   hasPreDefinedSplits: boolean
@@ -34,6 +36,8 @@ export function DataSplitConfig({
   setSplitStrategy,
   kFoldSplits,
   setKFoldSplits,
+  stratified,
+  setStratified,
   kFoldValidation,
   randomSplitValidation,
   hasPreDefinedSplits,
@@ -44,7 +48,7 @@ export function DataSplitConfig({
 }: DataSplitConfigProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const isSegmentation = taskType === 'segmentation'
+  const showStratifiedToggle = isSegmentationTask(taskType) && splitStrategy !== 'manual'
 
   return (
     <Card className="mt-6 p-6">
@@ -54,7 +58,7 @@ export function DataSplitConfig({
       </h3>
 
       <div className="space-y-4">
-        <div className={`grid grid-cols-1 gap-4 ${isSegmentation ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {/* Random Split */}
           <SplitOption
             selected={splitStrategy === 'random'}
@@ -63,14 +67,12 @@ export function DataSplitConfig({
             description={t('training.dataSplit.randomSplitDesc')}
           />
 
-          {!isSegmentation && (
-            <SplitOption
-              selected={splitStrategy === 'k_fold'}
-              onClick={() => setSplitStrategy('k_fold')}
-              title={t('training.dataSplit.kFoldCV')}
-              description={t('training.dataSplit.kFoldCVDesc')}
-            />
-          )}
+          <SplitOption
+            selected={splitStrategy === 'k_fold'}
+            onClick={() => setSplitStrategy('k_fold')}
+            title={t('training.dataSplit.kFoldCV')}
+            description={t('training.dataSplit.kFoldCVDesc')}
+          />
 
           {hasPreDefinedSplits ? (
             <SplitOption
@@ -127,6 +129,23 @@ export function DataSplitConfig({
               selectedDatasetName={selectedDatasetName}
             />
           )}
+
+          {showStratifiedToggle && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={stratified}
+                  onChange={(e) => setStratified(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-800">{t('training.dataSplit.stratifiedSplit')}</div>
+                  <p className="mt-0.5 text-xs text-gray-500">{t('training.dataSplit.stratifiedSplitDesc')}</p>
+                </div>
+              </label>
+            </div>
+          )}
         </div>
       </div>
     </Card>
@@ -172,7 +191,7 @@ function RandomSplitDetails({
   validation: RandomSplitValidation
 }) {
   const { t } = useTranslation()
-  const isSegmentation = taskType === 'segmentation'
+  const isSegmentation = isSegmentationTask(taskType)
 
   return (
     <div className="space-y-3">
@@ -230,7 +249,7 @@ function KFoldDetails({
   validation: KFoldValidation
 }) {
   const { t } = useTranslation()
-  const maxAllowed = Math.min(10, validation.maxK || 10)
+  const maxAllowed = Math.min(KFOLD_MAX_SPLITS, validation.maxK || KFOLD_MAX_SPLITS)
 
   return (
     <div className="space-y-3">
@@ -247,7 +266,7 @@ function KFoldDetails({
             !validation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-300'
           }`}
         />
-        {validation.isValid && validation.maxK < 10 && (
+        {validation.isValid && validation.maxK < KFOLD_MAX_SPLITS && (
           <span className="text-xs text-amber-600">{t('training.dataSplit.maxKNote', { maxK: validation.maxK })}</span>
         )}
       </div>

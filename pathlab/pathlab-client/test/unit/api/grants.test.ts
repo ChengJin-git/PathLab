@@ -7,6 +7,10 @@ vi.mock('@renderer/config', () => ({
   initializeApiConfig: vi.fn(),
 }))
 
+vi.mock('@renderer/api/wsi', () => ({
+  invalidateWSIListCache: vi.fn(),
+}))
+
 import {
   getMyDatasetGrants,
   grantDatasetGrant,
@@ -15,11 +19,14 @@ import {
   listDatasetGrants,
   batchGrantDatasetGrants,
   batchRevokeDatasetGrants,
+  updateDatasetVisibility,
   type DatasetGrant,
 } from '@renderer/api/grants'
 import { setAuthToken } from '@renderer/api/client'
+import { invalidateWSIListCache } from '@renderer/api/wsi'
 
 const mockFetch = vi.mocked(fetch)
+const mockedInvalidateWSIListCache = vi.mocked(invalidateWSIListCache)
 
 const MOCK_GRANT: DatasetGrant = {
   id: 1,
@@ -42,6 +49,7 @@ const MOCK_GRANT: DatasetGrant = {
 
 beforeEach(() => {
   setAuthToken('test_token')
+  mockedInvalidateWSIListCache.mockClear()
 })
 
 describe('getMyDatasetGrants', () => {
@@ -177,5 +185,20 @@ describe('batchRevokeDatasetGrants', () => {
     expect(opts?.method).toBe('POST')
     const body = JSON.parse(opts?.body as string)
     expect(body.user_ids).toEqual(['user_2', 'user_3'])
+  })
+})
+
+describe('updateDatasetVisibility', () => {
+  it('updates visibility and invalidates dataset list cache', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', is_public: true }))
+
+    const result = await updateDatasetVisibility('ds_1', true)
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/wsi/datasets/ds_1/visibility')
+    expect(opts?.method).toBe('PATCH')
+    expect(JSON.parse(opts?.body as string)).toEqual({ is_public: true })
+    expect(result.is_public).toBe(true)
+    expect(mockedInvalidateWSIListCache).toHaveBeenCalledOnce()
   })
 })

@@ -30,6 +30,7 @@ from backend.database.repositories import (
 )
 from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
+from backend.ai.result_store import AIResultStore, ATTENTION_ARTIFACT
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
 from backend.ai.tasks.feature_cache import (
     find_cached_features,
@@ -50,14 +51,12 @@ from backend.ai.schemas.requests import (
 )
 from backend.common.config import Config
 from backend.common.gpu_utils import get_device_string
-from backend.preprocessing.heatmap_preview_cache import (
-    ensure_recommendation_preview_cache,
-)
-
 logger = logging.getLogger("inference_routes")
 
-# Paths
-UPLOADS_DIR = Config.get_uploads_dir()
+
+def _uploads_dir():
+    return Config.get_uploads_dir()
+
 
 router = APIRouter(tags=["inference"])
 
@@ -176,7 +175,8 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
 
             # --- Step 2: Feature Extraction (with global cache) ---
             # Check coordinates first (search across all params_hash directories)
-            coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+            uploads_dir = _uploads_dir()
+            coords_h5 = find_any_cached_coords_for_wsi(uploads_dir, wsi_id)
             if coords_h5 is None:
                 raise FileNotFoundError(
                     f"Coordinates not found for {wsi_id}. Please run preprocessing first."
@@ -193,7 +193,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
 
             # Check global feature cache
             cached_path = find_cached_features(
-                UPLOADS_DIR, extractor_name, wsi_id, params_hash
+                uploads_dir, extractor_name, wsi_id, params_hash
             )
 
             features = None
@@ -230,7 +230,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
 
                 # Use WSIClassificationTrainer's logic (reusing code)
-                trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
+                trainer = WSIClassificationTrainer(task_id, uploads_dir, device)
                 extractor = await asyncio.to_thread(
                     lambda: (
                         get_extractor(extractor_name, pretrained=True).to(device).eval()
@@ -247,7 +247,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
 
                 # Save to global cache (blocking disk I/O → thread)
                 cache_feat_path = get_cache_save_path(
-                    UPLOADS_DIR, extractor_name, params_hash, wsi_id
+                    uploads_dir, extractor_name, params_hash, wsi_id
                 )
                 feats_cpu = feats.cpu()
                 await asyncio.to_thread(save_features, cache_feat_path, feats_cpu)
@@ -296,27 +296,13 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
             pred_idx = probs.argmax()
             pred_label = trained_classes[pred_idx]
 
-            # --- Step 5: Save Attention for Heatmap ---
-            attention_path = None
+            # --- Step 5: Save Bundle Artifacts ---
+            arrays = {}
             if attention is not None:
-                import numpy as np
-
-                # Save attention weights to file
-                ai_results_dir = UPLOADS_DIR / "ai_results" / wsi_id
-                ai_results_dir.mkdir(parents=True, exist_ok=True)
-                attention_file = ai_results_dir / f"{task_id}_attention.npy"
                 attention_np = attention.cpu().numpy()
-                np.save(attention_file, attention_np)
-                ensure_recommendation_preview_cache(
-                    wsi_id,
-                    attention_file,
-                    UPLOADS_DIR,
-                    wsi_path=wsi.wsi_path,
-                    file_size=wsi.file_size,
-                )
-                attention_path = str(attention_file)
+                arrays[ATTENTION_ARTIFACT] = attention_np
                 logger.info(
-                    f"Saved attention weights ({len(attention_np)} patches) to {attention_path}"
+                    f"Prepared attention weights ({len(attention_np)} patches) for bundled storage"
                 )
 
             # --- Step 6: Save Results ---
@@ -328,9 +314,15 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
                 "extra_metadata": {
                     "model_id": model_id,
                     "model_name": model_record.model_name,
-                    "attention_path": attention_path,
+                    "attention_path": None,
                 },
             }
+            AIResultStore(uploads_dir).write_wsi_result(
+                task_id=task_id,
+                wsi_id=wsi_id,
+                result=result_data,
+                arrays=arrays,
+            )
 
             # Save to AIResult
             await AIResultRepository.create(db, result_data)
@@ -384,7 +376,8 @@ async def run_inference_pipeline_sync(
 
     # --- Step 2: Feature Extraction (with global cache) ---
     # Check coordinates first (search across all params_hash directories)
-    coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+    uploads_dir = _uploads_dir()
+    coords_h5 = find_any_cached_coords_for_wsi(uploads_dir, wsi_id)
     if coords_h5 is None:
         raise FileNotFoundError(
             f"Coordinates not found for {wsi_id}. Please run preprocessing first."
@@ -395,7 +388,7 @@ async def run_inference_pipeline_sync(
         logger.warning(f"Could not read params from {coords_h5}, using default hash")
         params_hash = "default0"
 
-    cached_path = find_cached_features(UPLOADS_DIR, extractor_name, wsi_id, params_hash)
+    cached_path = find_cached_features(uploads_dir, extractor_name, wsi_id, params_hash)
 
     features = None
     if cached_path:
@@ -427,7 +420,7 @@ async def run_inference_pipeline_sync(
         )
 
         wsi = await WSIRepository.get_by_id(db, wsi_id)
-        trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
+        trainer = WSIClassificationTrainer(task_id, uploads_dir, device)
         extractor = await asyncio.to_thread(
             lambda: get_extractor(extractor_name, pretrained=True).to(device).eval()
         )
@@ -441,7 +434,7 @@ async def run_inference_pipeline_sync(
         )
 
         cache_feat_path = get_cache_save_path(
-            UPLOADS_DIR, extractor_name, params_hash, wsi_id
+            uploads_dir, extractor_name, params_hash, wsi_id
         )
         feats_cpu = feats.cpu()
         await asyncio.to_thread(save_features, cache_feat_path, feats_cpu)
@@ -483,24 +476,13 @@ async def run_inference_pipeline_sync(
     pred_idx = probs.argmax()
     pred_label = trained_classes[pred_idx]
 
-    # --- Step 5: Save Attention for Heatmap ---
-    attention_path = None
+    # --- Step 5: Save Bundle Artifacts ---
+    arrays = {}
     if attention is not None:
-        ai_results_dir = UPLOADS_DIR / "ai_results" / wsi_id
-        ai_results_dir.mkdir(parents=True, exist_ok=True)
-        attention_file = ai_results_dir / f"{task_id}_attention.npy"
         attention_np = attention.cpu().numpy()
-        np.save(attention_file, attention_np)
-        ensure_recommendation_preview_cache(
-            wsi_id,
-            attention_file,
-            UPLOADS_DIR,
-            wsi_path=wsi.wsi_path,
-            file_size=wsi.file_size,
-        )
-        attention_path = str(attention_file)
+        arrays[ATTENTION_ARTIFACT] = attention_np
         logger.info(
-            f"Saved attention weights ({len(attention_np)} patches) to {attention_path}"
+            f"Prepared attention weights ({len(attention_np)} patches) for bundled storage"
         )
 
     # --- Step 6: Save Results ---
@@ -512,9 +494,16 @@ async def run_inference_pipeline_sync(
         "extra_metadata": {
             "model_id": model_id,
             "model_name": model_record.model_name,
-            "attention_path": attention_path,
+            "attention_path": None,
         },
     }
+
+    AIResultStore(uploads_dir).write_wsi_result(
+        task_id=task_id,
+        wsi_id=wsi_id,
+        result=result_data,
+        arrays=arrays,
+    )
 
     await AIResultRepository.create(db, result_data)
     await AITaskRepository.update_status(

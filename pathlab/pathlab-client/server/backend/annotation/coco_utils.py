@@ -49,22 +49,27 @@ def _normalize_categories(categories: Any) -> Dict[int, str]:
         for item in categories:
             if not isinstance(item, dict):
                 continue
-            try:
-                category_id = int(item.get("id"))
-            except (TypeError, ValueError):
+            category_id = _coerce_int(item.get("id"))
+            if category_id is None:
                 continue
             category_map[category_id] = str(item.get("name") or category_id)
         return category_map
 
     if isinstance(categories, dict):
         for key, value in categories.items():
-            try:
-                category_id = int(key)
-            except (TypeError, ValueError):
+            category_id = _coerce_int(key)
+            if category_id is None:
                 continue
             category_map[category_id] = str(value)
 
     return category_map
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _get_color_for_label(
@@ -224,13 +229,13 @@ def merge_coco_datasets(coco_payloads: List[dict[str, Any]]) -> dict[str, Any]:
             if mapped_image_id is None:
                 continue
 
-            category_id = annotation.get("category_id")
-            try:
-                category_id = int(category_id)
-            except (TypeError, ValueError):
-                pass
+            category_id = _coerce_int(annotation.get("category_id"))
 
-            category_name = categories_map.get(category_id, str(category_id))
+            category_name = (
+                categories_map.get(category_id, str(category_id))
+                if category_id is not None
+                else "None"
+            )
             if category_name not in category_name_to_id:
                 category_name_to_id[category_name] = len(category_name_to_id)
 
@@ -293,13 +298,13 @@ def extract_coco_wsi_label_sets(
         if not wsi_id:
             continue
 
-        category_id = annotation.get("category_id")
-        try:
-            category_id = int(category_id)
-        except (TypeError, ValueError):
-            pass
+        category_id = _coerce_int(annotation.get("category_id"))
 
-        label_name = categories.get(category_id, str(category_id))
+        label_name = (
+            categories.get(category_id, str(category_id))
+            if category_id is not None
+            else "None"
+        )
         label_sets.setdefault(wsi_id, set()).add(label_name)
 
     return label_sets
@@ -398,15 +403,15 @@ def coco_to_roi_annotations(
             width = max(xs) - x
             height = max(ys) - y
 
-        category_id = annotation.get("category_id")
-        try:
-            category_id = int(category_id)
-        except (TypeError, ValueError):
-            pass
+        category_id = _coerce_int(annotation.get("category_id"))
         fallback_label = category_id if category_id is not None else "unlabeled"
-        label = categories.get(category_id, str(fallback_label))
+        label = (
+            categories.get(category_id, str(fallback_label))
+            if category_id is not None
+            else str(fallback_label)
+        )
 
-        roi = {
+        roi: dict[str, Any] = {
             "id": f"{wsi_id}:{annotation.get('image_id')}:{annotation.get('id')}",
             "type": "polygon" if points else "rect",
             "x": x,

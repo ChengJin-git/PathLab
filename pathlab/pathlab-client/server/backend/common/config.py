@@ -1,13 +1,15 @@
 from typing import Any
 
 import os
+import sys
+from importlib import import_module
 from pathlib import Path
 
-from backend.common.settings_store import (
-    read_config,
-    write_config,
-    _get_storage_config_file,
-)
+_settings_store = import_module("backend.common.settings_store")
+read_config = _settings_store.read_config
+write_config = _settings_store.write_config
+_get_storage_config_file = _settings_store._get_storage_config_file
+_get_app_data_dir = _settings_store._get_app_data_dir
 
 
 class Config:
@@ -49,7 +51,15 @@ class Config:
     # Task timeout settings (in seconds)
     # Default: 3 days (259200 seconds), configurable via settings
     DEFAULT_TASK_TIMEOUT = 86400 * 3  # 3 days
-    _task_timeout: int = None  # Runtime cached value
+    _task_timeout: int | None = None  # Runtime cached value
+
+    # Training submit-time preflight settings
+    DEFAULT_TRAINING_PREFLIGHT_LOCAL_ROOT_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_SIZE = 8
+    DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_ROOT_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_SIZE = 5
 
     # ========== Centralized Constants ==========
     # Authentication
@@ -117,7 +127,18 @@ class Config:
         if data.get("uploads_dir"):
             return Path(data["uploads_dir"]).expanduser()
 
-        return cls.ROOT_DIR / "uploads"
+        # Fallback: use the XDG / AppData directory so the app works from
+        # read-only mounts (AppImage squashfs, system-wide installs, etc.).
+        # ROOT_DIR points inside the read-only bundle in packaged mode.
+        return _get_app_data_dir() / "uploads"
+
+    @classmethod
+    def get_autoresearch_dir(cls) -> Path:
+        return cls.get_uploads_dir() / "autoresearch"
+
+    @classmethod
+    def get_autoresearch_sessions_dir(cls) -> Path:
+        return cls.get_autoresearch_dir() / "autoresearch_sessions"
 
     @classmethod
     def get_uploads_dir_source(cls) -> str:
@@ -137,6 +158,12 @@ class Config:
         resolved = Path(uploads_dir).expanduser().resolve()
         write_config({"uploads_dir": str(resolved)}, cls.STORAGE_CONFIG_FILE)
         os.environ["PATHLAB_UPLOADS_DIR"] = str(resolved)
+        dependencies_module = sys.modules.get("gateway.dependencies")
+        if dependencies_module is not None:
+            setattr(dependencies_module, "UPLOADS_DIR", resolved)
+            manager = getattr(dependencies_module, "storage_manager", None)
+            if manager is not None:
+                manager.set_uploads_dir(str(resolved))
         return resolved
 
     @classmethod
@@ -157,6 +184,12 @@ class Config:
         return timeout
 
     @classmethod
+    def reset_runtime_cache_for_tests(cls) -> None:
+        cls._global_settings_cache = None
+        cls._global_settings_dirty = True
+        cls._task_timeout = None
+
+    @classmethod
     def get_max_concurrent(cls, default: int = 1) -> int:
         data = read_config(cls.STORAGE_CONFIG_FILE)
         value = data.get("max_concurrent", default)
@@ -168,7 +201,7 @@ class Config:
         write_config({"max_concurrent": max_concurrent}, cls.STORAGE_CONFIG_FILE)
         return max_concurrent
 
-    _global_settings_cache: dict[str, Any] = None
+    _global_settings_cache: dict[str, Any] | None = None
     _global_settings_dirty: bool = True
 
     @classmethod
@@ -189,6 +222,19 @@ class Config:
         )
         turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY") or data.get(
             "turnstile_secret_key", ""
+        )
+
+        tencent_captcha_enabled_env = os.getenv("TENCENT_CAPTCHA_ENABLED")
+        tencent_captcha_enabled = (
+            str_to_bool(tencent_captcha_enabled_env)
+            if tencent_captcha_enabled_env is not None
+            else data.get("tencent_captcha_enabled", False)
+        )
+        tencent_captcha_app_id = os.getenv("TENCENT_CAPTCHA_APP_ID") or data.get(
+            "tencent_captcha_app_id", ""
+        )
+        tencent_captcha_secret_key = os.getenv("TENCENT_CAPTCHA_SECRET_KEY") or data.get(
+            "tencent_captcha_secret_key", ""
         )
 
         return {
@@ -215,6 +261,9 @@ class Config:
             "turnstile_enabled": turnstile_enabled,
             "turnstile_site_key": turnstile_site_key,
             "turnstile_secret_key": turnstile_secret_key,
+            "tencent_captcha_enabled": tencent_captcha_enabled,
+            "tencent_captcha_app_id": tencent_captcha_app_id,
+            "tencent_captcha_secret_key": tencent_captcha_secret_key,
             "resend_enabled": data.get("resend_enabled", False),
             "resend_api_key": data.get("resend_api_key", ""),
             "admin_notify_email": data.get("admin_notify_email", ""),
@@ -251,6 +300,9 @@ class Config:
             "turnstile_enabled",
             "turnstile_site_key",
             "turnstile_secret_key",
+            "tencent_captcha_enabled",
+            "tencent_captcha_app_id",
+            "tencent_captcha_secret_key",
             "resend_enabled",
             "resend_api_key",
             "admin_notify_email",
@@ -271,15 +323,21 @@ class Config:
         (uploads_dir / "coordinates").mkdir(exist_ok=True)
         (uploads_dir / "masks").mkdir(exist_ok=True)
         (uploads_dir / "features").mkdir(exist_ok=True)  # Global feature cache
-        (uploads_dir / "ai_results").mkdir(exist_ok=True)
+        (uploads_dir / "ai_results_bundles").mkdir(exist_ok=True)
         (uploads_dir / "training").mkdir(exist_ok=True)
         (uploads_dir / "models").mkdir(exist_ok=True)
+        (uploads_dir / "extractor_checkpoints").mkdir(exist_ok=True)
         (uploads_dir / "logs").mkdir(exist_ok=True)
         (uploads_dir / "wsi_files").mkdir(exist_ok=True)
         (uploads_dir / "metadata").mkdir(exist_ok=True)
         (uploads_dir / "progress").mkdir(
             exist_ok=True
         )  # Shared progress files (AI ↔ Gateway)
+        autoresearch_dir = cls.get_autoresearch_dir()
+        autoresearch_dir.mkdir(exist_ok=True)
+        cls.get_autoresearch_sessions_dir().mkdir(exist_ok=True)
+        (autoresearch_dir / "dataset_cache").mkdir(exist_ok=True)
+        (autoresearch_dir / "pathlab_datasets").mkdir(exist_ok=True)
 
     # ========== Maintenance Mode ==========
     @classmethod

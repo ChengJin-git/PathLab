@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next'
 import {
   fetchWSIDetail,
   fetchAvailableHeatmaps,
-  fetchWSIList,
+  fetchAllWSIList,
+  fetchWSIIds,
   deleteWSIResults,
   HeatmapData,
   AvailableHeatmap,
@@ -30,6 +31,9 @@ import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
 import { ShareAnnotationDialog } from '../components/wsiViewer/ShareAnnotationDialog'
 import { ViewerOverlayControls } from '../components/wsiViewer/ViewerOverlayControls'
+import { buildSlideNavigationTooltip, getAdjacentSlideIds, shouldPersistAnnotationsBeforeSlideNavigation } from '../lib/wsiViewerNavigation'
+import { deriveAnnotationLabels, isMissingCurrentLabel } from '../lib/annotationLabels'
+import { getLabelFromDigitShortcut, isEditableTarget } from '../lib/wsiViewerAnnotationShortcuts'
 import {
   AnnotationRegion,
   AnnotationsMap,
@@ -45,7 +49,6 @@ import {
   saveSharedAnnotation,
   getSharedAnnotationSSEUrl,
   SharedAnnotationEvent,
-  deleteSharedAnnotation,
   listCollaborators,
   getMyAnnotationAccess,
 } from '../api/annotation'
@@ -53,6 +56,7 @@ import { useToast } from '../contexts/ToastContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { getFileType } from '../constants/fileTypes'
+import { isSegmentationTask, type TaskType } from '../constants/training'
 import { ApiError, getAuthToken } from '../api/client'
 import { API_BASE } from '../config'
 
@@ -106,6 +110,7 @@ export default function WSIViewerPage() {
 
   // Navigation state
   const [allWSIs, setAllWSIs] = useState<WSISummary[]>([])
+  const [orderedWsiIds, setOrderedWsiIds] = useState<string[]>([])
 
   // Multi-task heatmap state
   const [availableHeatmaps, setAvailableHeatmaps] = useState<AvailableHeatmap[]>([])
@@ -277,6 +282,10 @@ export default function WSIViewerPage() {
   const [hasGTAnnotations, setHasGTAnnotations] = useState(false)
   const [drawingTool, setDrawingTool] = useState<'rect' | 'polygon'>('rect')
   const [currentLabel, setCurrentLabel] = useState('')
+  const [rememberedLabelsByMode, setRememberedLabelsByMode] = useState<Record<'personal' | 'shared', string[]>>({
+    personal: [],
+    shared: [],
+  })
   const [labelColors, setLabelColors] = useState<Record<string, string>>({})
   const [isLabelDropdownOpen, setIsLabelDropdownOpen] = useState(false)
   const [allAnnotations, setAllAnnotations] = useState<AnnotationsMap>({})
@@ -314,8 +323,8 @@ export default function WSIViewerPage() {
   const annotationIdRef = useRef<string | null>(null)
   const saveRequestRef = useRef<Promise<boolean> | null>(null)
   const slideNavRef = useRef({
-    prevWSI: null as WSISummary | null,
-    nextWSI: null as WSISummary | null,
+    prevWsiId: null as string | null,
+    nextWsiId: null as string | null,
     annotationMode: false,
     hasUnsavedChanges: false,
     persistAnnotations: null as ((opts?: { showToast?: boolean }) => Promise<boolean>) | null,
@@ -359,6 +368,7 @@ export default function WSIViewerPage() {
   const [savingAnnotations, setSavingAnnotations] = useState(false)
   // Pending navigation when user tries to leave with unsaved changes
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
+  const [annotationCancelToken, setAnnotationCancelToken] = useState(0)
 
   const handleRemoteAnnotationPatch = useCallback((event: AnnotationPatchEvent) => {
     if (editingMode !== 'shared') return
@@ -429,15 +439,60 @@ export default function WSIViewerPage() {
       .catch(() => setCanAnnotate(true))
   }, [effectiveDatasetId])
 
-  // Load WSI list for navigation
-  // If coming from a dataset, load only that dataset's WSIs; otherwise load all
   useEffect(() => {
-    fetchWSIList(fromDataset ? datasetId : undefined).then(res => {
-      if (res && res.items) {
-        setAllWSIs(res.items)
+    let cancelled = false
+
+    if (!fromDataset || !datasetId) {
+      setOrderedWsiIds([])
+      return () => {
+        cancelled = true
       }
-    })
+    }
+
+    fetchWSIIds(datasetId)
+      .then((res) => {
+        if (!cancelled) {
+          setOrderedWsiIds(res.items ?? [])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOrderedWsiIds([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [fromDataset, datasetId])
+
+  useEffect(() => {
+    let cancelled = false
+    const shouldLoadSummaryList = !fromDataset || (editingMode === 'shared' && showCreateDatasetDialog && !!datasetId)
+
+    if (!shouldLoadSummaryList) {
+      setAllWSIs([])
+      return () => {
+        cancelled = true
+      }
+    }
+
+    fetchAllWSIList(fromDataset ? datasetId : undefined)
+      .then((res) => {
+        if (!cancelled) {
+          setAllWSIs(res?.items ?? [])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAllWSIs([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [datasetId, editingMode, fromDataset, showCreateDatasetDialog])
 
   useEffect(() => {
     if (!annotationMode || !effectiveDatasetId) {
@@ -516,11 +571,11 @@ export default function WSIViewerPage() {
     return availableHeatmaps.filter(h => h.task_id === selectedTaskId)
   }, [availableHeatmaps, selectedTaskId])
 
-  const isSegmentationTask = selectedTaskGroup.some(
-    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+  const isSelectedSegmentationTask = selectedTaskGroup.some(
+    h => isSegmentationTask(h.task_type)
   )
 
-  const effectiveFoldKey = isSegmentationTask ? undefined : selectedFoldKey
+  const effectiveFoldKey = isSelectedSegmentationTask ? undefined : selectedFoldKey
 
   const selectedTaskEntries = useMemo(() => {
     if (selectedTaskGroup.length === 0) return []
@@ -536,12 +591,13 @@ export default function WSIViewerPage() {
 
   const selectedTask = selectedTaskEntries.find(h => h.data_type === 'wsi' || h.data_type === 'patch') ?? selectedTaskEntries[0]
   const selectedSegmentationEntry = selectedTaskEntries.find(
-    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+    h => isSegmentationTask(h.task_type)
   )
+  const selectedTaskIsSegmentation = isSegmentationTask(selectedTask?.task_type)
   const hasPatchHeatmap = selectedTaskEntries.some(h => h.data_type === 'patch')
-  const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch' || h.data_type === 'patch_segmentation')
+  const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch')
   const canShowHeatmapOverlay = selectedTaskEntries.some(h => h.data_type === 'wsi' || h.data_type === 'patch')
-  const canShowSegMaskOverlay = selectedTaskEntries.some(h => h.data_type === 'patch_segmentation')
+  const canShowSegMaskOverlay = selectedTaskEntries.some(h => isSegmentationTask(h.task_type))
   const shouldShowOverlayControls = canShowHeatmapOverlay || canShowSegMaskOverlay
   const segmentationClasses = selectedSegmentationEntry?.classes ?? []
   const viewerDataLevel: 'wsi' | 'patch' = selectedTask?.data_type === 'patch' ? 'patch' : 'wsi'
@@ -570,7 +626,7 @@ export default function WSIViewerPage() {
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {
-    if (selectedTaskGroup.length === 0 || isSegmentationTask) return []
+    if (selectedTaskGroup.length === 0 || selectedTaskIsSegmentation) return []
     const folds = selectedTaskGroup
       .filter(h => h.fold_key)
       .map(h => h.fold_key!)
@@ -582,7 +638,7 @@ export default function WSIViewerPage() {
         return numA - numB
       })
     return folds
-  }, [isSegmentationTask, selectedTaskGroup])
+  }, [selectedTaskGroup, selectedTaskIsSegmentation])
 
   // Get unique tasks for dropdown (deduplicate K-fold entries)
   const uniqueTasks = useMemo(() => {
@@ -735,9 +791,18 @@ export default function WSIViewerPage() {
       })
   }, [isPatchLevel, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl])
 
-  const currentIndex = allWSIs.findIndex(w => w.wsi_id === wsi_id)
-  const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
-  const nextWSI = currentIndex >= 0 && currentIndex < allWSIs.length - 1 ? allWSIs[currentIndex + 1] : null
+  const orderedNavigationIds = useMemo(() => {
+    if (fromDataset) {
+      return orderedWsiIds
+    }
+
+    return allWSIs.map((wsi) => wsi.wsi_id)
+  }, [allWSIs, fromDataset, orderedWsiIds])
+
+  const { previousId: prevWsiId, nextId: nextWsiId } = useMemo(
+    () => getAdjacentSlideIds(orderedNavigationIds, wsi_id),
+    [orderedNavigationIds, wsi_id],
+  )
 
   // Annotation: computed values
   const currentRegions = useMemo(() => allAnnotations[wsi_id] || [], [allAnnotations, wsi_id])
@@ -761,15 +826,15 @@ export default function WSIViewerPage() {
     setFocusedRegionId(prev => prev && currentRegions.some(region => region.id === prev) ? prev : null)
   }, [currentRegions])
 
-  const allLabels = useMemo(() => {
-    const labels = new Set<string>()
-    for (const regions of Object.values(allAnnotations)) {
-      for (const r of regions) {
-        if (r.label) labels.add(r.label)
-      }
-    }
-    return Array.from(labels)
-  }, [allAnnotations])
+  const visibleLabels = useMemo(() => {
+    return deriveAnnotationLabels(allAnnotations, rememberedLabelsByMode[editingMode] ?? [])
+  }, [allAnnotations, editingMode, rememberedLabelsByMode])
+
+  const allLabels = visibleLabels
+
+  const missingCurrentLabel = useMemo(() => {
+    return isMissingCurrentLabel(currentLabel, visibleLabels)
+  }, [currentLabel, visibleLabels])
 
   const currentColor = useMemo(() => {
     if (!currentLabel) return '#3b82f6'
@@ -864,8 +929,10 @@ export default function WSIViewerPage() {
     })
   }, [slideHeight, slideWidth])
 
-  const handleFocusRegion = useCallback((regionId: string) => {
+  const handleFocusRegion = useCallback((regionId: string | null) => {
     setFocusedRegionId(regionId)
+
+    if (!regionId) return
 
     const region = currentRegions.find(item => item.id === regionId)
     if (!region || slideWidth <= 0 || slideHeight <= 0) {
@@ -1000,15 +1067,118 @@ export default function WSIViewerPage() {
 
   const handleLabelChange = useCallback((label: string) => {
     setCurrentLabel(label)
-    if (label) {
-      setLabelColors(prev => {
-        if (prev[label]) return prev
+    const trimmedLabel = label.trim()
+    if (trimmedLabel) {
+      setRememberedLabelsByMode(prev => {
+        const labelsInMode = prev[editingMode]
+        if (labelsInMode.includes(trimmedLabel)) return prev
         return {
           ...prev,
-          [label]: getColorForLabel(label, prev),
+          [editingMode]: [...labelsInMode, trimmedLabel],
+        }
+      })
+      setLabelColors(prev => {
+        if (prev[trimmedLabel]) return prev
+        return {
+          ...prev,
+          [trimmedLabel]: getColorForLabel(trimmedLabel, prev),
         }
       })
     }
+  }, [editingMode])
+
+  const handleCreateCurrentLabelInMode = useCallback(() => {
+    const trimmed = currentLabel.trim()
+    if (!trimmed) return
+    setRememberedLabelsByMode(prev => {
+      const labelsInMode = prev[editingMode]
+      if (labelsInMode.includes(trimmed)) return prev
+      return {
+        ...prev,
+        [editingMode]: [...labelsInMode, trimmed],
+      }
+    })
+    setLabelColors(prev => {
+      if (prev[trimmed]) return prev
+      return {
+        ...prev,
+        [trimmed]: getColorForLabel(trimmed, prev),
+      }
+    })
+  }, [currentLabel, editingMode])
+
+  const handleCreateLabelInCurrentMode = useCallback((label: string) => {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    handleLabelChange(trimmed)
+  }, [handleLabelChange])
+
+  const handleRenameLabelInCurrentMode = useCallback((oldLabel: string, newLabel: string) => {
+    const trimmedOld = oldLabel.trim()
+    const trimmedNew = newLabel.trim()
+    if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return
+
+    const affectedRegions = currentRegions.filter(region => region.label === trimmedOld)
+    if (affectedRegions.length > 0) {
+      setAllAnnotations(prev => ({
+        ...prev,
+        [wsi_id]: (prev[wsi_id] || []).map(region => region.label === trimmedOld ? { ...region, label: trimmedNew } : region),
+      }))
+      setHasUnsavedChanges(true)
+      if (editingMode === 'shared') {
+        locallyModifiedWsiIdsRef.current.add(wsi_id)
+        for (const region of affectedRegions) {
+          sendAnnotationPatch('update', wsi_id, { region_id: region.id, region_updates: { label: trimmedNew } })
+        }
+      } else {
+        immediatePersonalSaveRef.current = true
+      }
+    }
+
+    setRememberedLabelsByMode(prev => {
+      const labelsInMode = prev[editingMode]
+      const nextLabels = labelsInMode.map(label => label === trimmedOld ? trimmedNew : label)
+      if (!nextLabels.includes(trimmedNew)) nextLabels.push(trimmedNew)
+      return { ...prev, [editingMode]: Array.from(new Set(nextLabels)) }
+    })
+    setLabelColors(prev => {
+      if (prev[trimmedNew]) return prev
+      return { ...prev, [trimmedNew]: getColorForLabel(trimmedNew, prev) }
+    })
+    if (currentLabel === trimmedOld) setCurrentLabel(trimmedNew)
+  }, [currentLabel, currentRegions, editingMode, sendAnnotationPatch, wsi_id])
+
+  const handleDeleteLabelInCurrentMode = useCallback((label: string) => {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    const affectedRegions = currentRegions.filter(region => region.label === trimmed)
+    if (affectedRegions.length > 0) {
+      setAllAnnotations(prev => ({
+        ...prev,
+        [wsi_id]: (prev[wsi_id] || []).filter(region => region.label !== trimmed),
+      }))
+      setHasUnsavedChanges(true)
+      if (editingMode === 'shared') {
+        locallyModifiedWsiIdsRef.current.add(wsi_id)
+        for (const region of affectedRegions) {
+          sendAnnotationPatch('delete', wsi_id, { region_id: region.id })
+        }
+      } else {
+        immediatePersonalSaveRef.current = true
+      }
+    }
+    setRememberedLabelsByMode(prev => ({
+      ...prev,
+      [editingMode]: prev[editingMode].filter(item => item !== trimmed),
+    }))
+    if (currentLabel === trimmed) {
+      const nextLabel = visibleLabels.find(item => item !== trimmed) || t('annotation.defaultLabel')
+      handleLabelChange(nextLabel)
+    }
+  }, [currentLabel, currentRegions, editingMode, handleLabelChange, sendAnnotationPatch, t, visibleLabels, wsi_id])
+
+  const requestAnnotationCancel = useCallback(() => {
+    setAnnotationCancelToken(prev => prev + 1)
   }, [])
 
   const buildEmptyDatasetDraftAnnotations = useCallback((): AnnotationsMap => {
@@ -1322,7 +1492,7 @@ export default function WSIViewerPage() {
     sourceOrgan,
   }: {
     datasetName: string
-    taskType: 'classification' | 'segmentation'
+    taskType: TaskType
     sourceOrgan: string
   }) => {
     try {
@@ -1503,8 +1673,8 @@ export default function WSIViewerPage() {
   }, [editingMode, effectiveDatasetId, exitSharedMode, hasUnsavedChanges, user?.id, mergeLabelColorsFromAnnotations, t, toast])
 
   useEffect(() => {
-    slideNavRef.current.prevWSI = prevWSI
-    slideNavRef.current.nextWSI = nextWSI
+    slideNavRef.current.prevWsiId = prevWsiId
+    slideNavRef.current.nextWsiId = nextWsiId
     slideNavRef.current.annotationMode = annotationMode
     slideNavRef.current.hasUnsavedChanges = hasUnsavedChanges
     slideNavRef.current.persistAnnotations = persistAnnotations
@@ -1544,10 +1714,7 @@ export default function WSIViewerPage() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!slideNavRef.current.isPatchLevel) return
-      const el = document.activeElement as HTMLElement | null
-      if (!el) return
-      const tag = el.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) return
+      if (isEditableTarget(document.activeElement)) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
       const wasdCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD'])
@@ -1599,28 +1766,25 @@ export default function WSIViewerPage() {
 
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      const el = document.activeElement as HTMLElement | null
-      if (!el) return
-      const tag = el.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) return
+      if (isEditableTarget(document.activeElement)) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
-      const { prevWSI: prev, nextWSI: next, annotationMode: inAnnotation, hasUnsavedChanges: unsaved, persistAnnotations: persist } = slideNavRef.current
+      const { prevWsiId: prev, nextWsiId: next, annotationMode: inAnnotation, hasUnsavedChanges: unsaved, persistAnnotations: persist } = slideNavRef.current
 
       if (e.code === 'KeyQ' && prev) {
         e.preventDefault()
-        if (inAnnotation && unsaved && persist) {
+        if (shouldPersistAnnotationsBeforeSlideNavigation(inAnnotation, unsaved) && persist) {
           await persist({ showToast: false })
         }
-        navigate(`/wsi/${prev.wsi_id}`, {
+        navigate(`/wsi/${prev}`, {
           state: { fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition },
         })
       } else if (e.code === 'KeyE' && next) {
         e.preventDefault()
-        if (inAnnotation && unsaved && persist) {
+        if (shouldPersistAnnotationsBeforeSlideNavigation(inAnnotation, unsaved) && persist) {
           await persist({ showToast: false })
         }
-        navigate(`/wsi/${next.wsi_id}`, {
+        navigate(`/wsi/${next}`, {
           state: { fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition },
         })
       }
@@ -1630,8 +1794,31 @@ export default function WSIViewerPage() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [navigate, fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition])
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!annotationMode) return
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+      if (isEditableTarget(document.activeElement)) return
+
+      if (e.code === 'Escape') {
+        e.preventDefault()
+        requestAnnotationCancel()
+        return
+      }
+
+      const nextLabel = getLabelFromDigitShortcut(e.code, visibleLabels, e.key)
+      if (nextLabel) {
+        e.preventDefault()
+        handleLabelChange(nextLabel)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [annotationMode, handleLabelChange, requestAnnotationCancel, visibleLabels])
+
   const guardedNavigate = useCallback((navigateFn: () => void) => {
-    if (hasUnsavedChanges && annotationMode) {
+    if (shouldPersistAnnotationsBeforeSlideNavigation(annotationMode, hasUnsavedChanges)) {
       setPendingNavigation(() => navigateFn)
     } else {
       navigateFn()
@@ -1797,6 +1984,7 @@ export default function WSIViewerPage() {
       <div className="flex-1 flex flex-col bg-gray-50 relative min-h-[50vh] lg:min-h-0">
         <div className="flex items-center px-2 sm:px-4 py-2 sm:py-3 bg-white border-b border-gray-200 gap-2 sm:gap-4 shadow-sm z-10">
           <button
+            type="button"
             onClick={() => guardedNavigate(() => {
               if (fromAIChat) {
                 if (conversationId) {
@@ -1812,28 +2000,38 @@ export default function WSIViewerPage() {
                 navigate('/wsi-list')
               }
             })}
-            className="flex items-center gap-1 sm:gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all"
+            className="flex items-center gap-1 sm:gap-2 rounded-full border border-transparent px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-all hover:border-gray-200 hover:bg-gray-100 hover:text-slate-900 sm:px-3 sm:py-2 sm:text-sm"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">
               {fromAIChat ? t('wsiViewer.backToChat') : fromDataset && datasetName ? t('wsiViewer.backToDataset', { name: datasetName }) : t('common.back')}
             </span>
           </button>
-          <div className="w-px h-6 bg-gray-100"></div>
+          <div className="h-6 w-px bg-white/10"></div>
 
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <h3 className="flex items-center gap-2 text-gray-900 text-sm sm:text-base font-semibold truncate" title={`UUID: ${wsi_id}`}>
-              <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />
+            <h3 className="flex items-center gap-2 truncate text-sm font-semibold tracking-[-0.02em] text-white sm:text-base" title={`UUID: ${wsi_id}`}>
+              <Microscope className="h-3.5 w-3.5 text-secondary-300 sm:h-4 sm:w-4" />
               <span className="truncate">{meta?.original_filename || wsi_id}</span>
             </h3>
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
-              <Tooltip content={prevWSI ? `${t('common.previous')} (Q)` : t('wsiViewer.noPreviousSlide')}>
+            <div className="flex items-center gap-1 rounded-[1rem] border border-white/10 p-1">
+              <Tooltip content={buildSlideNavigationTooltip({
+                direction: 'previous',
+                hasTarget: !!prevWsiId,
+                shortcut: 'Q',
+                labels: {
+                  previousSlide: t('wsiViewer.previousSlide'),
+                  nextSlide: t('wsiViewer.nextSlide'),
+                  noPreviousSlide: t('wsiViewer.noPreviousSlide'),
+                  noNextSlide: t('wsiViewer.noNextSlide'),
+                },
+              })}>
               <button
                 type="button"
-                onClick={() => prevWSI && guardedNavigate(() => navigate(`/wsi/${prevWSI.wsi_id}`, {
+                onClick={() => prevWsiId && guardedNavigate(() => navigate(`/wsi/${prevWsiId}`, {
                   state: {
                     fromAIChat,
                     fromDataset,
@@ -1843,18 +2041,28 @@ export default function WSIViewerPage() {
                     chatScrollPosition,
                   }
                 }))}
-                disabled={!prevWSI}
-                className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
+                disabled={!prevWsiId}
+                className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
-                {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">Q</kbd>}
+                {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">Q</kbd>}
               </button>
               </Tooltip>
-              <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
-              <Tooltip content={nextWSI ? `${t('common.next')} (E)` : t('wsiViewer.noNextSlide')}>
+              <div className="mx-0.5 h-5 w-px bg-white/10"></div>
+              <Tooltip content={buildSlideNavigationTooltip({
+                direction: 'next',
+                hasTarget: !!nextWsiId,
+                shortcut: 'E',
+                labels: {
+                  previousSlide: t('wsiViewer.previousSlide'),
+                  nextSlide: t('wsiViewer.nextSlide'),
+                  noPreviousSlide: t('wsiViewer.noPreviousSlide'),
+                  noNextSlide: t('wsiViewer.noNextSlide'),
+                },
+              })}>
               <button
                 type="button"
-                onClick={() => nextWSI && guardedNavigate(() => navigate(`/wsi/${nextWSI.wsi_id}`, {
+                onClick={() => nextWsiId && guardedNavigate(() => navigate(`/wsi/${nextWsiId}`, {
                   state: {
                     fromAIChat,
                     fromDataset,
@@ -1864,18 +2072,18 @@ export default function WSIViewerPage() {
                     chatScrollPosition,
                   }
                 }))}
-                disabled={!nextWSI}
-                className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
+                disabled={!nextWsiId}
+                className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
-                {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">E</kbd>}
+                {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">E</kbd>}
               </button>
               </Tooltip>
             </div>
 
             {canAnnotate && (
               <>
-                <div className="w-px h-5 bg-gray-200" />
+                <div className="h-5 w-px bg-white/10" />
                 <AnnotationToolbar
                   annotationMode={annotationMode}
                   onToggleMode={() => {
@@ -1894,6 +2102,9 @@ export default function WSIViewerPage() {
                   onLabelChange={handleLabelChange}
                   labelColors={labelColors}
                   allLabels={allLabels}
+                  visibleLabels={visibleLabels}
+                  missingCurrentLabel={missingCurrentLabel}
+                  onCreateCurrentLabelInMode={handleCreateCurrentLabelInMode}
                   onDropdownOpenChange={setIsLabelDropdownOpen}
                   editingMode={editingMode}
                   onToggleEditingMode={handleToggleEditingMode}
@@ -1908,12 +2119,13 @@ export default function WSIViewerPage() {
                 {annotationMode && (
                   <Tooltip content={t('annotation.saveAnnotations')}>
                   <button
+                    type="button"
                     onClick={handleManualSave}
                     disabled={savingAnnotations || !hasUnsavedChanges}
-                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                    className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium transition-all sm:px-3 sm:py-2 sm:text-sm ${
                       hasUnsavedChanges
-                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                        : 'bg-gray-100 text-gray-400 cursor-default'
+                        ? 'border border-primary-400/80 bg-primary-500 text-white shadow-[0_18px_32px_rgba(59,130,246,0.35)] hover:bg-primary-400'
+                        : 'border border-white/10 bg-white/6 text-slate-400 cursor-default'
                     }`}
                   >
                     {savingAnnotations ? (
@@ -1931,16 +2143,18 @@ export default function WSIViewerPage() {
             )}
 
             <button
+              type="button"
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className={`lg:hidden p-2 rounded-lg ${isSidebarOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 border border-gray-200 shadow-sm'}`}
+              className={`lg:hidden rounded-full border p-2 ${isSidebarOpen ? 'border-primary-400/60 bg-primary-500/15 text-primary-100' : 'border-white/10 bg-white/6 text-slate-300 shadow-[0_16px_32px_rgba(15,23,42,0.28)]'}`}
             >
               <Layers className="w-4 h-4" />
             </button>
           </div>
         </div>
         <div
-          className="flex-1 relative bg-gray-100 overflow-hidden"
-          role="presentation"
+          className="relative flex-1 overflow-hidden bg-[#050814]"
+          role="application"
+          tabIndex={-1}
           onMouseMove={(e) => {
             if (editingMode !== 'shared' || !osdViewer?.viewport || !wsi_id) return
             const canvas = osdViewer.canvas?.element || osdViewer.canvas
@@ -1959,7 +2173,9 @@ export default function WSIViewerPage() {
             // Note: wheel event is handled via useEffect with { passive: false } to allow preventDefault
             <div
               ref={patchContainerRef}
-              className="w-full h-full flex items-center justify-center overflow-hidden bg-gray-100"
+              className="flex h-full w-full items-center justify-center overflow-hidden bg-[#050814]"
+              role="application"
+              tabIndex={-1}
               onMouseDown={handlePatchMouseDown}
               onMouseMove={handlePatchMouseMove}
               onMouseUp={handlePatchMouseUp}
@@ -1968,15 +2184,13 @@ export default function WSIViewerPage() {
             >
               <div
                 className="absolute top-4 left-4 z-30 flex flex-col items-start gap-2"
-                onMouseDown={(e) => e.stopPropagation()}
-                onMouseUp={(e) => e.stopPropagation()}
               >
-                <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl p-1 flex items-center">
+                <div role="presentation" className="flex items-center rounded-[1rem] border border-white/10 bg-slate-950/78 p-1 shadow-[0_20px_44px_rgba(2,6,23,0.55)] backdrop-blur-2xl">
                   <Tooltip content={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}>
                   <button
                     type="button"
                     onClick={handlePatchZoomIn}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <Plus className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">=</kbd>}
@@ -1986,18 +2200,18 @@ export default function WSIViewerPage() {
                   <button
                     type="button"
                     onClick={handlePatchZoomOut}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <Minus className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">-</kbd>}
                   </button>
                   </Tooltip>
-                  <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                  <div className="mx-0.5 h-5 w-px bg-white/10" />
                   <Tooltip content={`${t('wsiViewerComponents.viewer.resetView')} (R)`}>
                   <button
                     type="button"
                     onClick={handlePatchReset}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <RotateCcw className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">R</kbd>}
@@ -2007,15 +2221,16 @@ export default function WSIViewerPage() {
                   <button
                     type="button"
                     onClick={handlePatchFullscreen}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <Maximize2 className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">F</kbd>}
                   </button>
                   </Tooltip>
-                  <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                  <div className="mx-0.5 h-5 w-px bg-white/10" />
                   <div
-                    className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"
+                    role="note"
+                    className="hidden cursor-help items-center gap-1.5 px-2 py-1 text-slate-400 transition-colors hover:text-slate-200 sm:flex"
                     title={t('wsiViewerComponents.viewer.holdShiftHint')}
                   >
                     <Keyboard className="w-4 h-4" />
@@ -2024,14 +2239,14 @@ export default function WSIViewerPage() {
                 </div>
 
                 {showShortcuts && (
-                  <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl px-2.5 py-1.5 flex items-center gap-2 select-none pointer-events-none animate-in fade-in zoom-in-95 duration-200">
-                    <Move className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                  <div className="pointer-events-none flex select-none items-center gap-2 rounded-xl border border-white/10 bg-slate-950/78 px-2.5 py-1.5 shadow-[0_20px_44px_rgba(2,6,23,0.55)] backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-200">
+                    <Move className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
                     <div className="flex items-center gap-1">
                       {['W', 'A', 'S', 'D'].map(k => (
-                        <kbd key={k} className="flex items-center justify-center min-w-[20px] h-[20px] bg-white border border-gray-200 border-b-[2px] shadow-sm rounded text-[11px] font-mono font-bold text-gray-600">{k}</kbd>
+                        <kbd key={k} className="flex min-w-[20px] items-center justify-center rounded border border-white/10 bg-white/8 text-[11px] font-mono font-bold text-slate-200 shadow-sm h-[20px]">{k}</kbd>
                       ))}
                     </div>
-                    <span className="text-[11px] font-medium text-gray-500">{t('wsiViewerComponents.viewer.panHint')}</span>
+                    <span className="text-[11px] font-medium text-slate-400">{t('wsiViewerComponents.viewer.panHint')}</span>
                   </div>
                 )}
               </div>
@@ -2045,19 +2260,20 @@ export default function WSIViewerPage() {
                   transformOrigin: 'center center'
                 }}
                 onBaseImageLoad={handlePatchImageLoad}
-                 regions={overlayRegions}
-                 labelColors={overlayLabelColors}
-                 highlightedRegionId={focusedRegionId}
-                 slideWidth={slideWidth}
-                 slideHeight={slideHeight}
-                 annotationMode={annotationMode}
-                 drawingTool={drawingTool}
-                 currentLabel={currentLabel}
-                 currentColor={currentColor}
-                 onRegionCreated={handleRegionCreated}
-                 onRegionTooLarge={handleRegionTooLarge}
-                 isLabelDropdownOpen={isLabelDropdownOpen}
-               />
+                regions={overlayRegions}
+                labelColors={overlayLabelColors}
+                highlightedRegionId={focusedRegionId}
+                slideWidth={slideWidth}
+                slideHeight={slideHeight}
+                annotationMode={annotationMode}
+                drawingTool={drawingTool}
+                currentLabel={currentLabel}
+                currentColor={currentColor}
+                onRegionCreated={handleRegionCreated}
+                onRegionTooLarge={handleRegionTooLarge}
+                isLabelDropdownOpen={isLabelDropdownOpen}
+                cancelToken={annotationCancelToken}
+              />
             </div>
           ) : (
             // WSI-level viewer
@@ -2074,27 +2290,28 @@ export default function WSIViewerPage() {
                 onViewerReady={handleViewerReady}
                 onSlideInfo={handleSlideInfo}
               />
-               <AnnotationOverlay
-                 viewer={osdViewer}
-                 annotationMode={annotationMode}
-                 drawingTool={drawingTool}
-                 currentLabel={currentLabel}
-                 currentColor={currentColor}
-                 highlightedRegionId={focusedRegionId}
-                 regions={overlayRegions}
-                 labelColors={overlayLabelColors}
-                 slideWidth={slideWidth}
-                 slideHeight={slideHeight}
-                 onRegionCreated={handleRegionCreated}
-                 onRegionTooLarge={handleRegionTooLarge}
-                 isLabelDropdownOpen={isLabelDropdownOpen}
-               />
-               <PresenceCursorOverlay
-                 viewer={osdViewer}
-                 wsiId={wsi_id}
-                 cursors={cursors}
-                 enabled={editingMode === 'shared'}
-               />
+              <AnnotationOverlay
+                viewer={osdViewer}
+                annotationMode={annotationMode}
+                drawingTool={drawingTool}
+                currentLabel={currentLabel}
+                currentColor={currentColor}
+                highlightedRegionId={focusedRegionId}
+                regions={overlayRegions}
+                labelColors={overlayLabelColors}
+                slideWidth={slideWidth}
+                slideHeight={slideHeight}
+                onRegionCreated={handleRegionCreated}
+                onRegionTooLarge={handleRegionTooLarge}
+                isLabelDropdownOpen={isLabelDropdownOpen}
+                cancelToken={annotationCancelToken}
+              />
+              <PresenceCursorOverlay
+                viewer={osdViewer}
+                wsiId={wsi_id}
+                cursors={cursors}
+                enabled={editingMode === 'shared'}
+              />
             </>
           )}
 
@@ -2111,7 +2328,7 @@ export default function WSIViewerPage() {
               segMaskOpacity={segMaskOpacity}
               onSegMaskOpacityChange={setSegMaskOpacity}
               segmentationClasses={segmentationClasses}
-              canShowGT={isSegmentationTask || hasGTAnnotations}
+              canShowGT={selectedTaskIsSegmentation || hasGTAnnotations}
               showGT={showGT}
               onToggleGT={handleToggleGT}
             />
@@ -2124,6 +2341,7 @@ export default function WSIViewerPage() {
         <div className="flex lg:hidden items-center justify-between mb-2">
           <h2 className="text-lg font-bold text-gray-900">{t('wsiViewer.analysisData')}</h2>
           <button
+            type="button"
             onClick={() => setIsSidebarOpen(false)}
             className="p-2 rounded-lg bg-white border border-gray-200 text-gray-400"
           >
@@ -2142,6 +2360,13 @@ export default function WSIViewerPage() {
             canCreateDataset={editingMode !== 'shared' || isDatasetOwnerOrAdmin}
             labelColors={labelColors}
             focusedRegionId={focusedRegionId}
+            currentLabel={currentLabel}
+            visibleLabels={visibleLabels}
+            missingCurrentLabel={missingCurrentLabel}
+            onCurrentLabelChange={handleLabelChange}
+            onCreateLabel={handleCreateLabelInCurrentMode}
+            onRenameLabel={handleRenameLabelInCurrentMode}
+            onDeleteLabel={handleDeleteLabelInCurrentMode}
             onFocusRegion={handleFocusRegion}
             onUpdateRegion={handleUpdateRegion}
             onDeleteRegion={handleDeleteRegion}
@@ -2185,7 +2410,7 @@ export default function WSIViewerPage() {
                   selectedFoldKey={effectiveFoldKey}
                   setSelectedFoldKey={handleSelectedFoldChange}
                   availableFolds={availableFolds}
-                  supportsFoldSelection={!isSegmentationTask}
+                  supportsFoldSelection={!selectedTaskIsSegmentation}
                   uniqueTasks={uniqueTasks}
                   isTaskDropdownOpen={isTaskDropdownOpen}
                   setIsTaskDropdownOpen={setIsTaskDropdownOpen}
@@ -2317,12 +2542,14 @@ export default function WSIViewerPage() {
             </p>
             <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
               <button
+                type="button"
                 onClick={() => setPendingNavigation(null)}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 {t('common.cancel')}
               </button>
               <button
+                type="button"
                 onClick={() => {
                   const nav = pendingNavigation
                   setPendingNavigation(null)
@@ -2334,6 +2561,7 @@ export default function WSIViewerPage() {
                 {t('annotation.discardAndLeave')}
               </button>
               <button
+                type="button"
                 onClick={async () => {
                   const saved = await handleManualSave()
                   if (!saved) return

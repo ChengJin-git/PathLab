@@ -18,8 +18,8 @@ describe('getSegmentationStem', () => {
     expect(getSegmentationStem('slide_001.svs')).toBe('slide_001')
   })
 
-  it('strips .json then any remaining extension (e.g. slide.ndpi.json)', () => {
-    expect(getSegmentationStem('slide.ndpi.json')).toBe('slide')
+  it('strips only the last extension from a json file with dots in the name', () => {
+    expect(getSegmentationStem('slide.ndpi.json')).toBe('slide.ndpi')
   })
 
   it('lowercases the stem', () => {
@@ -34,6 +34,22 @@ describe('getSegmentationStem', () => {
   it('handles dots in filename stem (preserves middle dots after stripping extensions)', () => {
     const stem = getSegmentationStem('my.slide.001.svs')
     expect(stem).toBe('my.slide.001')
+  })
+
+  it('produces the same stem for an image and its paired json (simple name)', () => {
+    expect(getSegmentationStem('slide_001.jpg')).toBe(getSegmentationStem('slide_001.json'))
+  })
+
+  it('produces the same stem for an image and its paired json (dots in name)', () => {
+    expect(getSegmentationStem('tumor.scan.jpg')).toBe(getSegmentationStem('tumor.scan.json'))
+  })
+
+  it('produces the same stem for an image and its paired json (spaces and parens)', () => {
+    expect(getSegmentationStem('16 (1).jpg')).toBe(getSegmentationStem('16 (1).json'))
+  })
+
+  it('produces the same stem for an image and its paired json (uppercase extension)', () => {
+    expect(getSegmentationStem('SLIDE.JPG')).toBe(getSegmentationStem('SLIDE.json'))
   })
 })
 

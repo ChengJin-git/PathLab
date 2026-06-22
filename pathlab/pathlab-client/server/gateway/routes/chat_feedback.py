@@ -10,18 +10,22 @@ import os
 import uuid
 import tempfile
 from datetime import datetime
+from importlib import import_module
 from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
-from backend.database.repositories import FeedbackRepository, ExportTaskRepository
-from backend.auth import current_active_user, User
-from gateway.chat.permissions import (
-    require_conversation_access,
-    require_message_access,
-)
+get_db = import_module("backend.database").get_db
+_repositories = import_module("backend.database.repositories")
+FeedbackRepository = _repositories.FeedbackRepository
+ExportTaskRepository = _repositories.ExportTaskRepository
+_auth_module = import_module("backend.auth")
+current_active_user = _auth_module.current_active_user
+User = _auth_module.User
+_permissions = import_module("gateway.chat.permissions")
+require_conversation_access = _permissions.require_conversation_access
+require_message_access = _permissions.require_message_access
 from ..dependencies import logger
 from ..models import MessageFeedbackRequest
 
@@ -486,7 +490,7 @@ async def start_async_export(
     await db.commit()
 
     # Get db session maker for background task
-    from backend.database import async_session_maker
+    async_session_maker = import_module("backend.database").async_session_maker
 
     # Schedule background task
     background_tasks.add_task(
@@ -536,20 +540,26 @@ async def download_export_file(
     if not task:
         raise HTTPException(status_code=404, detail="Export task not found")
 
-    if task.status != "completed":
+    task_status = str(task.status)
+    if task_status != "completed":
         raise HTTPException(
-            status_code=400, detail=f"Export not ready. Status: {task.status}"
+            status_code=400, detail=f"Export not ready. Status: {task_status}"
         )
 
-    if not task.file_path:
+    file_path = getattr(task, "file_path", None)
+    if file_path is None:
         raise HTTPException(
             status_code=404, detail="No file generated (possibly empty export)"
         )
 
-    if not os.path.exists(task.file_path):
+    resolved_file_path = str(file_path)
+    if not os.path.exists(resolved_file_path):
         raise HTTPException(status_code=404, detail="Export file not found")
 
-    filename = f"feedbacks_export.{task.file_format}"
-    media_type = "text/csv" if task.file_format == "csv" else "application/json"
+    file_format = str(getattr(task, "file_format", "json"))
+    filename = f"feedbacks_export.{file_format}"
+    media_type = "text/csv" if file_format == "csv" else "application/json"
 
-    return FileResponse(path=task.file_path, filename=filename, media_type=media_type)
+    return FileResponse(
+        path=resolved_file_path, filename=filename, media_type=media_type
+    )

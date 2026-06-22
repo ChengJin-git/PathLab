@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
-import { Beaker, History, Loader2, Plus } from 'lucide-react'
-import { listPathScientistSessions } from '../../api/pathscientist'
+import { Beaker, History, Loader2, Plus, Trash2 } from 'lucide-react'
+import { listPathScientistSessions, deletePathScientistSession } from '../../api/pathscientist'
 import type { PathScientistSessionSummary } from '../../types/pathscientist'
-import { dedupePathScientistSessions } from '../../lib/pathscientistSessions'
+import { dedupePathScientistSessions, isLiveSessionStatus } from '../../lib/pathscientistSessions'
 import PathScientistBackButton from './PathScientistBackButton'
 import PathScientistSessionListItem from './PathScientistSessionListItem'
+import { ConfirmDialog } from '../settings/ConfirmDialog'
 
 export default function PathScientistSessionSidebar() {
   const { t } = usePathScientistTranslation()
@@ -17,6 +18,15 @@ export default function PathScientistSessionSidebar() {
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set())
   const [sharingIds, setSharingIds] = useState<Set<string>>(new Set())
+  const [dialogState, setDialogState] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+
+  const showConfirmDialog = (config: { title: string; message: string; onConfirm: () => void }) => {
+    setDialogState({ isOpen: true, ...config })
+  }
+
+  const closeConfirmDialog = () => {
+    setDialogState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+  }
 
   const loadSessions = async (silent = false) => {
     if (!silent) setIsLoading(true)
@@ -35,18 +45,47 @@ export default function PathScientistSessionSidebar() {
     void loadSessions()
   }, [t])
 
+  const visibleSessions = useMemo(() => dedupePathScientistSessions(sessions), [sessions])
+
   useEffect(() => {
+    if (!visibleSessions.some((session) => isLiveSessionStatus(session.status))) return undefined
     const timer = window.setInterval(() => {
       void loadSessions(true)
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [])
-
-  const visibleSessions = useMemo(() => dedupePathScientistSessions(sessions), [sessions])
+  }, [visibleSessions])
 
   const handleSessionDeleted = (sessionId: string) => {
     setSessions((current) => current.filter((session) => session.session_id !== sessionId))
   }
+
+  const handleClearAll = () => {
+    const nonLiveSessions = visibleSessions.filter((session) => !isLiveSessionStatus(session.status))
+    if (nonLiveSessions.length === 0) return
+    showConfirmDialog({
+      title: t('pathScientist.clearAllConfirmTitle'),
+      message: t('pathScientist.clearAllConfirmMessage', { count: nonLiveSessions.length }),
+      onConfirm: async () => {
+        closeConfirmDialog()
+        const idsToDelete = nonLiveSessions.map((s) => s.session_id)
+        setDeletingIds((current) => new Set([...current, ...idsToDelete]))
+        try {
+          await Promise.all(idsToDelete.map((id) => deletePathScientistSession(id)))
+          setSessions((current) => current.filter((session) => !idsToDelete.includes(session.session_id)))
+        } catch (err) {
+          setError(err instanceof Error ? err.message : t('pathScientist.clearAllFailed'))
+        } finally {
+          setDeletingIds((current) => {
+            const next = new Set(current)
+            idsToDelete.forEach((id) => next.delete(id))
+            return next
+          })
+        }
+      },
+    })
+  }
+
+  const hasNonLiveSessions = visibleSessions.some((session) => !isLiveSessionStatus(session.status))
 
   return (
     <nav
@@ -65,11 +104,24 @@ export default function PathScientistSessionSidebar() {
         </button>
       </div>
 
-      <div className="flex items-center gap-2 px-4 py-3">
-        <History className="h-4 w-4 text-gray-400" />
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-          {t('pathScientist.sessions')}
-        </h3>
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-2">
+          <History className="h-4 w-4 text-gray-400" />
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+            {t('pathScientist.sessions')}
+          </h3>
+        </div>
+        {hasNonLiveSessions && (
+          <button
+            type="button"
+            onClick={() => void handleClearAll()}
+            className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-700"
+            aria-label={t('pathScientist.clearAll')}
+          >
+            <Trash2 className="h-3 w-3" />
+            {t('pathScientist.clearAll')}
+          </button>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
@@ -121,6 +173,11 @@ export default function PathScientistSessionSidebar() {
           </ul>
         )}
       </div>
+
+      <ConfirmDialog
+        dialog={dialogState}
+        onClose={closeConfirmDialog}
+      />
     </nav>
   )
 }

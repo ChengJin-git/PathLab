@@ -49,6 +49,10 @@
     "pleaseEnterUsernameAndPassword": "Please enter username and password",
     "copyright": "© 2026",
     "protectedByTurnstile": "protected by Cloudflare Turnstile",
+    "protectedByTencent": "protected by Tencent Captcha",
+    "captchaRequired": "Please complete the captcha verification",
+    "captchaExpired": "Captcha expired. Please try again.",
+    "captchaError": "Captcha verification failed. Please try again.",
     "savedSuccess": "Saved!",
     "savingText": "Saving...",
     "saveSettings": "Save Settings",
@@ -72,7 +76,7 @@
     "welcomeBack": "Welcome back",
     "signedInAs": "Signed in as",
     "systemMaintenance": "System is under maintenance. Please try again later.",
-    "sessionExpired": "Your account has been logged in on another device. Current session has ended.",
+    "sessionExpired": "Your account is signed in on more than 2 devices. Current session has ended.",
     "accountPendingApproval": "Your account is pending admin approval. You will receive an email notification once activated."
   },
   "nav": {
@@ -151,7 +155,7 @@
     "donate": "Donate",
     "enterUsername": "Enter your username",
     "enterPassword": "Enter your password",
-    "buildVersion": "Build v1.0.4-stable",
+    "buildVersion": "Build v1.0.5-stable",
     "legalNotice": "Before signing in, you may review the Terms of Service and Privacy Notice. First access still requires acceptance before you can enter the system.",
     "viewTerms": "View Terms of Service",
     "viewPrivacy": "View Privacy Notice",
@@ -185,7 +189,7 @@
     "aboutText1Part1": "PathLab",
     "aboutText1Part2": " is an AI-powered pathology analysis platform for pathology image analysis.",
     "aboutText2": "The platform integrates state-of-the-art deep learning models with an intuitive AI assistant to help researchers set up and run pathology analysis tasks.",
-    "aboutText3": "Developed by SmartLab.",
+    "aboutText3": "Developed by SmartXLab.",
     "language": "Language",
     "languageDesc": "Select your preferred language",
     "remoteServices": "Remote Services",
@@ -198,7 +202,7 @@
       "minSixChars": "Min 6 characters",
       "nickname": "Nickname",
       "displayNameOptional": "Display name (optional)",
-      "email": "Email",
+      "email": "Registration / Notification Email",
       "emailPlaceholder": "e.g. user@example.com",
       "role": "Role",
       "roleAdmin": "Admin",
@@ -213,7 +217,7 @@
       "username": "Username",
       "nickname": "Nickname",
       "enterNickname": "Enter nickname",
-      "email": "Email",
+      "email": "Registration / Notification Email",
       "emailPlaceholder": "e.g. user@example.com",
       "newPassword": "New Password",
       "leaveEmptyToKeep": "Leave empty to keep current",
@@ -622,6 +626,7 @@
       "failedToSendNotice": "Failed to send notice",
       "createUser": "Create User",
       "openPermissionCenter": "Permission Center",
+      "emailTemplates": "Email Templates",
       "managePermissionsByDataset": "By Dataset",
       "refresh": "Refresh",
       "usersSelected": "{{count}} selected",
@@ -720,6 +725,10 @@
       "orphanedFilesCleanupSummary": "Orphaned files cleanup: {{files}} files, {{dirs}} directories deleted ({{emptyDirs}} empty), {{failed}} failed, {{size}} freed",
       "batchRegisterTitle": "Batch Register",
       "batchRegisterDescription": "Scan a directory and register all valid files",
+      "scanInProgressTitle": "Scanning files in the selected directory",
+      "scanInProgressDescription": "PathLab is indexing the folder contents...",
+      "refreshingScanResults": "Refreshing scan results...",
+      "refreshingSegmentationAnnotations": "Refreshing segmentation annotation matches...",
       "enterDirectoryPath": "Enter directory path",
       "browse": "Browse",
       "orphanedFiles": "Orphaned Files",
@@ -789,6 +798,7 @@
       "labelCoordinates": "Coordinates",
       "labelMasks": "Masks",
       "labelAIResults": "AI Results",
+      "labelAIResultBundles": "AI Results",
       "labelFeature": "Feature",
       "labelTrainingData": "Training Data",
       "labelModels": "Models",
@@ -842,6 +852,30 @@
       "pdfParseBusy": "The system is currently busy and cannot process this document right now. Please try again later.",
       "pdfFailedCount": "{{count}} documents failed",
       "summarizingPdf": "Generating content summary..."
+    },
+    "emailTemplateModal": {
+      "title": "Email Template Configuration",
+      "variables": "Variables:",
+      "templates": {
+        "new_user_registration_notice": "New User Registration (User)",
+        "account_activated": "Account Activated (User)",
+        "task_completed_notice": "Task Completed (User)",
+        "admin_new_user_registration_notice": "New User Registration (Admin)"
+      },
+      "subject": "Subject",
+      "body": "Body",
+      "modeVisual": "Edit",
+      "modePreview": "Preview",
+      "bold": "Bold",
+      "italic": "Italic",
+      "underline": "Underline",
+      "insertLink": "Insert Link",
+      "link": "Link",
+      "linkPrompt": "Enter URL",
+      "clearFormat": "Clear Formatting",
+      "cancel": "Cancel",
+      "saving": "Saving...",
+      "save": "Save Template"
     }
   },
   "layout": {
@@ -855,13 +889,18 @@
     "profileMenu": "Profile Menu",
     "switchLanguage": "Switch Language",
     "changePassword": "Change Password",
-    "setEmail": "Set Email"
+    "setEmail": "Set Email",
+    "shellEyebrow": "Pathology Workspace",
+    "shellAssistantTitle": "Research Assistant",
+    "shellWorkspaceTitle": "Precision Workbench"
   },
   "setEmail": {
-    "title": "Set Email",
-    "currentEmail": "Current email:",
-    "newEmail": "New Email",
+    "title": "Set Contact Email",
+    "currentEmail": "Current contact email:",
+    "noEmailSet": "No contact email set.",
+    "newEmail": "New Contact Email",
     "emailPlaceholder": "user@example.com",
+    "emailHint": "This email is used for notifications and contact only, not as your username.",
     "submit": "Update Email",
     "submitting": "Updating...",
     "success": "Email updated successfully",
@@ -999,6 +1038,8 @@
     "loadingFileInfo": "Loading file information...",
     "backToChat": "Back to Chat",
     "backToDataset": "Back to {{name}}",
+    "previousSlide": "Previous slide",
+    "nextSlide": "Next slide",
     "noPreviousSlide": "No previous slide",
     "noNextSlide": "No next slide",
     "zoomIn": "Zoom In",
@@ -1136,9 +1177,12 @@
       "featureExtractor": "Feature Extractor",
       "dataConfig": "Data Configuration",
       "splitMethod": "Split Method",
+      "stratification": "Stratification",
       "splitRandom": "Random",
       "splitKFold": "-Fold Cross-Validation",
       "splitManual": "Predefined Split",
+      "stratifiedEnabled": "Stratified",
+      "stratifiedDisabled": "Non-stratified",
       "aggregator": "Aggregator",
       "targetDataset": "Target Dataset",
       "datasetId": "Dataset ID",
@@ -1168,6 +1212,27 @@
       "earlyStoppingPatience": "Early Stopping Patience",
       "yes": "Yes",
       "no": "No"
+    },
+    "batchInference": {
+      "summary": "Inference Summary",
+      "totalSlides": "Total Slides",
+      "processedSlides": "Processed",
+      "classDistribution": "Class Distribution",
+      "results": "Inference Results",
+      "noResults": "No results yet",
+      "slideId": "Slide ID",
+      "filename": "Filename",
+      "prediction": "Prediction",
+      "confidence": "Confidence",
+      "riskScore": "Risk Score",
+      "riskGroup": "Risk Group",
+      "predictionMask": "Prediction Mask",
+      "maskGenerated": "Generated",
+      "maskMissing": "Not generated",
+      "exportCsv": "Export CSV",
+      "showing": "Showing {{start}}–{{end}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next"
     }
   },
   "storagePage": {
@@ -1196,7 +1261,8 @@
       "training": "Training Features",
       "models": "Trained Models",
       "logs": "Training Logs",
-      "wsiFiles": "Original Files"
+      "wsiFiles": "Original Files",
+      "ai_result_bundles": "AI Results"
     },
     "orphanedFiles": {
       "title": "Orphaned Files Detection",
@@ -1219,7 +1285,8 @@
       "featuresCache": "Feature",
       "aiResults": "AI Results",
       "trainingDirs": "Training Directories",
-      "logs": "Logs"
+      "logs": "Logs",
+      "ai_result_bundles": "AI Result Bundles"
     },
     "emptyDatasets": {
       "title": "Empty Dataset Cleanup",
@@ -1285,24 +1352,29 @@
     "generatingTitle": "Generating title...",
     "untitledSession": "Untitled session",
     "live": "Live",
+    "clearAll": "Clear all",
+    "clearAllConfirmTitle": "Clear all sessions",
+    "clearAllConfirmMessage": "Are you sure you want to clear {{count}} sessions? This will delete the sessions and their workspace data. Shared datasets will not be removed.",
+    "clearAllFailed": "Failed to clear sessions",
     "sessionsPage": {
       "title": "Research sessions",
       "description": "Start and inspect autonomous computational pathology runs from the PathLab interface. This MVP shows live events and raw state while the richer transcript UI is being built.",
       "refresh": "Refresh",
       "newSession": "New session",
       "loading": "Loading sessions...",
-      "emptyTitle": "No PathScientist sessions yet",
+      "emptyTitle": "No AutoResearch sessions yet",
       "emptyDescription": "Create a short session to verify the backend bridge and event stream.",
       "startOne": "Start one",
       "workspace": "Workspace",
       "unknownTime": "unknown",
-      "untitledSession": "Untitled PathScientist session",
+      "untitledSession": "Untitled AutoResearch session",
       "stopRun": "Stop run",
       "delete": "Delete",
       "deleteSession": "Delete session",
       "stopFailed": "Failed to stop session",
       "deleteFailed": "Failed to delete session",
-      "deleteConfirm": "Delete this PathScientist session and its backend workspace? Generated code, logs, models, and run results for this session will be removed. Shared datasets are not deleted."
+      "deleteConfirmTitle": "Delete session",
+      "deleteConfirm": "Delete this AutoResearch session and its backend workspace? Generated code, logs, models, and run results for this session will be removed. Shared datasets are not deleted."
     },
     "clinical": {
       "researchQuestion": "Research question",
@@ -1354,6 +1426,7 @@
       "shareFailed": "Failed to share session",
       "downloadSuccess": "Session download started",
       "downloadFailed": "Failed to download session",
+      "deleteConfirmTitle": "Delete session",
       "deleteConfirm": "Delete this session and its workspace data? Shared datasets will not be removed.",
       "deleteSuccess": "Session deleted",
       "deleteFailed": "Failed to delete session"
@@ -1429,18 +1502,18 @@
       "samples": "{{count}} samples"
     },
     "newSessionPage": {
-      "title": "Start a PathScientist session",
-      "description": "Describe the computational pathology task. PathScientist will start a backend session and stream live events into the run detail page.",
+      "title": "Start an AutoResearch session",
+      "description": "Describe the computational pathology task. AutoResearch will start a backend session and stream live events into the run detail page.",
       "researchQuestion": "Research question",
       "questionPlaceholder": "Extract Virchow2 features for this WSI folder, but do not train yet...",
       "maxIter": "Max iter",
       "starting": "Starting...",
       "startSession": "Start session",
-      "startFailed": "Failed to start PathScientist session"
+      "startFailed": "Failed to start AutoResearch session"
     },
     "sessionPage": {
       "sessionDetail": "Session detail",
-      "description": "Structured PathScientist execution console for this run.",
+      "description": "Structured AutoResearch execution console for this run.",
       "researchQuestion": "Research question",
       "deleteSession": "Delete session",
       "resumeSession": "Resume session",
@@ -1454,7 +1527,7 @@
     },
     "stageTimeline": {
       "title": "Stage timeline",
-      "description": "Compressed view of the PathScientist research pipeline."
+      "description": "Compressed view of the AutoResearch research pipeline."
     },
     "executionConsole": {
       "title": "Execution console",
@@ -1613,7 +1686,9 @@
       "backbone": "Backbone",
       "architecture": "Architecture",
       "featureExtractorSeg": "Feature Extractor",
-      "decoder": "Decoder"
+      "decoder": "Decoder",
+      "batchModel": "Model",
+      "batchDataset": "Dataset"
     },
     "progress": {
       "creatingTask": "Creating Task",
@@ -1630,6 +1705,17 @@
       "batchWarning": "You are about to delete {{count}} tasks. All associated data will be removed according to the selected mode.",
       "loadingStorageInfo": "Loading storage info...",
       "freesSurface": "Frees Surface",
+      "cleanupPendingTitle": "Task data will be cleaned up",
+      "cleanupPendingDesc": "Deleting this task will free its training data, logs, and result files.",
+      "quickScopeTitle": "What this will delete",
+      "quickScopeStandardDesc": "Standard delete cleans task-generated files while keeping trained models available.",
+      "quickScopeCompleteDesc": "Complete delete cleans task-generated files and removes trained models too.",
+      "trainingDataQuick": "Training data and extracted task features",
+      "aiResultsQuick": "AI result files linked to this task",
+      "logsQuick": "Training logs",
+      "analysisLogsQuick": "Analysis logs",
+      "modelsQuick": "Trained model files",
+      "modelsKeptQuick": "Trained models are kept",
       "files": "Files ({{count}})",
       "trainingData": "Training data ({{size}})",
       "aiResults": "AI results ({{size}})",
@@ -1832,6 +1918,21 @@
     "labelFileReady": "Label file ready",
     "labelFileLoaded": "loaded — metadata will be applied to matched files.",
     "dropImageFilesBelow": "Drop your image files below to match them with the label data.",
+    "collectionProgressTitle": "Collecting files from your folder",
+    "collectionProgressDescription": "PathLab is scanning dropped folders in batches.",
+    "collectionProgressStats": "Files found: {{files}}, folders found: {{directories}}",
+    "collectionProgressCurrentDirectory": "Currently scanning: {{name}}",
+    "collectionTopLevelEntries": "Top-level entries: {{count}}",
+    "collectionFilesDiscovered": "Files found: {{count}}",
+    "collectionFoldersDiscovered": "Folders found: {{count}}",
+    "collectionCurrentDirectory": "Currently scanning: {{name}}",
+    "collectionPhase": {
+      "preparing": "Preparing",
+      "collecting": "Collecting",
+      "matching": "Matching",
+      "complete": "Complete"
+    },
+    "fileProcessingError": "Error processing dropped files.",
     "skippedUnsupportedFiles": "Skipped {{count}} unsupported file(s): {{files}}{{more}}. Supported formats: {{extensions}}",
     "dropFilesHere": "Drop files here",
     "supportedFormats": "SVS, TIFF, NDPI, MRXS, SCN, VSI, DICOM, PNG, JPG",
@@ -1872,6 +1973,10 @@
     "statusDefault": "—",
     "eventOption": "Event",
     "censoredOption": "Censored",
+    "survivalStatusConvention": "Convention",
+    "survivalStatusEvent": "1 = Event occurred (e.g., death, recurrence, endpoint reached)",
+    "survivalStatusCensored": "0 = Censored (no event observed during follow-up)",
+    "statusTooltip": "1 = Event occurred · 0 = Censored",
     "caseIdPlaceholder": "Case ID",
     "agePlaceholder": "Age",
     "sourceDefault": "Select source",
@@ -1897,6 +2002,15 @@
     "successPrefix": "Success:",
     "readyToRegister": "{{count}} file(s) ready to register",
     "pageIndicator": "{{current}} / {{total}}",
+    "previousPage": "Previous page",
+    "nextPage": "Next page",
+    "missingLabelSummary": "{{count}} file(s) are missing labels",
+    "missingLabelClickHint": "Select a filename to jump to its row and fill the label.",
+    "missingLabelFilterHint": "Too many files are missing labels to list individually. Show only missing files to review them.",
+    "showOnlyMissingLabels": "Show only missing labels",
+    "showAllFiles": "Show all files",
+    "validatingMetadata": "Validating metadata...",
+    "importing": "Importing...",
     "cancel": "Cancel",
     "uploadCsv": "Upload CSV",
     "addToDataset": "Add to Dataset",
@@ -1968,10 +2082,17 @@
     "latestAnalysis": "Latest Analysis",
     "externalValidationEmptyHint": "Select a model and dataset to run external validation.",
     "selectTask": "Select Task",
+    "searchModels": "Search models...",
+    "noMatchingModels": "No models match your search",
+    "searchTasks": "Search tasks...",
+    "noMatchingTasks": "No tasks match your search",
     "available": "{{count}} available",
     "selectTaskPlaceholder": "Select a task...",
     "resultsCount": "{{count}} results",
     "noResults": "no results",
+    "independentInference": {
+      "unavailable": "Unavailable: external storage not accessible"
+    },
     "analysisAvailable": "analyzed",
     "noTasksAvailable": "No tasks available",
     "analysisSubmitted": "Analysis Submitted",
@@ -2034,6 +2155,85 @@
       "dice_curve": "Dice score over epochs",
       "per_class_iou": "Per-class IoU distribution across the validation set",
       "per_class_dice": "Per-class Dice distribution across the validation set"
+    },
+    "batchInference": {
+      "tabTitle": "Batch Inference",
+      "panelDescription": "Run a trained model over an unlabeled dataset to generate predictions",
+      "selectModel": "Select Model",
+      "selectModelPlaceholder": "Select a model...",
+      "selectDataset": "Target Dataset",
+      "selectDatasetPlaceholder": "Select an unlabeled dataset...",
+       "noUnlabeledDatasets": "No unlabeled datasets found",
+      "noUnlabeledDatasetsHint": "Only datasets without labels are eligible. Upload slides without assigning labels to create one.",
+      "showAllDatasets": "Show all datasets",
+      "filterUnlabeled": "Unlabeled only",
+      "dataType": {
+        "patch": "patches",
+        "wsi": "slides",
+        "slide": "slides",
+        "tile": "tiles"
+      },
+      "taskType": {
+        "classification": "Classification",
+        "patch_classification": "Classification",
+        "segmentation": "Segmentation",
+        "patch_segmentation": "Segmentation",
+        "survival": "Survival"
+      },
+      "items": "items",
+      "compatibilityNote": "Model and dataset must have matching task type and data type.",
+      "incompatibleDataset": "Incompatible: task type or data type mismatch",
+      "unavailableDataset": "Unavailable: external storage not accessible",
+      "description": "Description (Optional)",
+      "descriptionPlaceholder": "Add notes about this batch inference run...",
+      "submit": "Run Batch Inference",
+      "submitting": "Submitting...",
+      "inProgress": "Batch Inference in Progress...",
+      "submitted": "Submitted",
+      "submittedInfo": "Batch inference task queued!",
+      "analysisSubmittedTrack": "Batch inference submitted! Track progress in the Background Tasks panel.",
+      "viewTaskDetail": "View task detail →",
+      "noCompletedTasks": "No Completed Batch Inference Tasks",
+      "noCompletedHint": "Submit a batch inference job to see results here.",
+      "selectTask": "Select Task",
+      "selectTaskPlaceholder": "Select a completed task...",
+      "results": "Results",
+      "exportCsv": "Export CSV",
+      "exporting": "Exporting...",
+      "noResults": "No results available",
+      "slideId": "Slide ID",
+      "predictionClass": "Class",
+      "confidence": "Confidence",
+      "riskScore": "Risk Score",
+      "riskGroup": "Risk Group",
+      "eventTime": "Predicted Time",
+      "instanceCount": "Instances",
+      "predictionMask": "Prediction Mask",
+      "maskGenerated": "Generated",
+      "maskMissing": "Not generated",
+      "pagination": {
+        "showing": "Showing {{start}}–{{end}} of {{total}}",
+        "previous": "Previous",
+        "next": "Next"
+      },
+      "summary": {
+        "title": "Batch Inference Complete",
+        "totalSlides": "Total Slides",
+        "completedSlides": "Completed",
+        "model": "Model",
+        "dataset": "Dataset",
+        "viewResults": "View Results →"
+      },
+      "status": {
+        "pending": "Pending",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      },
+      "failedToLoad": "Failed to load batch inference tasks",
+      "failedToSubmit": "Failed to submit batch inference",
+      "failedToExport": "Failed to export results"
     }
   },
   "listPage": {
@@ -2110,6 +2310,7 @@
     "failedUpdateVisibility": "Failed to update visibility",
     "newDataset": "New Dataset",
     "newDatasetDescription": "Register slides to create a new dataset",
+    "externalUnavailable": "Unavailable",
     "noFilteredDatasets": "No datasets match the current filters",
     "noFilteredDatasetsDescription": "Try adjusting or clearing the filters to see more datasets.",
     "failedDeleteWsi": "Failed to delete: {{error}}",
@@ -2292,7 +2493,8 @@
       "backToDatasets": "Back to Datasets",
       "datasetName": "{{name}}",
       "selectSlides": "Select files for training ({{count}} selected)",
-      "viewFiles": "View / Manage Files"
+      "viewFiles": "View / Manage Files",
+      "unavailable": "Unavailable"
     },
     "dataSplit": {
       "title": "Data Split Strategy",
@@ -2315,6 +2517,8 @@
       "cannotKFold": "Cannot use K-Fold",
       "kFoldSummary": "{{k}}-Fold CV: {{classes}} classes, {{samples}} labeled samples",
       "kFoldEachFold": "~{{count}} samples per fold",
+      "stratifiedSplit": "Stratified Split",
+      "stratifiedSplitDesc": "Preserve annotation/category distribution across generated splits.",
       "readyPreDefined": "Pre-defined splits ready",
       "train": "Train",
       "val": "Val",
@@ -2352,6 +2556,13 @@
       "foundationSegmentationDesc": "Use a spatial-capable foundation model extractor with a fixed lightweight decoder.",
       "architecture": "Architecture",
       "backbone": "Backbone",
+      "decoderType": "Decoder Head",
+      "decoder": {
+        "conv": "Convolutional",
+        "linear": "Linear",
+        "dpt": "DPT",
+        "unetr": "UNETR"
+      },
       "lossFunction": "Loss Function",
       "search": "Search...",
       "trainingParams": "Training Parameters",
@@ -2411,9 +2622,12 @@
       "level": "Level {{level}}",
       "learning": "Learning",
       "dataStrategy": "Data Strategy",
+      "split": "Split",
       "batch": "Batch {{size}}",
       "balanced": "Balanced",
       "standard": "Standard",
+      "stratifiedEnabled": "Stratified",
+      "stratifiedDisabled": "Non-stratified",
       "fixRequired": "Fix Required",
       "systemSuggestions": "System Suggestions",
       "validating": "Validating configuration...",
@@ -2475,6 +2689,10 @@
       "taskName": "Task Name",
       "taskNamePlaceholder": "e.g. Lung Cancer Classification",
       "taskTypeLabel": "Task Type",
+      "wsi_classification": "WSI Classification",
+      "patch_classification": "Patch Classification",
+      "wsi_survival": "WSI Survival",
+      "patch_segmentation": "Patch Segmentation",
       "classification": "Classification",
       "categoricalLabels": "Identify pathology type or grade",
       "survivalPrediction": "Survival Prediction",
@@ -2766,9 +2984,25 @@
       "task": "Task:",
       "id": "ID:",
       "trainingStarted": "Training Started",
+      "inferenceStarted": "Inference Started",
       "dataset": "Dataset:",
       "type": "Type:",
       "csvReady": "CSV Ready"
+    },
+    "batchInferenceConfig": {
+      "title": "Batch Inference",
+      "description": "Run model inference on an unlabeled dataset",
+      "model": "Model",
+      "dataset": "Dataset",
+      "submit": "Start Batch Inference",
+      "submitting": "Submitting...",
+      "submitted": "Batch Inference Submitted",
+      "viewTaskDetail": "View Task Detail",
+      "missingConfig": "Missing required configuration (model or dataset)",
+      "failedToSubmit": "Failed to submit",
+      "uploadedImages": "Uploaded images",
+      "imageCount": "{{count}} images",
+      "inferenceStarted": "Inference task started"
     },
     "renameTask": {
       "title": "Rename Training Task",
@@ -3014,7 +3248,8 @@
     "downloadFullResults": "Download Full Results",
     "modelFiles": "Model Files",
     "downloadModel": "Export Model",
-    "exportingModel": "Preparing Export..."
+    "exportingModel": "Preparing Export...",
+    "exportingFullResults": "Preparing Full Export..."
   },
   "analysisCharts": {
     "confusionMatrix": "Confusion Matrix",
@@ -3251,6 +3486,7 @@
       "failedToLoadTiles": "Failed to load tiles",
       "failedToInitialize": "Failed to initialize viewer",
       "failedToLoadImage": "Failed to load image",
+      "externalStorageUnavailable": "External storage unavailable{{reason}}",
       "patchImageAlt": "Patch Image"
     },
     "attentionClassSelector": {
@@ -3330,8 +3566,10 @@
       "training": "Training",
       "analyzingResults": "Analyzing Results",
       "externalValidation": "External Validation",
+      "batchInference": "Batch Inference",
       "externalAnalysis": "External Analysis",
       "internalAnalysis": "Internal Analysis",
+      "segmentationExport": "Segmentation Mask Export",
       "storage": "Storage",
       "batchImport": "Batch Import",
       "metadataUpdate": "Metadata Update",
@@ -3339,6 +3577,7 @@
       "cleanupEmptyDatasets": "Cleanup Empty Datasets",
       "unbindDataset": "Unbind Dataset",
       "resetDerivedData": "Reset Derived Data",
+      "scanDirectory": "Scan Directory",
       "deleteExternal": "Delete External",
       "extraction": "Extraction",
       "task": "Task",
@@ -3349,7 +3588,7 @@
       "training": {
         "creating": "Creating Task",
         "queued": "Queued",
-        "pending": "Pending",
+        "pending": "Checking Dataset Integrity",
         "patching": "Patching Images",
         "extracting": "Extracting Features",
         "training": "Training Model",
@@ -3359,6 +3598,18 @@
         "cancelled": "Cancelled"
       },
       "validation": {
+        "queued": "Queued",
+        "pending": "Pending",
+        "patching": "Patching Images",
+        "extracting": "Extracting Features",
+        "training": "Running Inference",
+        "resuming": "Resuming",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      },
+      "batchInference": {
+        "creating": "Creating Task",
         "queued": "Queued",
         "pending": "Pending",
         "patching": "Patching Images",
@@ -3397,14 +3648,19 @@
       "cancelled": "Cancelled",
       "analyzing": "Analyzing: {{name}}",
       "training": "Training: {{name}}",
-      "validation": "Validation: {{name}}"
+      "validation": "Validation: {{name}}",
+      "batchInference": "Batch inference: {{name}}",
+      "analysisExport": "Exporting analysis: {{id}}",
+      "segmentationMaskExport": "Exporting segmentation masks: {{name}}",
+      "packagingSegmentationMasks": "Packaging segmentation masks"
     },
     "relocatingToPath": "Relocating to {{name}}",
     "errors": {
       "migrationFailed": "Migration failed",
       "notAuthenticated": "Not authenticated",
       "extractionFailed": "Extraction failed",
-      "datasetPollingTimeout": "Could not find dataset after 5 minutes of polling"
+      "datasetPollingTimeout": "Could not find dataset after 5 minutes of polling",
+      "analysisExportFailed": "Analysis export failed"
     }
   },
   "errors": {
@@ -3413,7 +3669,7 @@
   "disclaimer": {
     "title": "Terms of Service & Medical Disclaimer",
     "fullTitle": "PathLab Terms of Service, User Agreement, and Medical Disclaimer",
-    "operator": "Operator: SmartLab",
+    "operator": "Operator: SmartXLab",
     "contact": "Contact",
     "scopeLabel": "Scope",
     "scopeText": "These Terms govern PathLab's local Workbench application, AI verification tools, and related services (collectively, the \"Services\").",
@@ -3447,7 +3703,7 @@
       "s3": {
         "title": "3. Definitions",
         "items": [
-          "3.1 Platform / We means SmartLab and its operator.",
+          "3.1 Platform / We means SmartXLab and its operator.",
           "3.2 User / You means any individual or entity that registers, signs in, accesses, or uses the Services.",
           "3.3 Workbench (Client) means the local desktop application (for example, Electron with a Python sidecar), or web application (for example, vite with react) used for slide viewing, local inference, visualization, and reporting.",
           "3.4 Auth Server means the authentication service (e.g., Casdoor, JWT) used to verify user identity.",
@@ -3624,7 +3880,7 @@
   "privacyPolicy": {
     "title": "Privacy Notice",
     "fullTitle": "PathLab Privacy Notice and Privacy Policy",
-    "operator": "Operator: SmartLab",
+    "operator": "Operator: SmartXLab",
     "contact": "Contact",
     "introLabel": "How to read this notice",
     "introText": "This notice explains, at a high level, how we handle personal data in connection with PathLab. In Hong Kong, relevant handling of personal data may be subject to <lawCap486>the Personal Data (Privacy) Ordinance (Cap. 486)</lawCap486>. It should be read together with the Terms of Service, medical notices, and any feature-specific prompts or notices shown in the product.",
@@ -3635,7 +3891,7 @@
       "s1": {
         "title": "1. Scope and roles",
         "items": [
-          "1.1 This Privacy Notice and Privacy Policy describes how SmartLab may collect, use, store, disclose, or otherwise process personal data in connection with account access to and use of the Services.",
+          "1.1 This Privacy Notice and Privacy Policy describes how SmartXLab may collect, use, store, disclose, or otherwise process personal data in connection with account access to and use of the Services.",
           "1.2 It covers data relating to account registration and login, agreement acceptance, maintenance notices, datasets, annotations, permissions, tasks, results, AI features, and support or feedback interactions.",
           "1.3 If you use the Services on behalf of an institution, that institution may separately determine the purposes and means of handling source datasets and patient or research data that it uploads or manages through the Services."
         ]
@@ -3757,6 +4013,15 @@
     "setLabel": "Set Label",
     "defaultLabel": "Default",
     "newLabel": "New label, press Enter",
+    "labelMissingInMode": "Label missing in current mode",
+    "createLabelInMode": "Create in this mode",
+    "annotations": "Annotations",
+    "labels": "Labels",
+    "labelManagement": "Label Management",
+    "annotationList": "Annotation List",
+    "renameLabel": "Rename label",
+    "deleteLabel": "Delete label",
+    "noLabels": "No labels in this mode yet",
     "currentSlide": "Current File",
     "regions": "regions",
     "noAnnotations": "No annotations on this file yet",
@@ -3803,6 +4068,8 @@
     "deleteSelected": "Delete selected ({{count}})",
     "confirmDeleteSelected": "Are you sure you want to delete {{count}} selected regions?",
     "confirmDeleteByLabel": "Are you sure you want to delete all regions with the selected labels ({{count}} ROIs across {{slides}} slides)?",
+    "confirmDeleteLabel": "Delete label \"{{label}}\" from this mode?",
+    "confirmDeleteLabelWithRegions": "Delete label \"{{label}}\" and its {{count}} annotations? This cannot be undone.",
     "saveAnnotations": "Save",
     "saving": "Saving...",
     "saved": "Annotations saved",
@@ -3874,6 +4141,8 @@
     "aorta": "Aorta",
     "bladder": "Bladder",
     "bloodVessel": "Blood Vessel",
+    "hematologic": "Hematologic",
+    "bodyFluid": "Body Fluid",
     "bone": "Bone",
     "boneMarrow": "Bone Marrow",
     "brain": "Brain",
@@ -3961,6 +4230,180 @@
     "labelSource": {
       "imported": "Imported GT",
       "userLabel": "User Label"
+    }
+  },
+  "landing": {
+    "nav": {
+      "product": "Product",
+      "capabilities": "Capabilities",
+      "solutions": "Solutions",
+      "pricing": "Pricing",
+      "getStarted": "Get Started"
+    },
+    "hero": {
+      "badge": "Powered by Agentic AI",
+      "title1": "Master pathology",
+      "title1b": "workflows with",
+      "title2": "natural language",
+      "subtitle": "A true clinical-grade AI workspace. From data import and zero-shot configuration to log tracking and viewer evidence—all guided seamlessly by natural language.",
+      "primaryCta": "Get Started",
+      "secondaryCta": "Book Demo"
+    },
+    "trustStrip": {
+      "nlp": "Natural Language Config",
+      "formats": "Multi-format Data Support",
+      "tracking": "Task & Log Tracking",
+      "viz": "Visual Results Analysis",
+      "i18n": "Multilingual Support"
+    },
+    "story": {
+      "header": "From idea to evidence in three simple steps",
+      "step1": {
+        "title": "1. Tell the AI what you need",
+        "desc": "Start with a simple natural language prompt. No complex forms required.",
+        "mock": "\"Train a cancer subtyping model on SKCM001 dataset...\"",
+        "tag1": "Classification",
+        "tag2": "Training"
+      },
+      "step2": {
+        "title": "2. Automatic System Configuration",
+        "desc": "The system maps your intent to internal configurations, models, and datasets in seconds.",
+        "mockTitle": "System Configuration",
+        "mockPipeline": "Pipeline",
+        "mockPipelineValue": "WSI Classification",
+        "mockModel": "Model"
+      },
+      "step3": {
+        "title": "3. Track and Analyze Results",
+        "desc": "Review the pipeline execution and jump directly into the viewer for in-depth visual evidence.",
+        "mockStatus": "Task Status",
+        "mockCompleted": "Completed",
+        "mockDuration": "20m 34s",
+        "mockPredTitle": "Pred. Confidence",
+        "mockClass1": "BCC",
+        "mockClass2": "SCC",
+        "mockClass3": "Others"
+      }
+    },
+    "capabilities": {
+      "title": "A Complete AI Pathology Toolset",
+      "main": {
+        "title": "Your Intelligent Research Copilot"
+      }
+    },
+    "evidence": {
+      "title": "Deep visual evidence, right in your workspace",
+      "desc": "Stop switching between disjointed tools. View your pipeline results alongside the original Whole Slide Images, with synchronized heatmaps and opacity controls.",
+      "f1": {
+        "title": "Zero-latency visualization",
+        "desc": "Deep zoom into gigapixel tissue arrays instantly via the Aslide renderer."
+      },
+      "f2": {
+        "title": "Synchronized Overlays",
+        "desc": "Overlay AI inference results accurately onto the tissue source."
+      }
+    },
+    "solutions": {
+      "title": "Built for every role in pathology",
+      "clinician": {
+        "label": "Clinician",
+        "desc": "Empowering your workflow with intelligent assistance.",
+        "bullet1": "Quick diagnosis suggestions",
+        "bullet2": "AI-assisted annotations",
+        "bullet3": "Seamless integration"
+      },
+      "researcher": {
+        "label": "Researcher",
+        "desc": "Accelerate your experiments and model validation.",
+        "bullet1": "Batch processing support",
+        "bullet2": "Custom metric exports",
+        "bullet3": "Reproducible pipelines"
+      },
+      "institution": {
+        "label": "Institution",
+        "desc": "Secure, scalable, and fully managed infrastructure.",
+        "bullet1": "Role-based access",
+        "bullet2": "Data privacy guarantees",
+        "bullet3": "Audit trails"
+      }
+    },
+    "trust": {
+      "header": "Ready for clinical environments",
+      "privacy": {
+        "title": "Data Privacy Control",
+        "desc": "Granular visibility settings for your private datasets."
+      },
+      "deployment": {
+        "title": "Secure Execution",
+        "desc": "Configured exclusively within your authorized environments."
+      },
+      "audit": {
+        "title": "Verifiable Results",
+        "desc": "Full task logs and verifiable output for every model run."
+      },
+      "i18n": {
+        "title": "Global Usability",
+        "desc": "Built-in support for multiple languages without broken layouts."
+      }
+    },
+    "pricing": {
+      "title": "Simple, transparent pricing",
+      "individual": {
+        "title": "Individual",
+        "price": "Free",
+        "desc": "During research preview, PathLab is free for individual clinicians and researchers.",
+        "feat1": "WSI Visualization",
+        "feat2": "AI Model Inference",
+        "feat3": "Local Privacy First",
+        "feat4": "Agentic Assistant",
+        "feat5": "Community Support",
+        "cta": "Get Started"
+      },
+      "enterprise": {
+        "title": "Enterprise",
+        "price": "Custom",
+        "desc": "For hospitals and large labs.",
+        "feat1": "Custom Integrations",
+        "feat2": "Priority Support",
+        "feat3": "SSO Access Control",
+        "feat4": "Enterprise Security",
+        "feat5": "Dedicated Manager",
+        "cta": "Contact Sales"
+      }
+    },
+    "finalCta": {
+      "title": "Start your AI workflow from the first command",
+      "subtitle": "Leave complex configuration to the system. Focus your time on judgment, verification, and research.",
+      "primary": "Get Started Now",
+      "secondary": "Book a Demo"
+    },
+    "footer": {
+      "description": "Transforming pathology workflows with clinical-grade AI.",
+      "links": "Links",
+      "legal": "Legal",
+      "privacy": "Privacy Policy",
+      "terms": "Terms of Service"
+    },
+    "mock": {
+      "pipeline": "Inference Pipeline",
+      "extraction": "Data Extraction",
+      "active": "Active",
+      "queued": "Queued",
+      "heatmapAlpha": "Heatmap Alpha",
+      "analysisComplete": "Analysis Complete",
+      "analysisDesc": "High density region identified. Confidence score: 0.94.",
+      "inferenceComplete": "Inference Complete",
+      "restart": "Restart",
+      "addHeatmap": "+Heatmap",
+      "hideHeatmap": "−Heatmap",
+      "modelMetrics": "Model Metrics",
+      "score": "Score",
+      "precision": "Precision",
+      "recall": "Recall",
+      "searchPlaceholder": "Ask about your active jobs...",
+      "gpuAllocation": "GPU Allocation",
+      "aiAutoConfig": "AI Auto Configuration",
+      "parsed": "Parsed"
     }
   }
 }

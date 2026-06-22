@@ -8,14 +8,13 @@ import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import {
-  listUsersPaged, updateUser, deleteUser, revokeUserAgreement,
+  listUsersPaged, createUser, updateUser, deleteUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
   getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
 } from '../../api/users'
 import type { UserListItem } from '../../api/users'
-import { registerUser } from '../../api/auth'
-import type { AdminUserUpdateRequest, RegisterRequest } from '../../api/auth'
+import type { AdminUserUpdateRequest } from '../../api/auth'
 import { getGlobalSettings, updateGlobalSettings } from '../../api/settings'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
@@ -209,18 +208,13 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     if (createForm.password.length < 6) { setUsersError(t('settings.usersTab.passwordMinLength')); return }
     setUsersError(null)
     void runCreatingUser(async () => {
-      const requestedRole = createForm.role as 'admin' | 'pathologist' | 'guest'
-      const data: RegisterRequest = {
-        email: createForm.username,
+      await createUser({
+        username: createForm.username,
         password: createForm.password,
         nickname: createForm.nickname || undefined,
-        role: requestedRole === 'guest' ? 'guest' : 'pathologist',
-        registration_email: createForm.registration_email || undefined
-      }
-      const createdUser = await registerUser(data)
-      if (requestedRole === 'admin') {
-        await updateUser(createdUser.id, { role: 'admin' })
-      }
+        role: createForm.role as 'admin' | 'pathologist' | 'guest',
+        registration_email: createForm.registration_email || undefined,
+      })
       setShowCreateUser(false)
       setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
       loadUsers()
@@ -486,7 +480,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           </Button>
           <Button variant="outline" onClick={() => setEmailTemplateOpen(true)} className="gap-2">
             <Mail className="w-4 h-4" />
-            <span className="hidden sm:inline">邮件模板</span>
+            <span className="hidden sm:inline">{t('settings.usersTab.emailTemplates')}</span>
           </Button>
           <Button onClick={() => setShowCreateUser(true)} className="gap-2">
             <UserPlus className="w-4 h-4" />
@@ -612,7 +606,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                         </div>
                       )}
                     </td>
-                    <td className="py-3 px-2 sm:px-4 text-gray-900 text-xs sm:text-sm">{user.email}</td>
+                    <td className="py-3 px-2 sm:px-4 text-gray-900 text-xs sm:text-sm">{user.username}</td>
                     <td className="py-3 px-2 sm:px-4 text-gray-600 text-xs sm:text-sm hidden xs:table-cell sm:table-cell">{user.nickname || '-'}</td>
                     <td className="py-3 px-2 sm:px-4">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${getRoleBadgeColor(user.role)}`}>
@@ -677,7 +671,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                             <Edit className="w-4 h-4" />
                           </Button>
                         </Tooltip>
-                        {(!currentUserId || user.id !== currentUserId) && user.email !== 'admin' && (
+                        {(!currentUserId || user.id !== currentUserId) && user.username !== 'admin' && (
                           <Tooltip content={user.is_active ? t('settings.usersTab.deactivateUser') : t('settings.usersTab.activateUser')}>
                             <Button
                               variant="ghost"

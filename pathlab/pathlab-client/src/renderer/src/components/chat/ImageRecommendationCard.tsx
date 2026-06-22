@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layers } from 'lucide-react'
 import {
-  fetchWSIList,
+  fetchAllWSIList,
   fetchWSIIds,
   fetchWSIDetail,
   fetchAllResults,
@@ -19,6 +19,7 @@ import {
   type AvailableHeatmap
 } from '../../api'
 import { getFileType } from '../../constants/fileTypes'
+import { isSegmentationTask } from '../../constants/training'
 import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
 
 type SegmentationMaskSource = 'gt' | 'model_pred' | 'both'
@@ -299,8 +300,51 @@ function dedupeLatestResultsByWsi(items: ResultWithWSI[]): ResultWithWSI[] {
   return deduped
 }
 
+export function shouldUseQueryRanking(query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return false
+  const hasFileExtension = /\.[^/.]+$/.test(q)
+  const wordCount = q.split(/\s+/).filter(Boolean).length
+  if (!hasFileExtension && wordCount >= 3 && q.length > 15) return false
+  return true
+}
+
+export function rankImagesByQuery<T extends { original_filename: string }>(
+  images: T[],
+  query: string,
+): T[] {
+  if (!query || images.length === 0) return images
+
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return images
+
+  const queryBase = normalizedQuery.replace(/\.[^/.]+$/, '')
+
+  const scoreOf = (img: T): number => {
+    const name = img.original_filename.toLowerCase()
+    const base = name.replace(/\.[^/.]+$/, '')
+
+    if (name === normalizedQuery) return 1000
+    if (base === queryBase) return 900
+    if (name.startsWith(normalizedQuery)) return 700
+    if (base.startsWith(queryBase)) return 650
+    if (name.includes(normalizedQuery)) return 500
+    if (base.includes(queryBase)) return 400
+    if (normalizedQuery.includes(name)) return 300
+    if (queryBase.includes(base)) return 250
+    const queryWords = normalizedQuery.split(/\s+/).filter(Boolean)
+    const allWordsPresent = queryWords.length > 0 && queryWords.every((w) => name.includes(w))
+    if (allWordsPresent) return 200
+    return 0
+  }
+
+  const scored = images.map((img) => ({ img, score: scoreOf(img) }))
+  scored.sort((a, b) => b.score - a.score || a.img.original_filename.localeCompare(b.img.original_filename))
+  return scored.map((s) => s.img)
+}
+
 function getLatestSegmentationMaskOverlay(overlays: AvailableHeatmap[], taskId?: string): AvailableHeatmap | undefined {
-  const segmentationOverlays = overlays.filter(o => o.data_type === 'patch_segmentation')
+  const segmentationOverlays = overlays.filter(o => isSegmentationTask(o.task_type))
   if (segmentationOverlays.length === 0) return undefined
   return taskId
     ? segmentationOverlays.find(o => o.task_id === taskId) ?? segmentationOverlays[0]
@@ -654,7 +698,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
    * Extracted to avoid duplication between the normal path and the fallback path.
    */
   const fetchAndFilterWSIList = async (rec: ImageRecommendation): Promise<WSISummary[]> => {
-    const result = await fetchWSIList(rec.filters?.dataset_id)
+    const result = await fetchAllWSIList(rec.filters?.dataset_id)
     let filtered = result.items
 
     // Apply label filter - use exact match to avoid substring issues
@@ -754,7 +798,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
         const requiresFullWsiScan = recommendation.filters?.event_status !== undefined && recommendation.filters?.event_status !== null
         if (requiresFullWsiScan) {
-          const wsiResult = await fetchWSIList(recommendation.filters?.dataset_id)
+          const wsiResult = await fetchAllWSIList(recommendation.filters?.dataset_id)
           const wsiIdsWithPredictions = new Set(resultsWithWsi.map(r => r.wsi_id))
           let filtered = wsiResult.items.filter(w => wsiIdsWithPredictions.has(w.wsi_id))
           filtered = filtered.filter(s => s.event_status === recommendation.filters!.event_status)
@@ -785,12 +829,15 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         displayImages = await fetchAndFilterWSIList(recommendation)
       }
 
-      // Shuffle the images randomly before limiting
-      // This ensures different images are shown each time for the same filters
-      const shuffled = [...displayImages].sort(() => Math.random() - 0.5)
+      let orderedImages: WSISummary[]
+      if (shouldUseQueryRanking(recommendation.query)) {
+        orderedImages = rankImagesByQuery(displayImages, recommendation.query)
+      } else {
+        orderedImages = [...displayImages].sort(() => Math.random() - 0.5)
+      }
 
       // Limit to user-specified count (default 3)
-      const limitedImages = shuffled.slice(0, maxCount)
+      const limitedImages = orderedImages.slice(0, maxCount)
       const baseImageInfo = limitedImages.map(img => ({
         image: img,
         overlays: [],
@@ -842,7 +889,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             if (recommendation.heatmap_filter) {
               const { feature_extractor, aggregator } = recommendation.heatmap_filter
               overlays = overlays.filter(h => {
-                if (h.data_type === 'patch_segmentation') {
+                if (isSegmentationTask(h.task_type)) {
                   return true
                 }
                 // Filter by feature_extractor if specified
@@ -957,7 +1004,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   }).length
 
   const imagesWithPredictionMaskCount = imagesWithOverlays.filter(({ overlays }) =>
-    overlays.some(o => o.data_type === 'patch_segmentation')
+    overlays.some(o => isSegmentationTask(o.task_type))
   ).length
 
   return (

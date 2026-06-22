@@ -89,6 +89,8 @@ export async function chatWithAI(
   onPdfParseResult?: (event: PdfParseResultEvent) => void,
   onSearchClear?: () => void,
   regenerateMessageId?: number,
+  onThinkingPulse?: (elapsedMs: number) => void,
+  onPreGenStatus?: (phase: 'context_load' | 'llm_start') => void,
 ): Promise<void> {
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
   const baseUrl = localStorage.getItem('openrouter_base_url') || ''
@@ -207,6 +209,12 @@ export async function chatWithAI(
       }
       if (parsed.type === 'search_clear' && onSearchClear) {
         onSearchClear()
+      }
+      if (parsed.type === 'thinking_pulse' && onThinkingPulse) {
+        onThinkingPulse(parsed.elapsed_ms as number)
+      }
+      if (parsed.type === 'pre_gen_status' && onPreGenStatus) {
+        onPreGenStatus(parsed.phase as 'context_load' | 'llm_start')
       }
     } catch {
       // Skip invalid JSON

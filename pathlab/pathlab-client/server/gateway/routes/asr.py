@@ -258,7 +258,7 @@ async def asr_realtime_websocket(
         await websocket.close(code=4001)
         return
 
-    logger.info(f"WebSocket authenticated for user: {user.email}")
+    logger.info(f"WebSocket authenticated for user: {user.username}")
 
     # Send progress: authenticated
     await websocket.send_json({"type": "session.progress", "step": "authenticated"})

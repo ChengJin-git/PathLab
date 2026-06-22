@@ -10,6 +10,7 @@ Implements CLAM-style tiling strategy:
 
 Reference: CLAM (mahmoodlab/CLAM)
 """
+
 import json
 import numpy as np
 import cv2
@@ -107,8 +108,8 @@ class TissueSegmenter:
         sthresh: int = 8,
         mthresh: int = 7,
         close: int = 4,
-        use_otsu: bool = True,
-        filter_params: Optional[Dict[str, Any]] = None
+        use_otsu: bool = False,
+        filter_params: Optional[Dict[str, Any]] = None,
     ):
         """
         Args:
@@ -130,9 +131,9 @@ class TissueSegmenter:
 
         # Default filter parameters (PrePATH/CLAM TCGA preset)
         self.filter_params = filter_params or {
-            'a_t': 16,      # Min tissue area (in 512x512 patches)
-            'a_h': 4,       # Min hole area
-            'max_n_holes': 8 # Max holes per contour
+            "a_t": 5,  # Min tissue area (in 512x512 patches)
+            "a_h": 16,  # Min hole area
+            "max_n_holes": 8,  # Max holes per contour
         }
 
     def segment_tissue(self, slide) -> Tuple[List[Any], List[Any]]:
@@ -157,7 +158,7 @@ class TissueSegmenter:
         img = slide.read_region((0, 0), seg_level, level_dims)
         # _t1 = _time.monotonic()
         # logger.info(f"[Timing] read_region level={seg_level} dims={level_dims} took {_t1 - _t0:.1f}s")
-        img_np = np.array(img.convert('RGB'))
+        img_np = np.array(img.convert("RGB"))
         del img  # Release PIL image immediately
 
         # Convert to HSV and extract saturation channel
@@ -172,9 +173,7 @@ class TissueSegmenter:
                 img_med, 0, 255, cv2.THRESH_OTSU + cv2.THRESH_BINARY
             )
         else:
-            _, img_thresh = cv2.threshold(
-                img_med, self.sthresh, 255, cv2.THRESH_BINARY
-            )
+            _, img_thresh = cv2.threshold(img_med, self.sthresh, 255, cv2.THRESH_BINARY)
         del img_med  # No longer needed after thresholding
 
         # Morphological closing
@@ -232,11 +231,7 @@ class TissueSegmenter:
         return (downsample, downsample)
 
     def _filter_contours(
-        self,
-        contours,
-        hierarchy,
-        seg_level: int,
-        slide
+        self, contours, hierarchy, seg_level: int, slide
     ) -> Tuple[List[Any], List[Any]]:
         """Filter contours by area and extract holes"""
         # Calculate scaled reference patch area
@@ -245,9 +240,9 @@ class TissueSegmenter:
         scaled_ref_patch_area = int(ref_patch_size**2 / (scale * scale))
 
         # Scale filter parameters
-        a_t = self.filter_params['a_t'] * scaled_ref_patch_area
-        a_h = self.filter_params['a_h'] * scaled_ref_patch_area
-        max_n_holes = self.filter_params['max_n_holes']
+        a_t = self.filter_params["a_t"] * scaled_ref_patch_area
+        a_h = self.filter_params["a_h"] * scaled_ref_patch_area
+        max_n_holes = self.filter_params["max_n_holes"]
 
         filtered_tissue = []
         filtered_holes = []
@@ -283,7 +278,9 @@ class TissueSegmenter:
             area = area - np.sum(hole_areas)
 
             x, y, w, h = cv2.boundingRect(cont)
-            logger.debug(f"  Contour {cont_idx}: area={area:.0f}, bbox=({x},{y},{w},{h}), a_t={a_t:.0f}")
+            logger.debug(
+                f"  Contour {cont_idx}: area={area:.0f}, bbox=({x},{y},{w},{h}), a_t={a_t:.0f}"
+            )
 
             if area == 0:
                 continue
@@ -305,13 +302,15 @@ class TissueSegmenter:
     @staticmethod
     def _scale_contours(contours, scale):
         """Scale contours by scale factor"""
-        return [np.array(cont * scale, dtype='int32') for cont in contours]
+        return [np.array(cont * scale, dtype="int32") for cont in contours]
 
     @staticmethod
     def _scale_holes(holes, scale):
         """Scale hole contours by scale factor"""
-        return [[np.array(h * scale, dtype='int32') for h in hole_list]
-                for hole_list in holes]
+        return [
+            [np.array(h * scale, dtype="int32") for h in hole_list]
+            for hole_list in holes
+        ]
 
 
 class WSITiler:
@@ -335,10 +334,10 @@ class WSITiler:
         stride: int = 0,
         level: int = 0,
         segmenter: Optional[TissueSegmenter] = None,
-        contour_fn: str = 'four_pt',
+        contour_fn: str = "four_pt",
         use_padding: bool = True,
         native_mpp: Optional[float] = None,
-        level_downsample: float = 1.0
+        level_downsample: float = 1.0,
     ):
         """
         PrePATH-style tiling: automatically adjusts patch_size based on magnification
@@ -380,16 +379,20 @@ class WSITiler:
             self.step_size = self.stride
 
             mag = get_magnification_from_mpp(native_mpp)
-            logger.info(f"PrePATH-style tiling: native_mpp={native_mpp:.4f}, magnification={mag}, "
-                       f"patch_size={self.patch_size}, step_size={self.step_size}")
+            logger.info(
+                f"PrePATH-style tiling: native_mpp={native_mpp:.4f}, magnification={mag}, "
+                f"patch_size={self.patch_size}, step_size={self.step_size}"
+            )
         else:
             # Fallback: no MPP info, use provided patch_size and stride
             self.patch_size = patch_size
             self.stride = stride if stride > 0 else patch_size
             self.read_size = self.patch_size
             self.step_size = self.stride
-            logger.warning("No MPP info available, falling back to pixel-based tiling with "
-                          f"patch_size={self.patch_size}, step_size={self.step_size}")
+            logger.warning(
+                "No MPP info available, falling back to pixel-based tiling with "
+                f"patch_size={self.patch_size}, step_size={self.step_size}"
+            )
 
     def compute_coordinates(
         self,
@@ -398,7 +401,7 @@ class WSITiler:
         tissue_contours: Optional[List[Any]] = None,
         hole_contours: Optional[List[Any]] = None,
         seg_params: Optional[Dict[str, Any]] = None,
-        filter_params: Optional[Dict[str, Any]] = None
+        filter_params: Optional[Dict[str, Any]] = None,
     ) -> List[Tuple[int, int]]:
         """
         Compute patch coordinates within tissue contours
@@ -426,9 +429,7 @@ class WSITiler:
         # Process each tissue contour
         all_coordinates = []
         for idx, (tissue_cont, holes) in enumerate(zip(tissue_contours, hole_contours)):
-            coords = self._process_contour(
-                slide, tissue_cont, holes, idx
-            )
+            coords = self._process_contour(slide, tissue_cont, holes, idx)
             all_coordinates.extend(coords)
 
         logger.info(f"Found {len(all_coordinates)} tissue patches")
@@ -436,18 +437,18 @@ class WSITiler:
         # Save coordinates if path provided
         if save_path:
             self._save_coordinates(
-                all_coordinates, save_path, tissue_contours, hole_contours,
-                seg_params=seg_params, filter_params=filter_params
+                all_coordinates,
+                save_path,
+                tissue_contours,
+                hole_contours,
+                seg_params=seg_params,
+                filter_params=filter_params,
             )
 
         return all_coordinates
 
     def _process_contour(
-        self,
-        slide,
-        contour,
-        holes: List[Any],
-        cont_idx: int
+        self, slide, contour, holes: List[Any], cont_idx: int
     ) -> List[Tuple[int, int]]:
         """
         Process a single tissue contour to extract patch coordinates.
@@ -467,7 +468,9 @@ class WSITiler:
         """
         # Get bounding box
         x, y, w, h = cv2.boundingRect(contour)
-        logger.debug(f"Contour {cont_idx}: bbox=({x},{y},{w},{h}), area={cv2.contourArea(contour):.0f}")
+        logger.debug(
+            f"Contour {cont_idx}: bbox=({x},{y},{w},{h}), area={cv2.contourArea(contour):.0f}"
+        )
 
         # Calculate patch parameters at level 0
         downsample = slide.level_downsamples[self.level]
@@ -492,10 +495,12 @@ class WSITiler:
             logger.debug(f"Contour {cont_idx}: no candidate coordinates")
             return []
 
-        x_coords, y_coords = np.meshgrid(x_range, y_range, indexing='ij')
+        x_coords, y_coords = np.meshgrid(x_range, y_range, indexing="ij")
         coord_candidates = np.array([x_coords.flatten(), y_coords.flatten()]).T
         num_candidates = len(coord_candidates)
-        logger.debug(f"Contour {cont_idx}: checking {num_candidates} candidate coordinates")
+        logger.debug(
+            f"Contour {cont_idx}: checking {num_candidates} candidate coordinates"
+        )
 
         if num_candidates == 0:
             return []
@@ -513,25 +518,33 @@ class WSITiler:
 
         # Build filled tissue mask
         tissue_mask = np.zeros((mask_h, mask_w), dtype=np.uint8)
-        sc = ((contour.squeeze().astype(np.float64) - [mask_x0, mask_y0]) / mask_scale).astype(np.int32)
+        sc = (
+            (contour.squeeze().astype(np.float64) - [mask_x0, mask_y0]) / mask_scale
+        ).astype(np.int32)
         cv2.drawContours(tissue_mask, [sc.reshape(-1, 1, 2)], -1, 255, -1)
 
         # Build filled holes mask
         holes_mask = np.zeros((mask_h, mask_w), dtype=np.uint8) if holes else None
         for hole in holes:
-            sh = ((hole.squeeze().astype(np.float64) - [mask_x0, mask_y0]) / mask_scale).astype(np.int32)
+            sh = (
+                (hole.squeeze().astype(np.float64) - [mask_x0, mask_y0]) / mask_scale
+            ).astype(np.int32)
             cv2.drawContours(holes_mask, [sh.reshape(-1, 1, 2)], -1, 255, -1)
 
         half = ref_patch_size // 2
         quarter = ref_patch_size // 4
-        cx = coord_candidates[:, 0] + half   # center x
-        cy = coord_candidates[:, 1] + half   # center y
+        cx = coord_candidates[:, 0] + half  # center x
+        cy = coord_candidates[:, 1] + half  # center y
 
         # Determine tissue test points based on contour_fn mode
-        if self.contour_fn == 'four_pt':
-            tpx = np.stack([cx - quarter, cx + quarter, cx - quarter, cx + quarter], axis=1)
-            tpy = np.stack([cy - quarter, cy - quarter, cy + quarter, cy + quarter], axis=1)
-        elif self.contour_fn == 'center':
+        if self.contour_fn == "four_pt":
+            tpx = np.stack(
+                [cx - quarter, cx + quarter, cx - quarter, cx + quarter], axis=1
+            )
+            tpy = np.stack(
+                [cy - quarter, cy - quarter, cy + quarter, cy + quarter], axis=1
+            )
+        elif self.contour_fn == "center":
             tpx = cx.reshape(-1, 1)
             tpy = cy.reshape(-1, 1)
         else:  # basic – top-left corner
@@ -566,15 +579,20 @@ class WSITiler:
             in_tissue &= ~in_hole
 
         valid_coords = [tuple(c) for c in coord_candidates[in_tissue]]
-        logger.debug(f"Contour {cont_idx}: extracted {len(valid_coords)} patches from {num_candidates} candidates")
+        logger.debug(
+            f"Contour {cont_idx}: extracted {len(valid_coords)} patches from {num_candidates} candidates"
+        )
         return valid_coords
 
     def _get_contour_check_fn(self, contour, patch_size: int):
         """Create contour checking function based on contour_fn type"""
-        if self.contour_fn == 'four_pt':
+        if self.contour_fn == "four_pt":
             # Check 4 points around center
             def check_fn(pt):
-                center = (float(pt[0] + patch_size // 2), float(pt[1] + patch_size // 2))
+                center = (
+                    float(pt[0] + patch_size // 2),
+                    float(pt[1] + patch_size // 2),
+                )
                 offset = patch_size // 4
                 points = [
                     (float(center[0] - offset), float(center[1] - offset)),
@@ -583,19 +601,28 @@ class WSITiler:
                     (float(center[0] + offset), float(center[1] + offset)),
                 ]
                 return all(cv2.pointPolygonTest(contour, p, False) >= 0 for p in points)
+
             return check_fn
 
-        elif self.contour_fn == 'center':
+        elif self.contour_fn == "center":
             # Check center point only
             def check_fn(pt):
-                center = (float(pt[0] + patch_size // 2), float(pt[1] + patch_size // 2))
+                center = (
+                    float(pt[0] + patch_size // 2),
+                    float(pt[1] + patch_size // 2),
+                )
                 return cv2.pointPolygonTest(contour, center, False) >= 0
+
             return check_fn
 
         else:  # 'basic'
             # Check top-left corner only
             def check_fn(pt):
-                return cv2.pointPolygonTest(contour, (float(pt[0]), float(pt[1])), False) >= 0
+                return (
+                    cv2.pointPolygonTest(contour, (float(pt[0]), float(pt[1])), False)
+                    >= 0
+                )
+
             return check_fn
 
     @staticmethod
@@ -619,7 +646,7 @@ class WSITiler:
         tissue_contours: Optional[List[Any]] = None,
         hole_contours: Optional[List[Any]] = None,
         seg_params: Optional[Dict[str, Any]] = None,
-        filter_params: Optional[Dict[str, Any]] = None
+        filter_params: Optional[Dict[str, Any]] = None,
     ):
         """
         Save coordinates and metadata to HDF5 file using atomic write pattern.
@@ -650,39 +677,41 @@ class WSITiler:
         # Write to .partial file first, then atomically rename
         partial_path = save_path.parent / f"{save_path.stem}.h5.partial"
 
-        with h5py.File(partial_path, 'w') as f:
+        with h5py.File(partial_path, "w") as f:
             # Create coords dataset
-            dset = f.create_dataset('coords', data=coords_array)
+            dset = f.create_dataset("coords", data=coords_array)
 
             # Save metadata as attributes on the coords dataset (PrePATH-compatible)
-            dset.attrs['patch_size'] = self.patch_size
-            dset.attrs['patch_level'] = self.level
-            dset.attrs['name'] = save_path.stem  # Slide name from filename
+            dset.attrs["patch_size"] = self.patch_size
+            dset.attrs["patch_level"] = self.level
+            dset.attrs["name"] = save_path.stem  # Slide name from filename
 
             # Additional metadata (not in PrePATH but useful)
-            dset.attrs['stride'] = self.stride
-            dset.attrs['contour_fn'] = self.contour_fn
-            dset.attrs['use_padding'] = self.use_padding
+            dset.attrs["stride"] = self.stride
+            dset.attrs["contour_fn"] = self.contour_fn
+            dset.attrs["use_padding"] = self.use_padding
 
             # MPP-related parameters for cache validation
-            dset.attrs['native_mpp'] = self.native_mpp if self.native_mpp is not None else -1.0
-            dset.attrs['level_downsample'] = self.level_downsample
-            dset.attrs['read_size'] = self.read_size
-            dset.attrs['step_size'] = self.step_size
+            dset.attrs["native_mpp"] = (
+                self.native_mpp if self.native_mpp is not None else -1.0
+            )
+            dset.attrs["level_downsample"] = self.level_downsample
+            dset.attrs["read_size"] = self.read_size
+            dset.attrs["step_size"] = self.step_size
 
             # Save seg_level from segmenter (always save for cache consistency)
-            dset.attrs['seg_level'] = self.segmenter.seg_level
+            dset.attrs["seg_level"] = self.segmenter.seg_level
 
             # Save segmentation parameters (always save with defaults for cache consistency)
-            dset.attrs['sthresh'] = seg_params.get('sthresh', 8)
-            dset.attrs['mthresh'] = seg_params.get('mthresh', 7)
-            dset.attrs['close'] = seg_params.get('close', 4)
-            dset.attrs['use_otsu'] = seg_params.get('use_otsu', True)
+            dset.attrs["sthresh"] = seg_params.get("sthresh", 5)
+            dset.attrs["mthresh"] = seg_params.get("mthresh", 7)
+            dset.attrs["close"] = seg_params.get("close", 4)
+            dset.attrs["use_otsu"] = seg_params.get("use_otsu", False)
 
             # Save filter parameters (always save with defaults for cache consistency)
-            dset.attrs['a_t'] = filter_params.get('a_t', 16)
-            dset.attrs['a_h'] = filter_params.get('a_h', 4)
-            dset.attrs['max_n_holes'] = filter_params.get('max_n_holes', 8)
+            dset.attrs["a_t"] = filter_params.get("a_t", 100)
+            dset.attrs["a_h"] = filter_params.get("a_h", 16)
+            dset.attrs["max_n_holes"] = filter_params.get("max_n_holes", 8)
 
         # Atomically rename to final path
         partial_path.rename(save_path)
@@ -692,7 +721,7 @@ class WSITiler:
     @staticmethod
     def load_coordinates(load_path: Path) -> Dict[str, Any]:
         """Load coordinates from JSON file"""
-        with open(load_path, 'r') as f:
+        with open(load_path, "r") as f:
             data = json.load(f)
 
         logger.info(f"Loaded {data['num_patches']} coordinates from {load_path}")
@@ -702,7 +731,7 @@ class WSITiler:
         self,
         slide,
         coordinates: List[Tuple[int, int]],
-        max_patches: Optional[int] = None
+        max_patches: Optional[int] = None,
     ) -> List[Image.Image]:
         """
         Extract patches from slide using pre-computed coordinates
@@ -732,18 +761,18 @@ class WSITiler:
                 # read_region expects level 0 coordinates
                 # Read at read_size (MPP-adjusted size)
                 patch = slide.read_region(
-                    (x, y),
-                    self.level,
-                    (self.read_size, self.read_size)
+                    (x, y), self.level, (self.read_size, self.read_size)
                 )
 
                 # Convert RGBA to RGB if needed
-                if patch.mode == 'RGBA':
-                    patch = patch.convert('RGB')
+                if patch.mode == "RGBA":
+                    patch = patch.convert("RGB")
 
                 # Resize to output patch_size if needed
                 if needs_resize:
-                    patch = patch.resize((self.patch_size, self.patch_size), Image.Resampling.LANCZOS)
+                    patch = patch.resize(
+                        (self.patch_size, self.patch_size), Image.Resampling.LANCZOS
+                    )
 
                 patches.append(patch)
 
@@ -751,15 +780,7 @@ class WSITiler:
                 logger.warning(f"Failed to extract patch at ({x}, {y}): {e}")
                 continue
 
-        logger.info(f"Extracted {len(patches)} patches (read_size={self.read_size}, output_size={self.patch_size})")
+        logger.info(
+            f"Extracted {len(patches)} patches (read_size={self.read_size}, output_size={self.patch_size})"
+        )
         return patches
-
-
-# Re-export from coords_utils for backward compatibility
-from .coords_utils import (  # noqa: E402, F401
-    REQUIRED_COORDS_ATTRS,
-    safe_load_h5_coords,
-    check_coords_cache_valid,
-    get_or_compute_coordinates,
-    visualize_segmentation,
-)

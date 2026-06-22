@@ -2,11 +2,10 @@ export interface NamedSegmentationItem {
   name: string;
 }
 
-const JSON_SUFFIX_REGEX = /\.json$/i;
 const FILE_SUFFIX_REGEX = /\.[^/.]+$/;
 
 export function getSegmentationStem(name: string): string {
-  return name.replace(JSON_SUFFIX_REGEX, '').replace(FILE_SUFFIX_REGEX, '').toLowerCase();
+  return name.replace(FILE_SUFFIX_REGEX, '').toLowerCase();
 }
 
 export function mergeSegmentationJsonFiles(

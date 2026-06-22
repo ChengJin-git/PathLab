@@ -9,6 +9,7 @@ import { cn } from "../../lib/utils";
 import {
   batchGrantDatasetGrants,
   batchRevokeDatasetGrants,
+  fetchAllDatasets,
   fetchDatasets,
   getUserDatasetGrants,
   grantDatasetGrant,
@@ -57,7 +58,7 @@ function parsePositiveHours(value: string): number | undefined {
 }
 
 function getUserDisplayName(user?: Partial<UserListItem> | null) {
-  return user?.nickname || user?.email || "-";
+  return user?.nickname || user?.username || user?.email || "-";
 }
 
 export function PermissionCenterModal({
@@ -262,10 +263,9 @@ export function PermissionCenterModal({
   const debouncedGrantUserSearchQuery = useDebounce(grantUserSearchQuery, SEARCH_DEBOUNCE_MS);
 
   const fetchAllSelectableDatasetIds = useCallback(async () => {
-    const response = await fetchDatasets(undefined, {
+    const response = await fetchAllDatasets(undefined, {
       ...PRIVATE_DATASET_FILTER,
       search: debouncedDatasetSearchQuery.trim() || undefined,
-      page_size: 0,
     });
     return response.items
       .filter((item): item is PermissionDataset => Boolean(item.dataset_id))

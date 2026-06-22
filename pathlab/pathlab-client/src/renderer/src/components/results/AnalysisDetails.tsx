@@ -4,7 +4,10 @@ import { useTranslation } from 'react-i18next'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, PerClassMetricBarChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
 import { downloadApiFile, withAuthTokenQuery } from '../../api/client'
 import { downloadTrainedModelExport } from '../../api/training'
+import { startAnalysisFullExport } from '../../api/export'
+import { useBackgroundTask } from '../../contexts/backgroundTask'
 import { API_BASE } from '../../config'
+import { isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 // --- Types shared with ResultsViewerPage ---
 
@@ -75,18 +78,21 @@ export interface AnalysisSummary {
 export interface AnalysisDetailsProps {
   analysis: AnalysisSummary
   taskId?: string
+  taskName?: string
   modelId?: string
   selectedMetrics?: string[]
   selectedCharts?: string[]
   isExternal?: boolean
 }
 
-export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
+export function AnalysisDetails({ analysis, taskId, taskName, modelId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   const { t } = useTranslation()
+  const { addAnalysisExportTask } = useBackgroundTask()
   const [isExportingModel, setIsExportingModel] = useState(false)
+  const [isExportingFullResults, setIsExportingFullResults] = useState(false)
   const effectiveTaskId = analysis.task_id || taskId
-  const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
-  const isSegmentation = analysis.task_type === 'segmentation' || analysis.task_type === 'patch_segmentation'
+  const isSurvival = isSurvivalTask(analysis.task_type) || analysis.task_type === 'external_validation_survival'
+  const isSegmentation = isSegmentationTask(analysis.task_type)
   const segmentationClassCount = isSegmentation
     ? Math.max(
       analysis.num_classes ?? 0,
@@ -171,6 +177,34 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
       console.error('Model export failed:', error)
     } finally {
       setIsExportingModel(false)
+    }
+  }
+
+  const handleFullExport = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!effectiveTaskId || isExportingFullResults) return
+
+    if (isSegmentation) {
+      setIsExportingFullResults(true)
+      try {
+        const response = await startAnalysisFullExport(effectiveTaskId, analysis.analysis_id)
+        addAnalysisExportTask(response.task_id, analysis.analysis_id, taskName ?? effectiveTaskId)
+      } catch (error) {
+        console.error('Failed to start analysis full export:', error)
+      } finally {
+        setIsExportingFullResults(false)
+      }
+      return
+    }
+
+    // Non-segmentation: direct download of results.json
+    try {
+      await downloadApiFile(
+        `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/results.json`,
+        `full_results_${analysis.analysis_id}.json`
+      )
+    } catch (error) {
+      console.error('Download failed:', error)
     }
   }
 
@@ -545,15 +579,19 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
           </div>
         </button>
         <button
-          onClick={(e) => handleDownload(e, `${API_BASE}/results/tasks/${effectiveTaskId}/analysis/${analysis.analysis_id}/file/results.json`, `full_results_${analysis.analysis_id}.json`)}
-          className="flex-1 flex items-center justify-center gap-3 px-6 py-4 bg-white hover:bg-emerald-50 text-emerald-700 rounded-xl text-sm font-bold border border-emerald-100 shadow-sm transition-all hover:border-emerald-200 active:scale-[0.98]"
+          onClick={handleFullExport}
+          disabled={isExportingFullResults}
+          className={`flex-1 flex items-center justify-center gap-3 px-6 py-4 rounded-xl text-sm font-bold border shadow-sm transition-all ${isExportingFullResults
+            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 cursor-wait opacity-90'
+            : 'bg-white hover:bg-emerald-50 text-emerald-700 border-emerald-100 hover:border-emerald-200 active:scale-[0.98]'
+          }`}
         >
-          <div className="p-2 bg-emerald-50 rounded-lg group-hover:bg-white transition-colors">
-            <Download className="w-5 h-5" />
+          <div className={`p-2 rounded-lg transition-colors ${isExportingFullResults ? 'bg-white' : 'bg-emerald-50 group-hover:bg-white'}`}>
+            {isExportingFullResults ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
           </div>
           <div className="text-left">
             <div className="text-[10px] uppercase tracking-wider opacity-60">{t('analysisDetails.rawData')}</div>
-            {t('analysisDetails.downloadFullResults')}
+            {isExportingFullResults ? t('analysisDetails.exportingFullResults') : t('analysisDetails.downloadFullResults')}
           </div>
         </button>
         {modelId && (

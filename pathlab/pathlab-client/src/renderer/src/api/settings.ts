@@ -40,8 +40,12 @@ export interface GlobalSettings {
   turnstile_enabled: boolean
   turnstile_site_key: string
   turnstile_secret_key: string
+  tencent_captcha_enabled: boolean
+  tencent_captcha_app_id: string
+  tencent_captcha_secret_key: string
   resend_enabled: boolean
   resend_api_key: string
+  admin_notify_email: string
   email_templates: EmailTemplatesConfig
 }
 
@@ -49,8 +53,8 @@ export interface GlobalSettings {
  * Public settings interface (no authentication required)
  */
 export interface PublicSettings {
-  turnstile_enabled: boolean
-  turnstile_site_key: string
+  captcha_provider: 'turnstile' | 'tencent' | null
+  captcha_site_key: string
 }
 
 /**

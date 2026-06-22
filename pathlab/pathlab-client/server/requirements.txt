@@ -25,6 +25,7 @@ pillow>=12.1.0
 numpy==1.26.4
 # OpenCV 4.12+ requires NumPy 2.x on Python 3.12; keep 4.11 with numpy==1.26.4.
 opencv-python>=4.11.0,<4.12.0
+zarr>=2.18,<3
 
 # WSI Processing
 git+https://github.com/MrPeterJin/Aslide.git@main#egg=Aslide

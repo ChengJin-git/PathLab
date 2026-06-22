@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import time
+from importlib import import_module
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import Any
@@ -11,7 +12,10 @@ from fastapi import Request
 
 from ..dependencies import logger
 from .chat_model_selector import extract_text_from_content
-from .chat_pdf import detect_source_type, ACADEMIC_SOURCE_TYPES
+
+_chat_pdf_shared = import_module("gateway.routes.chat_pdf_shared")
+detect_source_type = _chat_pdf_shared.detect_source_type
+ACADEMIC_SOURCE_TYPES = _chat_pdf_shared.ACADEMIC_SOURCE_TYPES
 
 
 _llm_http_client: httpx.AsyncClient | None = None
@@ -93,6 +97,10 @@ async def _stream_from_openai_compatible(
         await _raise_for_status_with_detail(response)
 
         last_finish_reason = None
+        thinking_start: float | None = None
+        last_pulse_at: float = 0.0
+        _THINKING_PULSE_INTERVAL = 0.6
+
         async for line in response.aiter_lines():
             if line.startswith("data: "):
                 data = line[6:]
@@ -108,6 +116,21 @@ async def _stream_from_openai_compatible(
                         delta = choice.get("delta", {})
                         if "content" in delta and delta["content"] is not None:
                             yield f"data: {json.dumps({'content': delta['content']})}\n\n"
+                        # Handle reasoning_content from thinking models (e.g. Qwen3,
+                        # DeepSeek-R1). The reasoning text itself is sensitive and
+                        # must not be forwarded to the client. We emit a metadata
+                        # pulse with elapsed time only so the frontend can keep its
+                        # silence-abort timer alive.
+                        reasoning = delta.get("reasoning_content")
+                        if reasoning is not None:
+                            now = time.monotonic()
+                            if thinking_start is None:
+                                thinking_start = now
+                                last_pulse_at = now - _THINKING_PULSE_INTERVAL
+                            if now - last_pulse_at >= _THINKING_PULSE_INTERVAL:
+                                last_pulse_at = now
+                                elapsed_ms = int((now - thinking_start) * 1000)
+                                yield f"data: {json.dumps({'type': 'thinking_pulse', 'elapsed_ms': elapsed_ms})}\n\n"
                         fr = choice.get("finish_reason")
                         if fr:
                             last_finish_reason = fr
@@ -229,6 +252,8 @@ async def _execute_exa_search(
 
         results = []
         for item in data.get("results", []):
+            if not isinstance(item, dict):
+                continue
             results.append(
                 {
                     "title": item.get("title", ""),

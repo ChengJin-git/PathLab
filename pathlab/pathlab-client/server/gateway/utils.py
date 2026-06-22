@@ -16,7 +16,8 @@ from fastapi import HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.ai.tasks.feature_cache import compute_params_hash
+from backend.common.coords_cache import compute_params_hash
+from backend.ai.task_taxonomy import normalize_task_type, validate_task_axes
 from backend.ai.tasks.patch_cache import (
     acquire_coords_lock,
     find_valid_cached_coords_summary,
@@ -38,7 +39,7 @@ from backend.common.file_types import (
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 
 
-SEGMENTATION_TASK_TYPE = "segmentation"
+SEGMENTATION_TASK_TYPE = "patch_segmentation"
 SEGMENTATION_DATA_TYPE = "patch"
 SEGMENTATION_AGGREGATION_LEVEL = "file"
 PROXY_BINARY_CACHE_HEADER_NAMES = (
@@ -58,7 +59,7 @@ PREPROCESSING_COMPUTE_PATCHES_DEFAULTS = {
     "use_otsu": False,
     "contour_fn": "four_pt",
     "use_padding": True,
-    "a_t": 100,
+    "a_t": 5,
     "a_h": 16,
     "max_n_holes": 8,
     "save_mask": True,
@@ -312,12 +313,44 @@ def ensure_segmentation_contract(
     context: str,
 ) -> None:
     """Raise HTTP 400 when a segmentation combination violates the patch/file contract."""
-    if task_type != SEGMENTATION_TASK_TYPE:
+    if task_type is None:
         return
 
+    raw_task_type = task_type.strip().lower()
+    is_segmentation_family_input = raw_task_type == SEGMENTATION_TASK_TYPE
+
+    normalized_task_type = raw_task_type
+    normalized_data_type = data_type.strip().lower() if data_type else None
+    normalized_aggregation = aggregation_level.strip().lower() if aggregation_level else None
+
+    try:
+        normalized_task_type = normalize_task_type(
+            task_type=normalized_task_type,
+            data_type=normalized_data_type,
+            aggregation_level=normalized_aggregation or "file",
+        )
+    except ValueError:
+        return
+
+    if normalized_task_type != SEGMENTATION_TASK_TYPE:
+        if not is_segmentation_family_input:
+            return
+        normalized_task_type = SEGMENTATION_TASK_TYPE
+
+    if normalized_data_type is not None and normalized_aggregation is not None:
+        try:
+            validate_task_axes(
+                task_type=normalized_task_type,
+                data_type=normalized_data_type,
+                aggregation_level=normalized_aggregation,
+            )
+            return
+        except ValueError:
+            pass
+
     if (
-        data_type != SEGMENTATION_DATA_TYPE
-        or aggregation_level != SEGMENTATION_AGGREGATION_LEVEL
+        normalized_data_type != SEGMENTATION_DATA_TYPE
+        or normalized_aggregation != SEGMENTATION_AGGREGATION_LEVEL
     ):
         raise HTTPException(
             status_code=400,
@@ -499,11 +532,26 @@ def load_coco_annotation_file(annotation_path: str | Path) -> dict[str, Any]:
     return validate_coco_annotation_payload(payload, source_name=path_obj.name)
 
 
-async def require_no_active_batch_imports(db: AsyncSession, *, detail: str) -> None:
-    """Raise HTTP 400 when a batch import storage task is still running."""
+async def require_no_active_batch_imports(
+    db: AsyncSession, *, detail: str, dataset_ids: Optional[Iterable[str]] = None
+) -> None:
+    """Raise HTTP 400 when an active batch import targets the same dataset."""
     active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
-    if any(task.task_type == "batch_import" for task in active_storage_tasks):
-        raise HTTPException(status_code=400, detail=detail)
+    normalized_dataset_ids = {
+        dataset_id for dataset_id in (dataset_ids or []) if dataset_id
+    }
+    for task in active_storage_tasks:
+        task_type = getattr(task, "task_type", None)
+        if task_type != "batch_import":
+            continue
+        if dataset_ids is None:
+            raise HTTPException(status_code=400, detail=detail)
+        if not normalized_dataset_ids:
+            continue
+
+        params = getattr(task, "params", None) or {}
+        if params.get("dataset_id") in normalized_dataset_ids:
+            raise HTTPException(status_code=400, detail=detail)
 
 
 async def cancel_ai_service_training(task_id: str) -> None:

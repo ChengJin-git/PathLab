@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 import numpy as np
 from sqlalchemy import select
 
+from backend.ai.task_taxonomy import normalize_task_type
 from backend.common.config import Config
 from backend.database.models import AIResult, TrainingTaskWSI
 from backend.database.repositories import TrainedModelRepository
@@ -41,6 +42,13 @@ from .analysis_metrics import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_analysis_task_type(task) -> str:
+    return normalize_task_type(
+        task_type=getattr(task, "task_type", "patch_segmentation"),
+        data_type=getattr(task, "data_type", "patch"),
+    )
 
 
 def _resolve_segmentation_class_names(
@@ -563,7 +571,7 @@ async def _run_segmentation_analysis(
     # Save summary
     summary = {
         "task_id": task_id,
-        "task_type": "segmentation",
+        "task_type": _canonical_analysis_task_type(task),
         "timestamp": utc_timestamp_z(),
         "description": request.description,
         "num_samples": len(ai_rows),
@@ -717,7 +725,7 @@ async def _run_segmentation_analysis(
         analysis_dir / "results.json",
         {
             "task_id": task_id,
-            "task_type": "segmentation",
+            "task_type": _canonical_analysis_task_type(task),
             "num_samples": len(ai_rows),
             "num_with_ground_truth": len(per_image_metrics),
             "classes": class_names,

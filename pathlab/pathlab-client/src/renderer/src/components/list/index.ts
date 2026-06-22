@@ -10,3 +10,6 @@ export type { EditMetadataModalProps, BatchEditModalProps, EditDatasetModalProps
 export { ExportLabelsModal } from './ExportLabelsModal'
 export type { ExportLabelsOptions } from './ExportLabelsModal'
 
+export { DatasetCard } from './DatasetCard'
+export type { DatasetCardProps } from './DatasetCard'
+

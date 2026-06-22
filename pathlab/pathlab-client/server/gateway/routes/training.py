@@ -5,11 +5,10 @@ Handles training task creation, monitoring, and deletion
 
 import asyncio
 import json
-import os
-import random
 import uuid
-from collections import defaultdict
-from typing import Optional, Any
+from datetime import datetime, timedelta, timezone
+from importlib import import_module
+from typing import Optional, Any, cast
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,12 +22,14 @@ from backend.database.repositories import (
     TrainingLogRepository,
     DataGroupRepository,
     DatasetRepository,
+    DatasetStatsRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import (
     require_can_use_gpu,
     require_pathologist_or_admin,
     check_dataset_gpu_permission,
+    check_dataset_access_permission,
     get_user_id_filter,
     check_wsi_access_permission,
 )
@@ -36,6 +37,7 @@ from .access_control import assert_owner
 from ..utils import ensure_dataset_segmentation_contract
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
+from backend.storage import external_availability
 from backend.database.utils.training_logger import TrainingLogger
 from ..dependencies import logger, make_sse_response, storage_manager
 from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
@@ -43,8 +45,181 @@ from ..pipeline import run_training_pipeline, run_patching_then_submit
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training, require_no_active_batch_imports
 from gateway.chat.context_cache import invalidate_chat_context
+from gateway.training_preflight import (
+    build_training_preflight_policy,
+    check_training_inputs,
+)
+from gateway.task_dispatch import (
+    build_task_descriptor,
+    enqueue_task_descriptor,
+    is_worker_healthy,
+    JsonPayload,
+    publish_task_cancellation,
+)
+from backend.ai.task_taxonomy import normalize_task_type
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
+
+
+def _external_unavailable_detail(
+    *,
+    reason: str | None,
+    dataset_id: str | None = None,
+    wsi_ids: list[str] | None = None,
+    unavailable_count: int | None = None,
+) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "code": "EXTERNAL_DATASET_UNAVAILABLE",
+        "message": "Selected data is temporarily unavailable because its external storage cannot be reached.",
+        "reason": reason or "External storage unavailable",
+    }
+    if dataset_id:
+        detail["dataset_id"] = dataset_id
+    if wsi_ids:
+        detail["wsi_ids"] = wsi_ids
+    if unavailable_count is not None:
+        detail["unavailable_count"] = unavailable_count
+    return detail
+
+
+async def _raise_if_dataset_cached_unavailable(db: AsyncSession, dataset_id: str) -> None:
+    availability = external_availability.get_dataset_availability(dataset_id)
+    if availability.get("status") != external_availability.UNAVAILABLE:
+        return
+    refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, [dataset_id])
+    external_refs = [
+        ref
+        for ref in refs_by_dataset.get(dataset_id, [])
+        if external_availability.is_external_path(ref.get("wsi_path"))
+    ]
+    if not external_refs:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            dataset_id=dataset_id,
+            reason=availability.get("reason"),
+            unavailable_count=int(availability.get("unavailable_count") or 0),
+        ),
+    )
+
+
+def _raise_if_wsi_cached_unavailable(wsis: list[Any]) -> None:
+    unavailable: list[tuple[str, dict[str, Any]]] = []
+    for wsi in wsis:
+        wsi_path = getattr(wsi, "wsi_path", None)
+        if wsi_path is not None and not external_availability.is_external_path(wsi_path):
+            continue
+        wsi_id = str(getattr(wsi, "wsi_id", wsi))
+        availability = external_availability.get_wsi_availability(wsi_id)
+        if availability.get("status") == external_availability.UNAVAILABLE:
+            unavailable.append((wsi_id, availability))
+    if not unavailable:
+        return
+
+    first_reason = unavailable[0][1].get("reason")
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            reason=first_reason,
+            wsi_ids=[wsi_id for wsi_id, _ in unavailable],
+            unavailable_count=len(unavailable),
+        ),
+    )
+
+
+def _is_external_validation_task_id(task_id: str | None) -> bool:
+    return bool(task_id and task_id.startswith("extval_"))
+
+
+def _get_external_validation_wsi_count(
+    task_id: object,
+    junction_count: int,
+    model_config: object,
+) -> int:
+    if not isinstance(task_id, str):
+        return junction_count
+    if junction_count == 0 and _is_external_validation_task_id(task_id):
+        if isinstance(model_config, dict):
+            return int(model_config.get("total_wsi", 0) or 0)
+        return 0
+    return junction_count
+
+
+async def get_worker_runtime_snapshot() -> dict[str, Any] | None:
+    runtime_status = import_module("task_worker.runtime_status")
+    get_runtime_status = runtime_status.get_runtime_status
+    runtime_status_ttl_seconds = runtime_status.RUNTIME_STATUS_TTL_SECONDS
+    snapshot = await get_runtime_status()
+    if not snapshot:
+        return None
+    updated_at_raw = snapshot.get("updated_at")
+    if not updated_at_raw:
+        return None
+    try:
+        updated_at = datetime.fromisoformat(str(updated_at_raw))
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    if datetime.now(timezone.utc) - updated_at > timedelta(seconds=runtime_status_ttl_seconds):
+        return None
+    return snapshot
+
+
+def _gpu_stage_detail_for_task(
+    task_id: str,
+    gpu_stage_details: object,
+) -> dict[str, Any] | None:
+    if not isinstance(gpu_stage_details, dict):
+        return None
+
+    matching_details = [
+        detail
+        for detail in gpu_stage_details.values()
+        if isinstance(detail, dict) and detail.get("task_id") == task_id
+    ]
+    if not matching_details:
+        return None
+
+    matching_details.sort(
+        key=lambda detail: (detail.get("state") != "running", str(detail.get("stage") or ""))
+    )
+    return dict(matching_details[0])
+
+
+def _attach_gpu_stage_detail(
+    task_dict: dict[str, Any],
+    gpu_stage_details: object,
+) -> None:
+    detail = _gpu_stage_detail_for_task(str(task_dict.get("task_id") or ""), gpu_stage_details)
+    if detail is not None:
+        task_dict["gpu_stage_detail"] = detail
+
+
+async def _cleanup_deleted_training_task_files(
+    task_id: str,
+    model_ids: list[str],
+    mode: str,
+) -> None:
+    """Clean task files after the database delete has already succeeded."""
+    try:
+        storage_cleanup = await asyncio.to_thread(
+            storage_manager.delete_training_task_files,
+            task_id,
+            model_ids,
+            mode,
+        )
+        logger.info(storage_cleanup["summary"])
+    except Exception as e:
+        logger.error(f"Failed to clean deleted training task files for {task_id}: {e}")
+
+    try:
+        from backend.common.progress_store import clear_progress
+
+        await clear_progress(task_id)
+    except Exception as e:
+        logger.warning(f"Failed to clear progress for deleted training task {task_id}: {e}")
 
 
 async def _has_wsi_training_access(user: User, wsi: Any, db: AsyncSession) -> bool:
@@ -68,114 +243,13 @@ async def _check_file_accessibility(
     paths_to_check: list[tuple[Any, ...]],
     uploads_dir: str,
 ) -> list[str]:
-    local_paths = [
-        (wid, p, fn) for wid, p, fn in paths_to_check if p.startswith(uploads_dir)
-    ]
-    external_paths = [
-        (wid, p, fn) for wid, p, fn in paths_to_check if not p.startswith(uploads_dir)
-    ]
-
-    inaccessible: list[str] = []
-
-    async def _stat(wsi_id: str, path: str, filename: str) -> tuple[Any, ...]:
-        exists = await asyncio.to_thread(os.path.exists, path)
-        return (wsi_id, path, filename, exists)
-
-    def _mount_root(path: str) -> str:
-        abs_path = os.path.abspath(path)
-        try:
-            with open("/proc/mounts") as f:
-                mounts = [line.split()[1] for line in f if len(line.split()) >= 2]
-            return max(
-                (m for m in mounts if abs_path.startswith(m.rstrip("/") + "/")),
-                key=len,
-                default="/",
-            )
-        except OSError:
-            cur = abs_path
-            while cur != "/":
-                parent = os.path.dirname(cur)
-                if os.path.ismount(cur):
-                    return cur
-                cur = parent
-            return "/"
-
-    # ── Strategy A: local paths — exhaustive check ────────────────────────────
-    if local_paths:
-        LOCAL_TIMEOUT = 10
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*[_stat(wid, p, fn) for wid, p, fn in local_paths]),
-                timeout=LOCAL_TIMEOUT,
-            )
-            inaccessible += [fn or wid for wid, _, fn, ok in results if not ok]
-        except asyncio.TimeoutError:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Local storage I/O timeout after {LOCAL_TIMEOUT}s. "
-                    "The server may be experiencing disk issues."
-                ),
-            )
-
-    # ── Strategy B: external/NFS paths — mount-root check + per-root sampling ─
-    # NFS failures are mount-level. Per-file stat on thousands of files under
-    # load causes guaranteed timeouts. Verify mount roots first (O(1)), then
-    # sample a few files per root to catch individually-deleted files.
-    if external_paths:
-        EXTERNAL_TIMEOUT = 10
-        SAMPLE_SIZE = 5
-
-        mount_roots = {_mount_root(p) for _, p, _ in external_paths}
-        for root in mount_roots:
-            try:
-                accessible = await asyncio.wait_for(
-                    asyncio.to_thread(os.path.exists, root),
-                    timeout=EXTERNAL_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                raise HTTPException(
-                    status_code=408,
-                    detail=(
-                        f"External storage not responding (timed out after {EXTERNAL_TIMEOUT}s): {root}. "
-                        "Please check your network storage connection and try again."
-                    ),
-                )
-            if not accessible:
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        f"External storage mount is not accessible: {root}. "
-                        "Please ensure the network storage is mounted and try again."
-                    ),
-                )
-
-        # 2. Random sample per mount root — catches individually-deleted files
-        paths_by_root: dict[str, Any] = defaultdict(list)
-        for item in external_paths:
-            paths_by_root[_mount_root(item[1])].append(item)
-
-        sample: list[tuple[Any, ...]] = []
-        for items in paths_by_root.values():
-            sample.extend(random.sample(items, min(SAMPLE_SIZE, len(items))))
-
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*[_stat(wid, p, fn) for wid, p, fn in sample]),
-                timeout=EXTERNAL_TIMEOUT,
-            )
-            inaccessible += [fn or wid for wid, _, fn, ok in results if not ok]
-        except asyncio.TimeoutError:
-            # Mount roots are reachable but individual stat is slow under heavy NFS
-            # load. This is not a missing-file error — warn and allow the submission
-            # to proceed. The training pipeline will catch any truly missing files.
-            logger.warning(
-                f"External storage sample check timed out ({EXTERNAL_TIMEOUT}s) but mount "
-                f"roots are accessible — NFS under heavy load. Allowing submission to proceed. "
-                f"Sampled paths: {[p for _, p, _ in sample]}"
-            )
-
-    return inaccessible
+    result = await check_training_inputs(
+        paths_to_check=paths_to_check,
+        uploads_dir=uploads_dir,
+        policy=build_training_preflight_policy(),
+        warn_fn=logger.warning,
+    )
+    return result.inaccessible
 
 
 async def _validate_files_and_enqueue(
@@ -185,6 +259,9 @@ async def _validate_files_and_enqueue(
     pipeline_kwargs: dict[str, Any],
 ) -> None:
     training_logger = TrainingLogger(task_id)
+    queue_pipeline_kwargs = dict(pipeline_kwargs)
+    queue_pipeline_kwargs.pop("task_id", None)
+    queue_wsi_count = queue_pipeline_kwargs.pop("wsi_count", 0)
 
     async def _fail(detail: str) -> None:
         logger.error(f"Training task {task_id} failed pre-flight file check: {detail}")
@@ -217,8 +294,8 @@ async def _validate_files_and_enqueue(
 
     task_queue = get_task_queue()
 
-    if pipeline_kwargs.get("data_type") == "wsi":
-        patching_coro = run_patching_then_submit(task_id, pipeline_kwargs)
+    if queue_pipeline_kwargs.get("data_type") == "wsi":
+        patching_coro = run_patching_then_submit(task_id, queue_pipeline_kwargs)
         patching_task = asyncio.create_task(patching_coro)
         task_queue.register_patching_task(task_id, patching_task)
 
@@ -226,9 +303,9 @@ async def _validate_files_and_enqueue(
             "[PreQueue] Starting patch extraction before GPU queue submission",
             metadata={
                 "status": TaskStatus.PATCHING,
-                "task_type": pipeline_kwargs.get("training_task_type"),
+                "task_type": queue_pipeline_kwargs.get("training_task_type"),
                 "data_type": "wsi",
-                "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
+                "wsi_count": queue_wsi_count or len(queue_pipeline_kwargs.get("wsi_ids", [])),
             },
         )
     else:
@@ -236,7 +313,7 @@ async def _validate_files_and_enqueue(
             task_id=task_id,
             task_type=TaskType.TRAINING,
             coro_func=run_training_pipeline,
-            **pipeline_kwargs,
+            **queue_pipeline_kwargs,
         )
 
         async with safe_session() as db:
@@ -249,9 +326,9 @@ async def _validate_files_and_enqueue(
             "[Queue] Patch task submitted to GPU queue, waiting for available worker/GPU resources",
             metadata={
                 "status": TaskStatus.QUEUED,
-                "task_type": pipeline_kwargs.get("training_task_type"),
-                "data_type": pipeline_kwargs.get("data_type"),
-                "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
+                "task_type": queue_pipeline_kwargs.get("training_task_type"),
+                "data_type": queue_pipeline_kwargs.get("data_type"),
+                "wsi_count": queue_wsi_count,
             },
         )
 
@@ -272,17 +349,10 @@ async def create_training_task(
     try:
         effective_task_owner_user_id = str(user.id)
 
-        # Resolve WSI IDs: prefer dataset_id (server-side resolution) over client-provided wsi_ids
-        wsi_ids = req.wsi_ids or []
-        if not wsi_ids and req.dataset_id:
-            async with safe_session() as db:
-                wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
-            if not wsi_ids:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No WSI files found in the specified dataset",
-                )
-        if not wsi_ids:
+        selected_wsi_ids = req.wsi_ids or []
+        dataset_input = bool(req.dataset_id and not selected_wsi_ids)
+        dataset_input_id = str(req.dataset_id) if dataset_input and req.dataset_id else ""
+        if not dataset_input and not selected_wsi_ids:
             raise HTTPException(
                 status_code=400, detail="At least one WSI must be selected"
             )
@@ -290,6 +360,7 @@ async def create_training_task(
         expected_task_type = None
         expected_data_type = None
         expected_aggregation_level = "file"
+        requested_task_type = req.task_type
 
         # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
         async with safe_session() as db:
@@ -305,56 +376,92 @@ async def create_training_task(
                 if source_task.user_id:
                     effective_task_owner_user_id = source_task.user_id
 
-            # Batch fetch all WSIs in a single query to avoid N+1 problem
-            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, wsi_ids)
-
-            # Check for missing WSIs
-            missing_wsi_ids = [wsi_id for wsi_id in wsi_ids if wsi_id not in wsi_map]
-            if missing_wsi_ids:
-                raise HTTPException(
-                    status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}"
-                )
-
-            # Collect dataset IDs and check access permissions
             dataset_ids_involved = set()
-            paths_to_check = []
+            wsi_count = 0
+            wsi_map = {}
+            prefetched_wsis = None
 
-            if user.is_admin():
-                # Admin can access everything - skip per-WSI permission check
-                for wsi_id in wsi_ids:
-                    wsi = wsi_map[wsi_id]
-                    dataset_ids_involved.add(wsi.dataset_id)
-                    if wsi.wsi_path:
-                        paths_to_check.append(
-                            (wsi_id, wsi.wsi_path, wsi.original_filename)
-                        )
+            if dataset_input:
+                dataset = await DatasetRepository.get_by_id(db, dataset_input_id)
+                if dataset is None:
+                    raise HTTPException(
+                        status_code=400, detail=f"Dataset not found: {dataset_input_id}"
+                    )
+                has_access = await check_dataset_access_permission(
+                    user,
+                    dataset_input_id,
+                    dataset.user_id,
+                    db,
+                    is_public=bool(getattr(dataset, "is_public", False)),
+                    parent_dataset_id=getattr(dataset, "parent_dataset_id", None),
+                )
+                if not has_access:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You don't have permission to use dataset: {dataset_input_id}",
+                    )
+                dataset_ids_involved.add(dataset_input_id)
+                dataset_stats = await DatasetStatsRepository.get_by_dataset_id(
+                    db, dataset_input_id
+                )
+                if dataset_stats is None:
+                    await DatasetStatsRepository.recompute(db, dataset_input_id)
+                    dataset_stats = await DatasetStatsRepository.get_by_dataset_id(
+                        db, dataset_input_id
+                    )
+                wsi_count = int(getattr(dataset_stats, "file_count", 0) or 0)
+                if wsi_count <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No WSI files found in the specified dataset",
+                    )
+                await _raise_if_dataset_cached_unavailable(db, dataset_input_id)
             else:
-                for wsi_id in wsi_ids:
-                    wsi = wsi_map[wsi_id]
-                    has_access = await _has_wsi_training_access(user, wsi, db)
-                    if not has_access:
-                        raise HTTPException(
-                            status_code=403,
-                            detail=f"You don't have permission to use WSI: {wsi_id}",
-                        )
-                    dataset_ids_involved.add(wsi.dataset_id)
-                    if wsi.wsi_path:
-                        paths_to_check.append(
-                            (wsi_id, wsi.wsi_path, wsi.original_filename)
-                        )
+                wsi_map = await WSIRepository.get_by_ids_with_dataset(db, selected_wsi_ids)
+                missing_wsi_ids = [
+                    wsi_id for wsi_id in selected_wsi_ids if wsi_id not in wsi_map
+                ]
+                if missing_wsi_ids:
+                    raise HTTPException(
+                        status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}"
+                    )
+
+                if user.is_admin():
+                    for wsi_id in selected_wsi_ids:
+                        wsi = wsi_map[wsi_id]
+                        dataset_ids_involved.add(wsi.dataset_id)
+                else:
+                    for wsi_id in selected_wsi_ids:
+                        wsi = wsi_map[wsi_id]
+                        has_access = await _has_wsi_training_access(user, wsi, db)
+                        if not has_access:
+                            raise HTTPException(
+                                status_code=403,
+                                detail=f"You don't have permission to use WSI: {wsi_id}",
+                            )
+                        dataset_ids_involved.add(wsi.dataset_id)
+                wsi_count = len(selected_wsi_ids)
+                prefetched_wsis = [
+                    wsi_map[wsi_id] for wsi_id in selected_wsi_ids if wsi_id in wsi_map
+                ]
+                _raise_if_wsi_cached_unavailable(prefetched_wsis)
 
             await require_no_active_batch_imports(
                 db,
                 detail="Cannot submit training task while files are being imported. Please wait for all imports to complete.",
+                dataset_ids=dataset_ids_involved,
             )
 
             dataset_ids = [
                 dataset_id for dataset_id in dataset_ids_involved if dataset_id
             ]
-            dataset_map = {
-                dataset.dataset_id: dataset
-                for dataset in await DatasetRepository.get_by_ids(db, list(dataset_ids))
-            }
+            if dataset_input:
+                dataset_map = {dataset_input_id: dataset}
+            else:
+                dataset_map = {
+                    dataset.dataset_id: dataset
+                    for dataset in await DatasetRepository.get_by_ids(db, list(dataset_ids))
+                }
             group_contracts = set()
             for dataset_id in dataset_ids:
                 dataset = dataset_map.get(dataset_id)
@@ -365,9 +472,17 @@ async def create_training_task(
                 data_group = ensure_dataset_segmentation_contract(
                     dataset, context="Training dataset"
                 )
+                try:
+                    normalized_group_task_type = normalize_task_type(
+                        task_type=data_group.task_type,
+                        data_type=data_group.data_type,
+                        aggregation_level=data_group.aggregation_level,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
                 group_contracts.add(
                     (
-                        data_group.task_type,
+                        normalized_group_task_type,
                         data_group.data_type,
                         data_group.aggregation_level,
                     )
@@ -383,15 +498,26 @@ async def create_training_task(
                 expected_task_type, expected_data_type, expected_aggregation_level = (
                     group_contracts.pop()
                 )
-                if req.task_type != expected_task_type:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Requested task_type '{req.task_type}' does not match dataset task_type '{expected_task_type}'",
-                    )
+
                 if req.data_type != expected_data_type:
                     raise HTTPException(
                         status_code=400,
                         detail=f"Requested data_type '{req.data_type}' does not match dataset data_type '{expected_data_type}'",
+                    )
+
+                try:
+                    requested_task_type = normalize_task_type(
+                        task_type=req.task_type,
+                        data_type=req.data_type,
+                        aggregation_level=expected_aggregation_level,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+                if requested_task_type != expected_task_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Requested task_type '{requested_task_type}' does not match dataset task_type '{expected_task_type}'",
                     )
 
             # Check GPU permission for non-GPU users (in same session)
@@ -409,44 +535,72 @@ async def create_training_task(
         # Use client-provided task_id (for fire-and-forget submission) or generate one
         task_id = req.task_id or f"train_{uuid.uuid4().hex[:16]}"
 
+        if not await is_worker_healthy():
+            raise HTTPException(status_code=503, detail="Task worker unavailable")
+
         # --- Session 2: Write - create task and WSI associations ---
         async with safe_session() as db:
             aggregation_level = expected_aggregation_level
-
-            # Get or create DataGroup for this training task
-            data_group = await DataGroupRepository.get_or_create(
-                db,
-                data_type=req.data_type,  # 'wsi' or 'patch'
-                aggregation_level=aggregation_level,  # 'file' or 'case'
-                task_type=req.task_type,  # 'classification' or 'survival'
-            )
-
-            # Prepare task data
-            task_data = {
-                "task_id": task_id,
-                "task_name": req.task_name,
-                "task_type": req.task_type,  # Add task_type for validation
-                "group_id": data_group.group_id,
-                "task_description": req.task_description,
-                "preprocessing_config": req.preprocessing,
-                "model_config": req.model,
-                "user_id": effective_task_owner_user_id,
-            }
-
-            # Create training task with pre-fetched WSIs (avoids redundant DB query)
-            split_config_dict = req.split_config.dict() if req.split_config else None
-            pipeline_preprocessing_config = dict(req.preprocessing or {})
-            if split_config_dict is not None:
-                pipeline_preprocessing_config["split_config"] = split_config_dict
-            prefetched_wsis = list(wsi_map.values())
             try:
-                task = await TrainingTaskRepository.create(
+                # Get or create DataGroup for this training task
+                data_group = await DataGroupRepository.get_or_create(
                     db,
-                    task_data,
-                    wsi_ids,
-                    split_config=split_config_dict,
-                    prefetched_wsis=prefetched_wsis,
+                    data_type=req.data_type,  # 'wsi' or 'patch'
+                    aggregation_level=aggregation_level,  # 'file' or 'case'
+                    task_type=requested_task_type,
                 )
+
+                resolved_data_group_task_type = normalize_task_type(
+                    task_type=str(data_group.task_type),
+                    data_type=str(data_group.data_type),
+                    aggregation_level=str(data_group.aggregation_level),
+                )
+                if resolved_data_group_task_type != requested_task_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Resolved data_group task_type '{resolved_data_group_task_type}' "
+                            f"does not match requested task_type '{requested_task_type}'"
+                        ),
+                    )
+
+                # Prepare task data
+                task_data = {
+                    "task_id": task_id,
+                    "task_name": req.task_name,
+                    "task_type": requested_task_type,
+                    "group_id": data_group.group_id,
+                    "task_description": req.task_description,
+                    "preprocessing_config": req.preprocessing,
+                    "model_config": req.model,
+                    "user_id": effective_task_owner_user_id,
+                }
+
+                # Create training task with pre-fetched WSIs (avoids redundant DB query)
+                split_config_dict = req.split_config.dict() if req.split_config else None
+                pipeline_preprocessing_config = dict(req.preprocessing or {})
+                if split_config_dict is not None:
+                    pipeline_preprocessing_config["split_config"] = split_config_dict
+                # Preserve the original WSI ordering used to resolve `wsi_ids`.
+                # Survival/random/k-fold split generation is order-sensitive when
+                # stratified splitting shuffles indices with a fixed seed, so we
+                # must keep the same order as dataset export / selection flows.
+                if dataset_input:
+                    task = await TrainingTaskRepository.create_reference(
+                        db,
+                        task_data,
+                        dataset_id=dataset_input_id,
+                        data_type=req.data_type,
+                        split_config=split_config_dict,
+                    )
+                else:
+                    task = await TrainingTaskRepository.create(
+                        db,
+                        task_data,
+                        selected_wsi_ids,
+                        split_config=split_config_dict,
+                        prefetched_wsis=prefetched_wsis,
+                    )
                 await db.commit()
             except ValueError as e:
                 # Convert validation errors to HTTP 400 Bad Request
@@ -455,12 +609,12 @@ async def create_training_task(
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")
         logger.info(
-            f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})"
+            f"  - Task type: {requested_task_type} (from DataGroup: {data_group.task_type})"
         )
         logger.info(
             f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}"
         )
-        logger.info(f"  - WSI count: {len(wsi_ids)}")
+        logger.info(f"  - WSI count: {wsi_count}")
         logger.info(f"  - Classes: {task.classes}")
 
         global_settings = Config.get_global_settings()
@@ -470,29 +624,75 @@ async def create_training_task(
 
         pipeline_kwargs = {
             "data_type": req.data_type,
-            "wsi_ids": wsi_ids,
             "preprocessing_config": pipeline_preprocessing_config,
             "model_config": req.model,
             "huggingface_token": huggingface_token,
-            "training_task_type": req.task_type,
+            "training_task_type": requested_task_type,
             "user_id": str(user.id),
             "user_is_admin": user.is_admin(),
+            "wsi_count": wsi_count,
+            "input_ref": {
+                "kind": "dataset" if dataset_input else "training_task_selection",
+                **(
+                    {"dataset_id": dataset_input_id}
+                    if dataset_input
+                    else {"task_id": task_id}
+                ),
+            },
         }
-
-        asyncio.create_task(
-            _validate_files_and_enqueue(
-                task_id=task_id,
-                paths_to_check=paths_to_check,
-                uploads_dir=str(Config.get_uploads_dir()),
-                pipeline_kwargs=pipeline_kwargs,
-            )
+        descriptor_paths_to_check = []
+        descriptor_payload = cast(
+            JsonPayload,
+            {
+                "task_id": task_id,
+                "paths_to_check": descriptor_paths_to_check,
+                "uploads_dir": str(Config.get_uploads_dir()),
+                "pipeline_kwargs": pipeline_kwargs,
+            },
         )
+        descriptor = build_task_descriptor(
+            job_id=task_id,
+            job_kind="training",
+            handler="training.preflight",
+            payload=descriptor_payload,
+        )
+        try:
+            await enqueue_task_descriptor(descriptor)
+        except Exception as e:
+            detail = f"Failed to enqueue task descriptor: {e}"
+            logger.error(f"Failed to enqueue training task {task_id}: {e}")
+            async with safe_session() as db:
+                _ = await TrainingTaskRepository.update_status(
+                    db,
+                    task_id,
+                    TaskStatus.FAILED,
+                    error_message=detail,
+                )
+                await db.commit()
+            raise HTTPException(status_code=503, detail="Task worker unavailable")
         await invalidate_chat_context(effective_task_owner_user_id)
 
-        result = task.to_dict()
-        result["status"] = TaskStatus.PENDING
-        result["progress"] = 0
-        result["wsi_count"] = len(wsi_ids)
+        result = {
+            "task_id": task.task_id,
+            "task_name": task.task_name,
+            "task_description": task.task_description,
+            "group_id": task.group_id,
+            "data_type": req.data_type,
+            "aggregation_level": aggregation_level,
+            "task_type": requested_task_type,
+            "user_id": task.user_id,
+            "status": TaskStatus.PENDING,
+            "progress": 0,
+            "error_message": task.error_message,
+            "preprocessing_config": task.preprocessing_config,
+            "model_config": task.model_config,
+            "classes": task.classes,
+            "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() + "Z" if task.updated_at else None,
+            "started_at": task.started_at.isoformat() + "Z" if task.started_at else None,
+            "finished_at": task.finished_at.isoformat() + "Z" if task.finished_at else None,
+            "wsi_count": wsi_count,
+        }
 
         return result
 
@@ -569,6 +769,8 @@ async def list_training_tasks(
     from backend.common.progress_store import get_all_progress
 
     file_progress = await get_all_progress()
+    runtime_snapshot = await get_worker_runtime_snapshot()
+    gpu_stage_details = (runtime_snapshot or {}).get("gpu_stage_details", {})
 
     # Add WSI count to each task
     result_tasks = []
@@ -582,15 +784,13 @@ async def list_training_tasks(
 
         task_id = task_dict["task_id"]
         junction_count = wsi_counts.get(task_id, 0)
-        if junction_count == 0 and task_dict.get("task_type") == "external_validation":
-            task_dict["wsi_count"] = (task_dict.get("model_config") or {}).get(
-                "total_wsi", 0
-            )
-        else:
-            task_dict["wsi_count"] = junction_count
+        task_dict["wsi_count"] = _get_external_validation_wsi_count(
+            task_id, junction_count, task_dict.get("model_config") or {}
+        )
         task_dict["source_dataset_id"] = source_dataset_ids.get(task_id)
         if task_id in file_progress:
             task_dict["progress"] = file_progress[task_id]
+        _attach_gpu_stage_detail(task_dict, gpu_stage_details)
         result_tasks.append(task_dict)
 
     return {
@@ -650,6 +850,8 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         from backend.common.progress_store import get_all_progress
 
                         file_progress = await get_all_progress()
+                        runtime_snapshot = await get_worker_runtime_snapshot()
+                        gpu_stage_details = (runtime_snapshot or {}).get("gpu_stage_details", {})
 
                         # Add WSI count and overlay file-based progress
                         result_tasks = []
@@ -667,18 +869,13 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                             # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
                             # so use model_config.total_wsi as the count
                             junction_count = wsi_counts.get(task_id, 0)
-                            if (
-                                junction_count == 0
-                                and task_dict.get("task_type") == "external_validation"
-                            ):
-                                task_dict["wsi_count"] = model_config.get(
-                                    "total_wsi", 0
-                                )
-                            else:
-                                task_dict["wsi_count"] = junction_count
+                            task_dict["wsi_count"] = _get_external_validation_wsi_count(
+                                task_id, junction_count, model_config
+                            )
                             # Overlay file progress if available (more up-to-date than DB)
                             if task_id in file_progress:
                                 task_dict["progress"] = file_progress[task_id]
+                            _attach_gpu_stage_detail(task_dict, gpu_stage_details)
                             result_tasks.append(task_dict)
 
                         # Change detection: only send if data changed
@@ -744,12 +941,10 @@ async def get_training_task(
 
     result["wsi_ids"] = wsi_ids
     # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
-    if len(wsi_ids) == 0 and result.get("task_type") == "external_validation":
-        # Get model_config from dict or object depending on include_username
-        model_config = task["model_config"] if include_username else task.model_config
-        result["wsi_count"] = (model_config or {}).get("total_wsi", 0)
-    else:
-        result["wsi_count"] = len(wsi_ids)
+    model_config = task["model_config"] if include_username else task.model_config
+    result["wsi_count"] = _get_external_validation_wsi_count(
+        task_id, len(wsi_ids), model_config
+    )
 
     # Overlay real-time progress from shared file (if available)
     # This ensures the initial load shows the most up-to-date progress
@@ -760,6 +955,8 @@ async def get_training_task(
     file_prog = await get_progress(task_id_for_progress)
     if file_prog is not None:
         result["progress"] = file_prog
+    runtime_snapshot = await get_worker_runtime_snapshot()
+    _attach_gpu_stage_detail(result, (runtime_snapshot or {}).get("gpu_stage_details", {}))
 
     return result
 
@@ -849,23 +1046,15 @@ async def delete_training_task(
             task.user_id, user, "You don't have permission to delete this task"
         )
 
-        # If task is still active, cancel it first in both gateway queue and AI service.
-        # This makes delete behave as "cancel then delete" for running/queued tasks.
-        if task.status in [
-            TaskStatus.PENDING,
-            TaskStatus.QUEUED,
-            TaskStatus.RESUMING,
-            TaskStatus.PATCHING,
-            TaskStatus.EXTRACTING,
-            TaskStatus.TRAINING,
-        ]:
-            queue = get_task_queue()
-            await queue.cancel_task(task_id)
-            await cancel_ai_service_training(task_id)
+        # Deletion must also stop late post-processing work. A task may already
+        # appear completed while visualization/artifact generation still holds
+        # an in-memory task object and writes task-scoped result bundles.
+        await publish_task_cancellation(task_id)
+        await cancel_ai_service_training(task_id)
 
         # Get all trained models for this task
         models = await TrainedModelRepository.get_by_task_id(db, task_id)
-        model_ids = [model.model_id for model in models]
+        model_ids = [str(model.model_id) for model in models]
 
         # Delete task-scoped AI result records before removing the task record itself.
         await AIResultRepository.delete_by_task_id(db, task_id)
@@ -876,20 +1065,18 @@ async def delete_training_task(
 
         await invalidate_chat_context(task_owner_id)
 
-        storage_cleanup = storage_manager.delete_training_task_files(
-            task_id, model_ids, mode
+        asyncio.create_task(
+            _cleanup_deleted_training_task_files(task_id, model_ids, mode)
         )
-        logger.info(storage_cleanup["summary"])
-
-        # Clean up progress file (ephemeral, may still exist if AI Service didn't finish cleanup)
-        from backend.common.progress_store import clear_progress
-
-        await clear_progress(task_id)
 
         return {
             "message": "Training task deleted successfully",
             "task_id": task_id,
-            "storage_cleanup": storage_cleanup,
+            "storage_cleanup": {
+                "status": "scheduled",
+                "mode": mode,
+                "summary": "Training task file cleanup scheduled",
+            },
         }
 
     except HTTPException:
@@ -1015,15 +1202,9 @@ async def stream_training_logs(
                         task_dict = task.to_dict()
                         task_dict["wsi_ids"] = wsi_ids
                         # For external validation tasks, WSIs aren't in junction table
-                        if (
-                            len(wsi_ids) == 0
-                            and task_dict.get("task_type") == "external_validation"
-                        ):
-                            task_dict["wsi_count"] = (task.model_config or {}).get(
-                                "total_wsi", 0
-                            )
-                        else:
-                            task_dict["wsi_count"] = len(wsi_ids)
+                        task_dict["wsi_count"] = _get_external_validation_wsi_count(
+                            task.task_id, len(wsi_ids), task.model_config
+                        )
                         # Overlay real-time progress from shared file
                         from backend.common.progress_store import get_progress
 
@@ -1084,15 +1265,9 @@ async def stream_training_logs(
                             task_dict = task.to_dict()
                             task_dict["wsi_ids"] = wsi_ids
                             # For external validation tasks, WSIs aren't in junction table
-                            if (
-                                len(wsi_ids) == 0
-                                and task_dict.get("task_type") == "external_validation"
-                            ):
-                                task_dict["wsi_count"] = (task.model_config or {}).get(
-                                    "total_wsi", 0
-                                )
-                            else:
-                                task_dict["wsi_count"] = len(wsi_ids)
+                            task_dict["wsi_count"] = _get_external_validation_wsi_count(
+                                task.task_id, len(wsi_ids), task.model_config
+                            )
                             # Overlay real-time progress from shared file
                             from backend.common.progress_store import get_progress
 
@@ -1156,16 +1331,11 @@ async def stream_training_logs(
                             final_task_dict = cached_task_dict.copy()
                             final_task_dict["wsi_ids"] = cached_wsi_ids
                             # For external validation tasks, WSIs aren't in junction table
-                            if (
-                                len(cached_wsi_ids) == 0
-                                and final_task_dict.get("task_type")
-                                == "external_validation"
-                            ):
-                                final_task_dict["wsi_count"] = final_task_dict.get(
-                                    "model_config", {}
-                                ).get("total_wsi", 0)
-                            else:
-                                final_task_dict["wsi_count"] = len(cached_wsi_ids)
+                            final_task_dict["wsi_count"] = _get_external_validation_wsi_count(
+                                task_id,
+                                len(cached_wsi_ids),
+                                final_task_dict.get("model_config", {}),
+                            )
 
                             data = json.dumps(
                                 {

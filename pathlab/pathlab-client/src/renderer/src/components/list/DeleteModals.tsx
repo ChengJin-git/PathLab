@@ -198,7 +198,7 @@ export function BatchDeleteModal({
       </div>
 
         {/* Selection Info */}
-        <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
+        <div className="bg-gray-50 rounded-xl p-2.5 sm:p-3 mb-4 sm:mb-5 border border-gray-100">
           <p className="text-xs sm:text-sm text-gray-700 leading-relaxed">
             {datasetToDeleteId ? (
               <>{t('listComponents.aboutToDeleteDataset')} <span className="font-bold text-red-600">{datasetToDeleteName}</span> {t('listComponents.andAllIts')} <span className="font-bold">{effectiveCount}</span> {t('listComponents.filesLower')}</>
@@ -214,7 +214,7 @@ export function BatchDeleteModal({
             {t('listComponents.deletionMode')}
           </label>
           <div className="space-y-2">
-            <label className="flex items-start gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+            <label className="flex items-start gap-3 p-2 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
               style={{ borderColor: deleteMode === 'standard' ? '#3b82f6' : '#e5e7eb' }}>
               <input
                 type="radio"
@@ -222,28 +222,28 @@ export function BatchDeleteModal({
                 value="standard"
                 checked={deleteMode === 'standard'}
                 onChange={(e) => onDeleteModeChange(e.target.value as 'standard' | 'complete')}
-                className="mt-1 h-4 w-4 text-blue-600"
+                className="mt-0.5 h-4 w-4 shrink-0 text-blue-600"
               />
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-gray-900 text-sm">{t('listComponents.standardDelete')}</div>
-                <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5">
                   {t('listComponents.standardDeleteDesc')} <span className="text-blue-600 font-semibold">{t('listComponents.keepsTrainingFeatures')}</span> {t('listComponents.forFutureResearch')}
                 </div>
               </div>
             </label>
 
-            <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
+            <label className={`flex items-start gap-3 p-2 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'complete' ? 'border-red-500 bg-red-50/20' : 'border-gray-100'}`}>
               <input
                 type="radio"
                 name="batchDeleteMode"
                 value="complete"
                 checked={deleteMode === 'complete'}
                 onChange={(e) => onDeleteModeChange(e.target.value as 'standard' | 'complete')}
-                className="mt-1 h-4 w-4 text-red-600"
+                className="mt-0.5 h-4 w-4 shrink-0 text-red-600"
               />
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-gray-900 text-sm">{t('listComponents.completeDelete')}</div>
-                <div className="text-[10px] sm:text-xs text-gray-500 mt-1 leading-relaxed">
+                <div className="text-[10px] sm:text-xs text-gray-500 mt-0.5">
                   {t('listComponents.completeDeleteDesc')} <span className="text-red-500 font-bold">{t('listComponents.irreversible')}</span>
                 </div>
               </div>

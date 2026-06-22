@@ -61,6 +61,7 @@ from backend.annotation.summary_cache import (
 )
 from backend.common.progress_store import get_progress, set_task_owner, get_task_owner
 from backend.annotation.pubsub import publish, subscribe_iter
+from gateway.chat.context_cache import invalidate_chat_context
 from backend.annotation.presence_pubsub import publish_presence, subscribe_presence_iter
 from ..dependencies import logger
 from ..models import (
@@ -1602,7 +1603,7 @@ async def list_collaborators(
     if collab_user_ids:
         rows = await db.execute(
             sa_select(
-                UserModel.id, UserModel.email, UserModel.nickname, UserModel.role
+                UserModel.id, UserModel.username, UserModel.nickname, UserModel.role
             ).where(UserModel.id.in_([uuid.UUID(uid) for uid in collab_user_ids]))
         )
         user_map = {
@@ -1614,7 +1615,7 @@ async def list_collaborators(
 
     admin_rows = await db.execute(
         sa_select(
-            UserModel.id, UserModel.email, UserModel.nickname, UserModel.role
+            UserModel.id, UserModel.username, UserModel.nickname, UserModel.role
         ).where(UserModel.role == UserModel.ROLE_ADMIN)
     )
     for row in admin_rows.all():
@@ -1630,7 +1631,7 @@ async def list_collaborators(
     owner_info = None
     if dataset.user_id:
         owner_row = await db.execute(
-            sa_select(UserModel.email, UserModel.nickname, UserModel.role).where(
+            sa_select(UserModel.username, UserModel.nickname, UserModel.role).where(
                 UserModel.id == uuid.UUID(dataset.user_id)
             )
         )
@@ -1860,6 +1861,7 @@ async def delete_dataset_ground_truth(
         raise HTTPException(status_code=404, detail="Ground truth not found")
 
     await db.commit()
+    await invalidate_chat_context(dataset.user_id or str(user.id))
 
     try:
         await rebuild_draft_annotation_summary_cache(
@@ -1914,7 +1916,7 @@ async def list_annotation_audit(
     user_display: dict[str, str] = {}
     if user_ids:
         rows = await db.execute(
-            sa_select(UserModel.id, UserModel.nickname, UserModel.email).where(
+            sa_select(UserModel.id, UserModel.nickname, UserModel.username).where(
                 UserModel.id.in_([uuid.UUID(uid) for uid in user_ids])
             )
         )
@@ -2112,7 +2114,7 @@ async def presence_websocket(
     await websocket.accept()
 
     user_id = str(user.id)
-    nickname = user.nickname or user.email or user_id
+    nickname = user.nickname or user.username or user_id
 
     await publish_presence(
         dataset_id, {"type": "join", "user_id": user_id, "nickname": nickname}

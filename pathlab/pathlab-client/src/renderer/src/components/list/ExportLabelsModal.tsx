@@ -5,6 +5,7 @@ import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { ModalShell } from '../ui/modal-shell'
 import type { DatasetSummary, ExportLabelsOptions } from '../../api/wsi'
+import { isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 export type { ExportLabelsOptions } from '../../api/wsi'
 
@@ -16,7 +17,6 @@ interface ExportLabelsModalProps {
 
 export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabelsModalProps) {
   const { t } = useTranslation()
-  const supportsKFold = dataset.task_type !== 'segmentation'
   const [strategy, setStrategy] = useState<'random' | 'k_fold'>('random')
   const [nSplits, setNSplits] = useState(5)
   const [seed, setSeed] = useState(42)
@@ -72,8 +72,8 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
             </p>
             <p className="text-xs sm:text-sm text-gray-600">
               <span className="font-medium">{t('listPage.type')}:</span>{' '}
-              {dataset.task_type === 'survival' ? t('listPage.survival') : 
-               dataset.task_type === 'segmentation' ? t('listPage.segmentation') : 
+              {isSurvivalTask(dataset.task_type) ? t('listPage.survival') : 
+               isSegmentationTask(dataset.task_type) ? t('listPage.segmentation') : 
                t('listPage.classification')}
               {' '}({dataset.aggregation_level === 'case' ? t('listPage.patientLevel') : t('listPage.fileLevel')})
             </p>
@@ -82,21 +82,19 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
             </p>
           </div>
 
-          {supportsKFold && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                {t('chatComponents.taskConfig.splitStrategy')}
-              </label>
-              <Select
-                value={strategy}
-                onChange={(v) => setStrategy(v as 'random' | 'k_fold')}
-                options={[
-                  { value: 'random', label: t('chatComponents.taskConfig.splitRandom') },
-                  { value: 'k_fold', label: t('chatComponents.taskConfig.splitKFold') },
-                ]}
-              />
-            </div>
-          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              {t('chatComponents.taskConfig.splitStrategy')}
+            </label>
+            <Select
+              value={strategy}
+              onChange={(v) => setStrategy(v as 'random' | 'k_fold')}
+              options={[
+                { value: 'random', label: t('chatComponents.taskConfig.splitRandom') },
+                { value: 'k_fold', label: t('chatComponents.taskConfig.splitKFold') },
+              ]}
+            />
+          </div>
 
           {isKFold ? (
             <div>
@@ -183,20 +181,18 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
             />
           </div>
 
-          {dataset.task_type !== 'segmentation' && (
-            <div className="flex items-start gap-2 sm:gap-3">
-              <input
-                type="checkbox"
-                id="stratified"
-                checked={stratified}
-                onChange={(e) => setStratified(e.target.checked)}
-                className="mt-0.5 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-              />
-              <label htmlFor="stratified" className="text-xs sm:text-sm text-gray-700 cursor-pointer">
-                {t('listPage.stratifiedSplit')}
-              </label>
-            </div>
-          )}
+          <div className="flex items-start gap-2 sm:gap-3">
+            <input
+              type="checkbox"
+              id="stratified"
+              checked={stratified}
+              onChange={(e) => setStratified(e.target.checked)}
+              className="mt-0.5 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+            />
+            <label htmlFor="stratified" className="text-xs sm:text-sm text-gray-700 cursor-pointer">
+              {t('training.dataSplit.stratifiedSplit')}
+            </label>
+          </div>
         </div>
 
         {/* Footer */}
@@ -219,4 +215,3 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
     </ModalShell>
   )
 }
-

@@ -6,14 +6,14 @@ import PathScientistLayout from '@renderer/components/pathscientist/PathScientis
 describe('PathScientistLayout', () => {
   it('keeps the top-right header empty', () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <PathScientistLayout>
           <main>content</main>
         </PathScientistLayout>
       </MemoryRouter>,
     )
 
-    expect(screen.getByText('PathScientist')).toBeInTheDocument()
+    expect(screen.getByText('AutoResearch')).toBeInTheDocument()
     expect(screen.queryByText('research agent')).not.toBeInTheDocument()
     expect(screen.queryByText('gpt-5.5')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /^Sessions$/i })).not.toBeInTheDocument()

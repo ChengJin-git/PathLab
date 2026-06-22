@@ -114,11 +114,12 @@ export default function SettingsPage() {
             {tabs.map((tab) => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`
                     group inline-flex items-center justify-center px-3 py-3 sm:px-6 sm:py-4 border-b-2 font-medium text-sm whitespace-nowrap flex-1 transition-colors
                     ${isActive
                       ? 'border-primary-500 text-primary-600 bg-primary-50/10'
@@ -169,6 +170,7 @@ export default function SettingsPage() {
               </h2>
               <Tooltip content={t('settings.refreshStatus')}>
               <button
+                type="button"
                 onClick={checkServiceHealth}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -179,7 +181,7 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">{t('settings.platformVersion')}</span>
-                <span className="text-sm text-gray-600">v1.0.4</span>
+                <span className="text-sm text-gray-600">v1.0.5</span>
               </div>
               {(['gateway', 'wsi', 'ai'] as const).map((service) => (
                 <div key={service} className={`flex justify-between py-2 ${service !== 'ai' ? 'border-b border-gray-100' : ''}`}>
@@ -235,27 +237,27 @@ export default function SettingsPage() {
                 <div className="border-t border-gray-100 pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-8">
                   <div className="flex flex-col items-start">
                     <a
-                      href="https://smartlab.cse.ust.hk/"
+                      href="https://smartx.ust.hk/"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex max-w-full items-center transition-opacity hover:opacity-100 opacity-90"
                     >
-                      <img src="/images/smartlab-logo.svg" alt="SmartLab" className="h-10 sm:h-11 w-auto" />
+                      <img src="/images/smartxlab-logo.png" alt="SmartXLab" className="h-14 sm:h-16 w-auto" />
                     </a>
 
                     <p className="mt-4 text-sm leading-6 text-gray-700">{t('settings.aboutText3')}</p>
 
                     <a
-                      href="https://smartlab.cse.ust.hk/"
+                      href="https://smartx.ust.hk/"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-4 inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700 hover:underline"
                     >
-                      <span className="break-all">smartlab.cse.ust.hk</span>
+                      <span className="break-all">smartx.ust.hk</span>
                     </a>
 
                     <p className="mt-4 text-xs leading-5 text-gray-500">
-                      {t('common.copyright')} <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer" className="font-medium text-gray-700 hover:underline">SmartLab</a> · {t('introduction.allRightsReserved')}
+                      {t('common.copyright')} <a href="https://smartx.ust.hk/" target="_blank" rel="noopener noreferrer" className="font-medium text-gray-700 hover:underline">SmartXLab</a> · {t('introduction.allRightsReserved')}
                     </p>
                   </div>
                 </div>

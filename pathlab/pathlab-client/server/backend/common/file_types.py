@@ -13,8 +13,9 @@ Usage:
         is_patch_file,
     )
 """
+
 import logging
-from typing import FrozenSet, Optional
+from importlib import import_module
 
 
 logger = logging.getLogger(__name__)
@@ -24,23 +25,50 @@ SIZE_THRESHOLD: int = 32 * 1024 * 1024
 
 # WSI file extensions (excluding .tif/.tiff which need size check)
 # These are always treated as WSI files regardless of size
-WSI_EXTENSIONS: FrozenSet[str] = frozenset({
-    '.svs', '.svslide', '.ndpi', '.scn', '.mrxs', '.bif',
-    '.vsi', '.vms', '.vmu', '.kfb', '.sdpc', '.tmap',
-    '.mds', '.mdsx', '.qptiff', '.tron', '.isyntax',
-    '.dyj', '.dyqx', '.ibl', '.zyp',  # Additional WSI formats
-})
+WSI_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".svs",
+        ".svslide",
+        ".ndpi",
+        ".scn",
+        ".mrxs",
+        ".bif",
+        ".vsi",
+        ".vms",
+        ".vmu",
+        ".kfb",
+        ".sdpc",
+        ".tmap",
+        ".mds",
+        ".mdsx",
+        ".qptiff",
+        ".tron",
+        ".isyntax",
+        ".dyj",
+        ".dyqx",
+        ".ibl",
+        ".zyp",  # Additional WSI formats
+    }
+)
 
 # Patch/image file extensions (excluding .tif/.tiff which need size check)
 # These are always treated as patch files regardless of size
-PATCH_EXTENSIONS: FrozenSet[str] = frozenset({
-    '.jpg', '.jpeg', '.png', '.bmp',
-})
+PATCH_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".bmp",
+    }
+)
 
 # TIFF extensions that require slide inspection first, size fallback second
-TIF_EXTENSIONS: FrozenSet[str] = frozenset({
-    '.tif', '.tiff',
-})
+TIF_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".tif",
+        ".tiff",
+    }
+)
 
 
 def _inspect_tiff_with_slide(file_path: str):
@@ -52,17 +80,27 @@ def _inspect_tiff_with_slide(file_path: str):
         None if slide inspection failed and caller should use fallback heuristics.
     """
     try:
-        from backend.common.slide_utils import load_slide, slide_has_wsi_characteristics
+        slide_utils = import_module("backend.common.slide_utils")
+        load_slide = slide_utils.load_slide
+        slide_has_wsi_characteristics = slide_utils.slide_has_wsi_characteristics
 
         slide = load_slide(file_path)
     except Exception as exc:
-        logger.debug("TIFF slide inspection failed for %s, using size fallback: %s", file_path, exc)
+        logger.debug(
+            "TIFF slide inspection failed for %s, using size fallback: %s",
+            file_path,
+            exc,
+        )
         return None
 
     try:
         return not slide_has_wsi_characteristics(slide)
     except Exception as exc:
-        logger.debug("TIFF feature inspection failed for %s, using size fallback: %s", file_path, exc)
+        logger.debug(
+            "TIFF feature inspection failed for %s, using size fallback: %s",
+            file_path,
+            exc,
+        )
         return None
     finally:
         try:
@@ -71,7 +109,7 @@ def _inspect_tiff_with_slide(file_path: str):
             pass
 
 
-def _inspect_tiff_with_metadata(file_path: str) -> Optional[bool]:
+def _inspect_tiff_with_metadata(file_path: str) -> bool | None:
     """Return TIFF classification from lightweight metadata inspection.
 
     Returns:
@@ -122,14 +160,17 @@ def _inspect_tiff_with_metadata(file_path: str) -> Optional[bool]:
                 except Exception:
                     description = ""
                 description_lower = description.lower()
-                if any(token in description_lower for token in (
-                    "aperio",
-                    "openslide",
-                    "hamamatsu",
-                    "appmag",
-                    "objective-power",
-                    "mpp",
-                )):
+                if any(
+                    token in description_lower
+                    for token in (
+                        "aperio",
+                        "openslide",
+                        "hamamatsu",
+                        "appmag",
+                        "objective-power",
+                        "mpp",
+                    )
+                ):
                     return False
 
                 try:
@@ -140,7 +181,11 @@ def _inspect_tiff_with_metadata(file_path: str) -> Optional[bool]:
                 except Exception:
                     pass
     except Exception as exc:
-        logger.debug("TIFF metadata inspection failed for %s, using fallback heuristics: %s", file_path, exc)
+        logger.debug(
+            "TIFF metadata inspection failed for %s, using fallback heuristics: %s",
+            file_path,
+            exc,
+        )
         return None
 
     return None
@@ -202,4 +247,3 @@ def is_patch_file_for_scan(file_path: str, file_size: int = 0) -> bool:
             return file_size < SIZE_THRESHOLD
 
     return False
-

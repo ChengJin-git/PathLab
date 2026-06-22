@@ -71,14 +71,14 @@ _LEGAL_FOOTER_HTML = (
     "This message contains confidential information intended for a specific individual "
     "and purpose. If you are not the intended recipient, you should delete this message "
     "and notify the sender, "
-    "<a href='https://smartlab.cse.ust.hk/' style='color:#999;'>SmartLab</a>, "
+    "<a href='https://smartx.ust.hk/' style='color:#999;'>SmartXLab</a>, "
     "and The Hong Kong University of Science and Technology (the University) immediately. "
     "Any disclosure, copying, or distribution of this message, or the taking of any action "
     "based on it, is strictly prohibited and may be unlawful.<br><br>"
-    "SmartLab and the University specifically deny any responsibility for the accuracy or "
+    "SmartXLab and the University specifically deny any responsibility for the accuracy or "
     "quality of information obtained through University E-mail Facilities. Any views and "
     "opinions expressed are only those of the author(s) and do not necessarily represent "
-    "those of SmartLab or the University, and neither SmartLab nor the University accepts "
+    "those of SmartXLab or the University, and neither SmartXLab nor the University accepts "
     "liability whatsoever for any losses or damages incurred or caused to any party as a "
     "result of the use of such information."
     "</p>"
@@ -175,7 +175,7 @@ async def send_templated_email(
 
         _resend.api_key = settings["resend_api_key"]
         from_addr = (
-            "PathLab Agent <notify@pathub.org>"
+            "PathLab Agent <notify@pathhub.org>"
             if for_admin
             else "PathLab Admin <noreply@pathhub.org>"
         )

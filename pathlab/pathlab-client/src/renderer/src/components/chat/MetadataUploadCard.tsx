@@ -6,13 +6,15 @@ import {
 import { useTranslation } from 'react-i18next'
 import { downloadCSVTemplate, UploadSplitsResponse } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
-import { xlsxToCSV } from '../../lib/csvImporter'
+import { readFileText, xlsxToCSV } from '../../lib/csvImporter'
+import { getTaskFamily, isCanonicalTaskType, type TaskType } from '../../constants/training'
+import Papa from 'papaparse'
 
 // --- Parsing Logic ---
 export interface MetadataUploadConfig {
   dataset_id?: string
   dataset_name?: string
-  upload_mode?: 'classification' | 'survival' | 'segmentation'
+  upload_mode?: TaskType
   aggregation_level?: 'file' | 'case'
   // Persisted after successful upload
   upload_result?: {
@@ -54,8 +56,11 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
   const [bgTaskId, setBgTaskId] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const uploadMode = config.upload_mode || 'classification'
-  const isSegmentation = uploadMode === 'segmentation'
+  const uploadMode: TaskType = isCanonicalTaskType(config.upload_mode)
+    ? config.upload_mode
+    : 'wsi_classification'
+  const taskFamily = getTaskFamily(uploadMode)
+  const isSegmentation = taskFamily === 'segmentation'
   const onSuccessCalledRef = useRef(false)
 
   // On mount, reconnect to an existing background task for this dataset (survives navigation)
@@ -124,18 +129,19 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
         }
         csvContent = csv
       } else {
-        csvContent = new TextDecoder().decode(arrayBuffer).replace(/^\uFEFF/, '') // Strip BOM
+        csvContent = await readFileText(file)
       }
 
-      const lines = csvContent.split('\n').filter(line => line.trim() !== '')
-      if (lines.length < 2) return t('chatComponents.metadataUpload.emptyFile')
+      const parsed = Papa.parse(csvContent, { skipEmptyLines: true })
+      const rows = parsed.data as string[][]
+      if (rows.length < 2) return t('chatComponents.metadataUpload.emptyFile')
 
-      const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
+      const headers = rows[0].map(h => h.toLowerCase().trim())
       if (!headers.includes('filename')) return t('chatComponents.metadataUpload.missingFilename')
 
-      if (uploadMode === 'classification') {
+      if (taskFamily === 'classification') {
         if (!headers.includes('label')) return t('chatComponents.metadataUpload.missingLabel')
-      } else if (uploadMode === 'survival') {
+      } else if (taskFamily === 'survival') {
         if (!headers.includes('event_time')) return t('chatComponents.metadataUpload.missingEventTime')
         if (!headers.includes('event_status')) return t('chatComponents.metadataUpload.missingEventStatus')
       }
@@ -159,6 +165,13 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
   const handleFileSelect = async (file: File) => {
     setValidationError(null)
 
+    if (config.upload_mode !== undefined && !isCanonicalTaskType(config.upload_mode)) {
+      const msg = t('chatComponents.metadataUpload.failedToStartUpload')
+      setValidationError(msg)
+      onError?.(msg)
+      return
+    }
+
     const error = await validateFile(file)
     if (error) {
       setValidationError(error)
@@ -173,7 +186,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
         csvFile,
         datasetName: config.dataset_name!,
         datasetId: config.dataset_id,
-        uploadMode: config.upload_mode || 'classification',
+        uploadMode,
         dataLevel: config.aggregation_level || 'file'
       })
       setBgTaskId(taskId)
@@ -207,6 +220,11 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
 
   // Download template
   const handleDownloadTemplate = () => {
+    if (config.upload_mode !== undefined && !isCanonicalTaskType(config.upload_mode)) {
+      const msg = t('chatComponents.metadataUpload.failedToStartUpload')
+      onError?.(msg)
+      return
+    }
     downloadCSVTemplate(uploadMode).catch(err => {
       console.error('Failed to download template:', err)
     })
@@ -355,7 +373,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
                 <p className="text-sm font-medium text-gray-900">{t('chatComponents.metadataUpload.dragAndDrop')}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   {t('chatComponents.metadataUpload.orClickToBrowse')} <code className="bg-gray-100 px-1 rounded">filename</code>
-                  {uploadMode === 'survival'
+                  {taskFamily === 'survival'
                     ? <>, <code className="bg-gray-100 px-1 rounded">event_time</code>, <code className="bg-gray-100 px-1 rounded">event_status</code></>
                     : isSegmentation
                       ? <>, <code className="bg-gray-100 px-1 rounded">split</code>, <code className="bg-gray-100 px-1 rounded">case_id</code></>
@@ -375,7 +393,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
               className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 hover:underline"
             >
               <Download className="w-3 h-3" />
-              {t('chatComponents.metadataUpload.downloadTemplate', { type: uploadMode === 'survival' ? t('chatComponents.metadataUpload.survival') : uploadMode === 'segmentation' ? t('chatComponents.metadataUpload.segmentation') : t('chatComponents.metadataUpload.classification') })}
+              {t('chatComponents.metadataUpload.downloadTemplate', { type: taskFamily === 'survival' ? t('chatComponents.metadataUpload.survival') : isSegmentation ? t('chatComponents.metadataUpload.segmentation') : t('chatComponents.metadataUpload.classification') })}
             </button>
           </div>
         )}

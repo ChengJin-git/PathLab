@@ -22,15 +22,154 @@ export interface SelectOption<T = string> {
 // ============================================================================
 
 /**
- * Available task types for training.
+ * Canonical training task ids. Keep data shape and aggregation separate:
+ * dataType describes WSI vs patch data, while aggregation levels describe file/case organization.
  */
-export const TASK_TYPES: readonly SelectOption[] = [
-  { value: 'classification', label: 'Classification' },
-  { value: 'survival', label: 'Survival Prediction' },
-  { value: 'segmentation', label: 'Segmentation' }
+export const TASK_TYPES = [
+  { value: 'wsi_classification', label: 'WSI Classification' },
+  { value: 'patch_classification', label: 'Patch Classification' },
+  { value: 'wsi_survival', label: 'WSI Survival' },
+  { value: 'patch_segmentation', label: 'Patch Segmentation' },
 ] as const
 
-export type TaskType = 'classification' | 'survival' | 'segmentation'
+export type TaskType = typeof TASK_TYPES[number]['value']
+export type TaskFamily = 'classification' | 'survival' | 'segmentation'
+export type AggregationLevel = 'file' | 'case'
+export type UploadTaskMode = TaskType | TaskFamily
+export type UploadDataType = 'wsi' | 'patch'
+
+export interface TaskMetadata {
+  taskType: TaskType
+  label: string
+  taskFamily: TaskFamily
+  dataType: DataLevel
+  allowedAggregationLevels: readonly AggregationLevel[]
+}
+
+export const TASK_METADATA_BY_ID: Record<TaskType, TaskMetadata> = {
+  wsi_classification: {
+    taskType: 'wsi_classification',
+    label: 'WSI Classification',
+    taskFamily: 'classification',
+    dataType: 'wsi',
+    allowedAggregationLevels: ['file', 'case'],
+  },
+  patch_classification: {
+    taskType: 'patch_classification',
+    label: 'Patch Classification',
+    taskFamily: 'classification',
+    dataType: 'patch',
+    allowedAggregationLevels: ['file'],
+  },
+  wsi_survival: {
+    taskType: 'wsi_survival',
+    label: 'WSI Survival',
+    taskFamily: 'survival',
+    dataType: 'wsi',
+    allowedAggregationLevels: ['file', 'case'],
+  },
+  patch_segmentation: {
+    taskType: 'patch_segmentation',
+    label: 'Patch Segmentation',
+    taskFamily: 'segmentation',
+    dataType: 'patch',
+    allowedAggregationLevels: ['file'],
+  },
+}
+
+export function getTaskMetadata(taskType: TaskType): TaskMetadata {
+  return TASK_METADATA_BY_ID[taskType]
+}
+
+export function getTaskFamily(taskType: string | null | undefined): TaskFamily | null {
+  if (isCanonicalTaskType(taskType)) return TASK_METADATA_BY_ID[taskType].taskFamily
+  return null
+}
+
+export function toCanonicalTaskType(
+  taskType: string | null | undefined,
+  dataType?: DataLevel | null
+): TaskType | null {
+  if (isCanonicalTaskType(taskType)) {
+    const metadata = TASK_METADATA_BY_ID[taskType]
+    if (!dataType || metadata.dataType === dataType) return taskType
+    if (metadata.taskFamily === 'classification') {
+      return dataType === 'patch' ? 'patch_classification' : 'wsi_classification'
+    }
+    return null
+  }
+
+  if (taskType === 'classification' && dataType === 'patch') return 'patch_classification'
+  if (taskType === 'classification' && dataType === 'wsi') return 'wsi_classification'
+  if (taskType === 'survival' && dataType === 'wsi') return 'wsi_survival'
+  if (taskType === 'segmentation' && dataType === 'patch') return 'patch_segmentation'
+
+  return null
+}
+
+export function toLegacyTaskFamily(taskType: string | null | undefined): TaskFamily | null {
+  return getTaskFamily(taskType)
+}
+
+export function isCanonicalTaskType(taskType: string | null | undefined): taskType is TaskType {
+  return typeof taskType === 'string' && taskType in TASK_METADATA_BY_ID
+}
+
+export function isClassificationTask(taskType: string | null | undefined): boolean {
+  return isCanonicalTaskType(taskType) && getTaskFamily(taskType) === 'classification'
+}
+
+export function isSurvivalTask(taskType: string | null | undefined): boolean {
+  return isCanonicalTaskType(taskType) && getTaskFamily(taskType) === 'survival'
+}
+
+export function isSegmentationTask(taskType: string | null | undefined): boolean {
+  return isCanonicalTaskType(taskType) && getTaskFamily(taskType) === 'segmentation'
+}
+
+/** Resolve a canonical TaskType for uploads before the API receives metadata. */
+export interface UploadTaskTypeHints {
+  fileName?: string | null
+  fileSize?: number | null
+  dataType?: UploadDataType | null
+}
+
+export function inferUploadDataType(hints?: UploadTaskTypeHints | string | null): UploadDataType {
+  const normalizedHints: UploadTaskTypeHints = typeof hints === 'string'
+    ? { fileName: hints }
+    : hints ?? {}
+
+  if (normalizedHints.dataType === 'wsi' || normalizedHints.dataType === 'patch') {
+    return normalizedHints.dataType
+  }
+
+  const fileName = normalizedHints.fileName?.toLowerCase() ?? ''
+  const ext = fileName.includes('.') ? fileName.split('.').pop() : undefined
+  if (!ext) return 'wsi'
+
+  if (['jpg', 'jpeg', 'png', 'bmp'].includes(ext)) return 'patch'
+  if (ext === 'tif' || ext === 'tiff') {
+    const sizeThreshold = 32 * 1024 * 1024
+    return (normalizedHints.fileSize ?? 0) >= sizeThreshold ? 'wsi' : 'patch'
+  }
+
+  return 'wsi'
+}
+
+export function resolveUploadTaskType(
+  uploadMode: string | null | undefined,
+  hints?: UploadTaskTypeHints | string | null
+): TaskType {
+  if (isCanonicalTaskType(uploadMode)) return uploadMode
+  if (uploadMode === 'survival') return 'wsi_survival'
+  if (uploadMode === 'segmentation') return 'patch_segmentation'
+
+  const dataType = inferUploadDataType(hints)
+  const canonical = toCanonicalTaskType(uploadMode, dataType)
+  if (canonical) return canonical
+
+  throw new Error(`Unsupported upload task type: ${uploadMode ?? 'empty'}`)
+}
 
 // ============================================================================
 // Data Levels
@@ -52,6 +191,9 @@ export type DataLevel = 'wsi' | 'patch'
 
 export type SplitStrategy = 'random' | 'k_fold' | 'manual'
 export type TrainingStatus = 'idle' | 'validating' | 'submitting' | 'submitted' | 'failed'
+
+/** Maximum number of folds allowed for K-Fold cross-validation. Must stay in sync with backend SplitConfig.n_splits le= constraint. */
+export const KFOLD_MAX_SPLITS = 20
 
 // ============================================================================
 // Feature Extractors
@@ -86,14 +228,23 @@ export const FEATURE_EXTRACTORS: readonly ExtractorOption[] = [
   { id: 'H-Optimus-0', name: 'H-Optimus-0', description: 'ViT-G/14, 1536-dim (Bioptimus)', supports_spatial: true },
   { id: 'mSTAR', name: 'mSTAR', description: 'DINOv2 ViT-L/16, 1024-dim', supports_spatial: true },
   { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-G/14, 1536-dim', supports_spatial: true },
-  { id: 'SmartCCS', name: 'Smart-CCS', description: 'DINOv2 ViT-L/14, 1024-dim (Smartlab)', supports_spatial: true },
-  { id: 'SmartCyto', name: 'SmartCyto', description: 'DINOv3 ViT-B/16, 768-dim (Smartlab)', supports_spatial: true },
-  { id: 'CytoFM', name: 'CytoFM', description: 'DINOv2 ViT-L/14, 1024-dim, pure vision self-supervised (Smartlab)', supports_spatial: true }
+  { id: 'SmartCCS', name: 'Smart-CCS', description: 'DINOv2 ViT-L/14, 1024-dim (SmartXlab)', supports_spatial: true },
+  { id: 'SmartCyto', name: 'SmartCyto', description: 'DINOv3 ViT-B/16, 768-dim (SmartXlab)', supports_spatial: true },
+  { id: 'KRONOS', name: 'KRONOS', description: 'Multiplex ViT-S/16, 384-dim (Mahmood Lab), panel-agnostic spatial proteomics FM', supports_spatial: true }
 ] as const
 
 /** Default feature extractor ID */
 export const DEFAULT_EXTRACTOR = 'resnet50'
 export const FM_SEGMENTATION_ARCHITECTURE = 'conv_decoder'
+
+export const FM_DECODER_TYPES = ['linear', 'conv', 'dpt', 'unetr'] as const
+export type FmDecoderType = typeof FM_DECODER_TYPES[number]
+export const DEFAULT_FM_DECODER_TYPE: FmDecoderType = 'conv'
+
+export const FM_SEGMENTATION_ARCHITECTURES = [
+  'linear_decoder', 'conv_decoder', 'dpt_decoder', 'unetr_decoder'
+] as const
+export type FmSegmentationArchitecture = typeof FM_SEGMENTATION_ARCHITECTURES[number]
 
 /**
  * Feature extractors as SelectOption format for dropdowns.
@@ -548,6 +699,7 @@ export interface SplitDefaults {
   strategy: 'random' | 'k_fold' | 'manual'
   kFoldSplits: number
   randomSeed: number
+  stratified: boolean
   splitRatio: number  // Train percentage for random split
 }
 
@@ -558,6 +710,6 @@ export const SPLIT_DEFAULTS: SplitDefaults = {
   strategy: 'random',
   kFoldSplits: 5,
   randomSeed: 42,
+  stratified: true,
   splitRatio: 70,
 }
-

@@ -7,7 +7,6 @@ classification and survival analysis with bootstrap CI and chart generation.
 
 import asyncio
 import functools
-import json
 import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, TypedDict
@@ -15,6 +14,7 @@ from typing import Any, Dict, List, Optional, Set, TypedDict
 from fastapi import HTTPException
 
 from backend.common.config import Config
+from backend.ai.result_store import AIResultStore
 from backend.database.repositories import (
     TrainedModelRepository,
     TrainingTaskRepository,
@@ -48,30 +48,6 @@ from .analysis_metrics import (
 logger = logging.getLogger(__name__)
 
 
-EXTRACTOR_EMBED_DIM: Dict[str, int] = {
-    "resnet50": 2048,
-    "vit_l_16": 1024,
-    "conch": 512,
-    "uni": 1024,
-    "uni2": 1536,
-    "virchow": 1280,
-    "virchow2": 1280,
-    "plip": 512,
-    "phikon": 1024,
-    "phikon2": 1024,
-    "patho_clip": 512,
-    "openmidnight": 1536,
-    "conch15": 512,
-    "H-Optimus-1": 1536,
-    "H-Optimus-0": 1536,
-    "mSTAR": 1024,
-    "GPFM": 1024,
-    "SmartCCS": 1024,
-    "SmartCyto": 768,
-    "CytoFM": 1024,
-}
-
-
 class ExtvalModelInfo(TypedDict):
     data_type: str
     task_type: str
@@ -99,11 +75,11 @@ class ExtvalDatasetInfo(TypedDict):
 
 
 def _is_extval_segmentation_task(task_type: Optional[str]) -> bool:
-    return task_type in ("segmentation", "patch_segmentation")
+    return task_type == "patch_segmentation"
 
 
 def _norm_labels(labels: List[str]) -> List[str]:
-    return sorted({str(lbl).strip() for lbl in labels if str(lbl).strip()})
+    return sorted({str(lbl).strip().lower() for lbl in labels if str(lbl).strip()})
 
 
 def check_extval_compatibility(
@@ -112,12 +88,12 @@ def check_extval_compatibility(
 ) -> Optional[str]:
     model_data_type = model_info["data_type"]
     model_task_type = model_info["task_type"]
-    model_is_survival = model_task_type in ("wsi_survival", "survival")
+    model_is_survival = model_task_type == "wsi_survival"
     model_is_seg = _is_extval_segmentation_task(model_task_type)
 
     ds_data_type = dataset_info["data_type"]
     ds_task_type = dataset_info["task_type"]
-    ds_is_survival = ds_task_type in ("wsi_survival", "survival")
+    ds_is_survival = ds_task_type == "wsi_survival"
     ds_is_seg = _is_extval_segmentation_task(ds_task_type)
 
     if ds_data_type != model_data_type:
@@ -209,19 +185,6 @@ def check_extval_compatibility(
             if extra:
                 parts.append(f"Dataset labels not in model: {extra}.")
             return " ".join(parts)
-
-    if model_data_type == "wsi":
-        model_extractor = model_info["feature_extractor"]
-        model_embed_dim = EXTRACTOR_EMBED_DIM.get(model_extractor, 0)
-        if model_extractor and model_embed_dim > 0:
-            ds_extractors = dataset_info["feature_extractors"]
-            if ds_extractors:
-                has_same_dim = any(
-                    EXTRACTOR_EMBED_DIM.get(e, 0) == model_embed_dim
-                    for e in ds_extractors
-                )
-                if not has_same_dim:
-                    return "Feature extractor embedding dimensions do not match."
 
     ds_wsi_ids = dataset_info["wsi_ids"]
     if model_info["wsi_ids"] and ds_wsi_ids and (model_info["wsi_ids"] & ds_wsi_ids):
@@ -327,6 +290,137 @@ def _resolve_segmentation_primary_metric_key(
     return "iou"
 
 
+def _load_extval_task_result_payloads(task_id: str) -> List[Dict[str, Any]]:
+    store = AIResultStore(Config.get_uploads_dir())
+    payloads: List[Dict[str, Any]] = []
+    for wsi_id in store.list_results(task_id):
+        data = store.read_result(task_id, wsi_id, strict=True)
+        validation_task_id = data.get("validation_task_id")
+        if validation_task_id is not None and validation_task_id != task_id:
+            continue
+        payloads.append(data)
+    return payloads
+
+
+def _collect_segmentation_results_from_payloads(payloads: List[Dict[str, Any]]):
+    image_results = []
+    num_classes = None
+    class_names: List[str] = []
+
+    for data in payloads:
+        if data.get("task_type") == "patch_segmentation":
+            image_results.append(data)
+            if num_classes is None:
+                num_classes = data.get("num_classes", 1)
+            if not class_names:
+                class_names = _normalize_segmentation_class_names(data.get("class_names", []))
+
+    return image_results, num_classes, class_names
+
+
+def _collect_classification_results_from_payloads(payloads: List[Dict[str, Any]]):
+    predictions = []
+    labels = []
+    probs_list = []
+    wsi_results = []
+    is_kfold = False
+    num_folds = None
+    aggregation_level = "file"
+    metadata_read = False
+
+    for data in payloads:
+        if data.get("pred"):
+            if not metadata_read:
+                is_kfold = data.get("is_kfold", False)
+                num_folds = data.get("num_folds")
+                aggregation_level = data.get("aggregation_level", "file")
+                metadata_read = True
+
+            predictions.append(data["pred"])
+            labels.append(data.get("ground_truth", "unknown"))
+            probs_list.append(data.get("probs", {}))
+            wsi_results.append(
+                {
+                    "wsi_id": data.get("wsi_id"),
+                    "filename": None,
+                    "case_id": data.get("case_id", data.get("wsi_id")),
+                    "label": data.get("ground_truth", "unknown"),
+                    "pred": data["pred"],
+                    "correct": data.get("correct"),
+                    "probs": data.get("probs"),
+                }
+            )
+
+    return (
+        predictions,
+        labels,
+        probs_list,
+        wsi_results,
+        is_kfold,
+        num_folds,
+        aggregation_level,
+    )
+
+
+def _collect_survival_results_from_payloads(payloads: List[Dict[str, Any]]):
+    risks = []
+    times = []
+    events = []
+    surv_probs = []
+    wsi_results = []
+    bin_edges = None
+    is_kfold = False
+    num_folds = None
+    aggregation_level = "file"
+    metadata_read = False
+
+    for data in payloads:
+        if not metadata_read:
+            is_kfold = data.get("is_kfold", False)
+            num_folds = data.get("num_folds")
+            aggregation_level = data.get("aggregation_level", "file")
+            metadata_read = True
+
+        risk_score = data.get("risk_score")
+        event_time = data.get("event_time")
+        event_status = data.get("event_status")
+
+        if risk_score is not None and event_time is not None:
+            risks.append(risk_score)
+            times.append(event_time)
+            events.append(event_status if event_status is not None else 0)
+
+            if data.get("surv_probs"):
+                surv_probs.append(data["surv_probs"])
+
+            if bin_edges is None and data.get("bin_edges"):
+                bin_edges = data["bin_edges"]
+
+            wsi_results.append(
+                {
+                    "wsi_id": data.get("wsi_id"),
+                    "filename": None,
+                    "case_id": data.get("case_id", data.get("wsi_id")),
+                    "risk_score": risk_score,
+                    "event_time": event_time,
+                    "event_status": event_status,
+                    "surv_probs": data.get("surv_probs"),
+                }
+            )
+
+    return (
+        risks,
+        times,
+        events,
+        surv_probs,
+        wsi_results,
+        bin_edges,
+        is_kfold,
+        num_folds,
+        aggregation_level,
+    )
+
+
 async def _run_external_validation_segmentation_analysis(
     task,
     request,
@@ -338,7 +432,7 @@ async def _run_external_validation_segmentation_analysis(
 ):
     """Run segmentation analysis for external validation task.
 
-    Reads per-image segmentation results from extval_{task_id}_result.json files,
+    Reads per-image segmentation results from task-level AIResultStore bundles,
     aggregates metrics (IoU, Dice, Accuracy, Precision, Recall), and generates
     per-class bar charts.
 
@@ -358,42 +452,9 @@ async def _run_external_validation_segmentation_analysis(
     dataset_id = model_config.get("dataset_id")
     model_task_id = model_config.get("model_task_id")
 
-    ai_results_dir = Config.get_uploads_dir() / "ai_results"
-
-    def _sync_load_segmentation_results():
-        _image_results = []
-        _num_classes = None
-        _class_names: List[str] = []
-
-        if ai_results_dir.exists():
-            for wsi_dir in ai_results_dir.iterdir():
-                if wsi_dir.is_dir():
-                    result_file = wsi_dir / f"extval_{task_id}_result.json"
-                    if result_file.exists():
-                        try:
-                            with open(result_file, "r") as f:
-                                data = json.load(f)
-                            if (
-                                data.get("validation_task_id") == task_id
-                                and data.get("task_type") == "patch_segmentation"
-                            ):
-                                _image_results.append(data)
-                                if _num_classes is None:
-                                    _num_classes = data.get("num_classes", 1)
-                                if not _class_names:
-                                    _class_names = _normalize_segmentation_class_names(
-                                        data.get("class_names", [])
-                                    )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to load segmentation result from {result_file}: {e}"
-                            )
-                            continue
-
-        return _image_results, _num_classes, _class_names
-
+    payloads = await asyncio.to_thread(_load_extval_task_result_payloads, task_id)
     image_results, num_classes, class_names = await asyncio.to_thread(
-        _sync_load_segmentation_results
+        _collect_segmentation_results_from_payloads, payloads
     )
 
     if not image_results:
@@ -505,7 +566,7 @@ async def _run_external_validation_segmentation_analysis(
 
     summary = {
         "task_id": task_id,
-        "task_type": "segmentation",
+        "task_type": "patch_segmentation",
         "timestamp": utc_timestamp_z(),
         "description": request.description,
         "num_samples": len(image_results),
@@ -551,7 +612,7 @@ async def _run_external_validation_segmentation_analysis(
         analysis_dir / "results.json",
         {
             "task_id": task_id,
-            "task_type": "segmentation",
+            "task_type": "patch_segmentation",
             "num_samples": len(image_results),
             "num_with_ground_truth": num_with_ground_truth,
             "num_classes": num_classes,
@@ -595,74 +656,7 @@ async def _run_external_validation_classification_analysis(
     dataset_id = model_config.get("dataset_id")
     model_task_id = model_config.get("model_task_id")
 
-    # Load results from ai_results directory
-    # NOTE: This iterates through potentially thousands of directories and loads JSON files.
-    # Run in thread to avoid blocking the event loop.
-    ai_results_dir = Config.get_uploads_dir() / "ai_results"
-
-    def _sync_load_classification_results():
-        _predictions = []
-        _labels = []
-        _probs_list = []
-        _wsi_results = []
-        _is_kfold = False
-        _num_folds = None
-        _aggregation_level = "file"
-        _metadata_read = False
-
-        if ai_results_dir.exists():
-            for wsi_dir in ai_results_dir.iterdir():
-                if wsi_dir.is_dir():
-                    result_file = wsi_dir / f"extval_{task_id}_result.json"
-                    if result_file.exists():
-                        try:
-                            with open(result_file, "r") as f:
-                                data = json.load(f)
-                                if data.get(
-                                    "validation_task_id"
-                                ) == task_id and data.get("pred"):
-                                    if not _metadata_read:
-                                        _is_kfold = data.get("is_kfold", False)
-                                        _num_folds = data.get("num_folds")
-                                        _aggregation_level = data.get(
-                                            "aggregation_level", "file"
-                                        )
-                                        _metadata_read = True
-
-                                    _predictions.append(data["pred"])
-                                    _labels.append(data.get("ground_truth", "unknown"))
-                                    _probs_list.append(data.get("probs", {}))
-                                    _wsi_results.append(
-                                        {
-                                            "wsi_id": data.get("wsi_id"),
-                                            "filename": None,
-                                            "case_id": data.get(
-                                                "case_id", data.get("wsi_id")
-                                            ),
-                                            "label": data.get(
-                                                "ground_truth", "unknown"
-                                            ),
-                                            "pred": data["pred"],
-                                            "correct": data.get("correct"),
-                                            "probs": data.get("probs"),
-                                        }
-                                    )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to load result from {result_file}: {e}"
-                            )
-                            continue
-
-        return (
-            _predictions,
-            _labels,
-            _probs_list,
-            _wsi_results,
-            _is_kfold,
-            _num_folds,
-            _aggregation_level,
-        )
-
+    payloads = await asyncio.to_thread(_load_extval_task_result_payloads, task_id)
     (
         predictions,
         labels,
@@ -671,7 +665,7 @@ async def _run_external_validation_classification_analysis(
         is_kfold,
         num_folds,
         aggregation_level,
-    ) = await asyncio.to_thread(_sync_load_classification_results)
+    ) = await asyncio.to_thread(_collect_classification_results_from_payloads, payloads)
 
     if not predictions:
         raise HTTPException(
@@ -909,90 +903,7 @@ async def _run_external_validation_survival_analysis(
     dataset_id = model_config.get("dataset_id")
     model_task_id = model_config.get("model_task_id")
 
-    ai_results_dir = Config.get_uploads_dir() / "ai_results"
-
-    def _sync_load_survival_results():
-        _risks = []
-        _times = []
-        _events = []
-        _surv_probs = []
-        _wsi_results = []
-        _bin_edges = None
-        _is_kfold = False
-        _num_folds = None
-        _aggregation_level = "file"
-        _metadata_read = False
-
-        if ai_results_dir.exists():
-            for wsi_dir in ai_results_dir.iterdir():
-                if wsi_dir.is_dir():
-                    result_file = wsi_dir / f"extval_{task_id}_result.json"
-                    if result_file.exists():
-                        try:
-                            with open(result_file, "r") as f:
-                                data = json.load(f)
-                                if data.get("validation_task_id") == task_id:
-                                    if not _metadata_read:
-                                        _is_kfold = data.get("is_kfold", False)
-                                        _num_folds = data.get("num_folds")
-                                        _aggregation_level = data.get(
-                                            "aggregation_level", "file"
-                                        )
-                                        _metadata_read = True
-
-                                    risk_score = data.get("risk_score")
-                                    event_time = data.get("event_time")
-                                    event_status = data.get("event_status")
-
-                                    if (
-                                        risk_score is not None
-                                        and event_time is not None
-                                    ):
-                                        _risks.append(risk_score)
-                                        _times.append(event_time)
-                                        _events.append(
-                                            event_status
-                                            if event_status is not None
-                                            else 0
-                                        )
-
-                                        if data.get("surv_probs"):
-                                            _surv_probs.append(data["surv_probs"])
-
-                                        if _bin_edges is None and data.get("bin_edges"):
-                                            _bin_edges = data["bin_edges"]
-
-                                        _wsi_results.append(
-                                            {
-                                                "wsi_id": data.get("wsi_id"),
-                                                "filename": None,
-                                                "case_id": data.get(
-                                                    "case_id", data.get("wsi_id")
-                                                ),
-                                                "risk_score": risk_score,
-                                                "event_time": event_time,
-                                                "event_status": event_status,
-                                                "surv_probs": data.get("surv_probs"),
-                                            }
-                                        )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to load result from {result_file}: {e}"
-                            )
-                            continue
-
-        return (
-            _risks,
-            _times,
-            _events,
-            _surv_probs,
-            _wsi_results,
-            _bin_edges,
-            _is_kfold,
-            _num_folds,
-            _aggregation_level,
-        )
-
+    payloads = await asyncio.to_thread(_load_extval_task_result_payloads, task_id)
     (
         risks,
         times,
@@ -1003,7 +914,7 @@ async def _run_external_validation_survival_analysis(
         is_kfold,
         num_folds,
         aggregation_level,
-    ) = await asyncio.to_thread(_sync_load_survival_results)
+    ) = await asyncio.to_thread(_collect_survival_results_from_payloads, payloads)
 
     if not risks:
         raise HTTPException(
@@ -1201,7 +1112,7 @@ async def _run_external_validation_analysis(
             progress_config=progress_config,
             submitted_by=submitted_by,
         )
-    elif model_task_type in ("survival", "wsi_survival"):
+    elif model_task_type == "wsi_survival":
         return await _run_external_validation_survival_analysis(
             task,
             request,

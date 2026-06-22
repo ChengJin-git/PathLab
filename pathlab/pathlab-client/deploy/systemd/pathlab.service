@@ -29,7 +29,6 @@ Environment="PATHLAB_DEBUG=1"
 Environment="GATEWAY_PORT=6100"
 Environment="PREPROCESSING_PORT=6101"
 Environment="AI_PORT=6102"
-Environment="PATHLAB_UPLOADS_DIR=/path/to/pathlab-client/uploads"
 EnvironmentFile=-/path/to/pathlab-client/server/.env
 Environment="DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab"
 
@@ -49,4 +48,3 @@ LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-

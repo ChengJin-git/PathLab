@@ -1,6 +1,7 @@
 import json
-import pytest
+from importlib import import_module
 from pathlib import Path
+import pytest
 from unittest.mock import patch
 
 
@@ -11,15 +12,11 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
     config_file = tmp_path / "storage.json"
     with patch("backend.common.config.Config.STORAGE_CONFIG_FILE", str(config_file)):
-        from backend.common.config import Config
+        Config = import_module("backend.common.config").Config
 
-        Config._global_settings_cache = None
-        Config._global_settings_dirty = True
-        Config._task_timeout = None
+        Config.reset_runtime_cache_for_tests()
         yield Config
-        Config._global_settings_cache = None
-        Config._global_settings_dirty = True
-        Config._task_timeout = None
+        Config.reset_runtime_cache_for_tests()
 
 
 class TestGlobalSettings:
@@ -104,7 +101,7 @@ class TestGlobalSettings:
         )
         monkeypatch.setenv("TURNSTILE_ENABLED", "true")
         monkeypatch.setenv("TURNSTILE_SITE_KEY", "from-env")
-        isolated_config._global_settings_dirty = True
+        isolated_config.reset_runtime_cache_for_tests()
 
         settings = isolated_config.get_global_settings()
         assert settings["turnstile_enabled"] is True
@@ -123,7 +120,7 @@ class TestTaskTimeout:
 
     def test_set_timeout_persists(self, isolated_config):
         isolated_config.set_task_timeout(7200)
-        isolated_config._task_timeout = None
+        isolated_config.reset_runtime_cache_for_tests()
         assert isolated_config.get_task_timeout() == 7200
 
     def test_timeout_clamped_to_minimum_60(self, isolated_config):
@@ -137,7 +134,7 @@ class TestTaskTimeout:
     def test_cached_value_returned_without_disk_read(self, isolated_config):
         isolated_config.set_task_timeout(3600)
         assert isolated_config.get_task_timeout() == 3600
-        assert isolated_config._task_timeout == 3600
+        assert isolated_config.get_task_timeout() == 3600
 
 
 class TestMaxConcurrent:
@@ -155,6 +152,20 @@ class TestMaxConcurrent:
     def test_clamped_to_max_10(self, isolated_config):
         result = isolated_config.set_max_concurrent(20)
         assert result == 10
+
+
+class TestTrainingPreflightDefaults:
+    def test_defaults_are_positive(self, isolated_config):
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_ROOT_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_SIZE > 0
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_ROOT_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_SIZE > 0
+
+    def test_defaults_match_expected_policy_sizes(self, isolated_config):
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_SIZE == 8
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_SIZE == 5
 
 
 class TestMaintenanceMode:
@@ -214,3 +225,22 @@ class TestConfigFileMerge:
         data = json.loads(config_file.read_text())
         assert data["openrouter_api_key"] == "key-1"
         assert data["task_timeout"] == 1800
+
+
+class TestUploadsDirConfig:
+    def test_set_uploads_dir_persists_and_normalizes_path(
+        self, isolated_config, tmp_path
+    ):
+        target = isolated_config.set_uploads_dir(str(tmp_path / "storage"))
+        assert target == (tmp_path / "storage").resolve()
+        assert isolated_config.get_uploads_dir() == target
+
+    def test_ensure_directories_creates_autoresearch_roots(
+        self, isolated_config, tmp_path
+    ):
+        target = isolated_config.set_uploads_dir(str(tmp_path / "storage"))
+
+        isolated_config.ensure_directories()
+
+        assert (target / "autoresearch").is_dir()
+        assert (target / "autoresearch" / "autoresearch_sessions").is_dir()

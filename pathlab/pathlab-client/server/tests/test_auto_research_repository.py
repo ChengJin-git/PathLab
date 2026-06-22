@@ -1,3 +1,5 @@
+# pyright: reportAny=false, reportArgumentType=false, reportAttributeAccessIssue=false, reportImplicitOverride=false, reportImplicitRelativeImport=false, reportIncompatibleMethodOverride=false, reportMissingParameterType=false, reportMissingTypeArgument=false, reportPrivateLocalImportUsage=false, reportPrivateUsage=false, reportUnannotatedClassAttribute=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownVariableType=false, reportUnusedParameter=false
+
 import importlib.util
 import sys
 import types
@@ -244,12 +246,12 @@ async def test_persist_event_syncs_session_summary_from_state_event(monkeypatch)
         lambda: _SafeSession(db),
     )
     monkeypatch.setattr(
-        AutoResearchRepository,
+        pathscientist_persistence.AutoResearchRepository,
         "append_event_once",
         fake_append_event_once,
     )
     monkeypatch.setattr(
-        AutoResearchRepository,
+        pathscientist_persistence.AutoResearchRepository,
         "upsert_session",
         fake_upsert_session,
     )
@@ -517,12 +519,12 @@ async def test_persist_session_state_records_pathlab_model_registration(monkeypa
         fake_register,
     )
     monkeypatch.setattr(
-        AutoResearchRepository,
+        pathscientist_persistence.AutoResearchRepository,
         "upsert_session",
         fake_upsert_session,
     )
     monkeypatch.setattr(
-        AutoResearchRepository,
+        pathscientist_persistence.AutoResearchRepository,
         "upsert_experiment_by_run_id",
         fake_upsert_experiment_by_run_id,
     )
@@ -665,7 +667,7 @@ async def test_register_pathscientist_model_links_features_and_marks_wsi_extract
     model_path.write_bytes(b"model")
 
     db = _ModelRegistrationDB()
-    captured_group: dict[str, str] = {}
+    captured_group: dict[str, object] = {}
     captured_feature_flags: dict[str, object] = {}
 
     async def fake_get_by_id(_db, model_cls, pk_field, pk_value):

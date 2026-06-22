@@ -17,7 +17,7 @@ interface ExternalFilesHealthCheckCardProps {
   deletingUnavailableFiles: boolean
   externalFilesError: string | null
   handleCheckExternalFiles: () => void
-  handleDeleteUnavailableFiles: () => void
+  handleDeleteUnavailableFiles: () => void | Promise<void>
 }
 
 export const ExternalFilesHealthCheckCard: React.FC<ExternalFilesHealthCheckCardProps> = ({

@@ -204,7 +204,11 @@ class AnalysisTaskState:
             if user_id and state.get("user_id") != user_id:
                 continue
 
-            if state["status"] in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            if state["status"] in (
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.CANCELLED,
+            ):
                 finished = state.get("finished_at")
                 if finished:
                     try:
@@ -226,7 +230,11 @@ class AnalysisTaskState:
             if not data:
                 continue
             status_str = data.get("status", "")
-            if status_str in (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value):
+            if status_str in (
+                TaskStatus.COMPLETED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.CANCELLED.value,
+            ):
                 finished = data.get("finished_at", "")
                 if finished:
                     try:

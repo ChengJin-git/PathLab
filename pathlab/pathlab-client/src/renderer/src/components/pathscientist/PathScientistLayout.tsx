@@ -15,7 +15,7 @@ export default function PathScientistLayout({ children }: PathScientistLayoutPro
             <div className="hidden h-7 w-px bg-gray-200 sm:block" />
             <div className="flex items-center gap-2">
               <div className="leading-tight">
-                <p className="text-sm font-bold tracking-tight text-gray-900">PathScientist</p>
+                <p className="text-sm font-bold tracking-tight text-gray-900">AutoResearch</p>
               </div>
             </div>
           </Link>

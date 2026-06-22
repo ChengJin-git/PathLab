@@ -7,7 +7,6 @@ Extracted from results.py — no logic changes.
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Callable, Dict, List, Optional, cast as type_cast
 
@@ -15,18 +14,24 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.config import Config
+from backend.ai.result_store import (
+    AIResultStore,
+    ATTENTION_ARTIFACT,
+    ATTENTION_RAW_ARTIFACT,
+)
 from backend.database.repositories import (
     TrainingTaskRepository,
     WSIRepository,
 )
-from backend.preprocessing.heatmap_preview_cache import (
-    ensure_recommendation_preview_cache,
+from backend.ai.survival import (
+    compute_risk_from_survival,
+    compute_survival_from_hazards,
 )
 
 from .analysis_utils import (
     _split_case_attention_to_slides_static,
 )
-from .inference_base import resolve_device, report_progress
+from .inference_base import resolve_checkpoint_paths, resolve_device, report_progress
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +74,9 @@ async def _run_inference_wsi_survival(
         raise HTTPException(status_code=400, detail="No features found for this task")
 
     # Load model
-    model_dir = uploads_dir / "models" / resources["model_id"]
-    ckpt_path = model_dir / "aggregator.pth"
-    config_path = model_dir / "config.json"
+    ckpt_path, config_path = resolve_checkpoint_paths(
+        resources, uploads_dir, "aggregator.pth"
+    )
 
     if not ckpt_path.exists():
         raise HTTPException(status_code=500, detail="Model checkpoint not found")
@@ -150,7 +155,7 @@ async def _run_inference_wsi_survival(
         logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
 
     # Run inference and collect results
-    ai_results_root = uploads_dir / "ai_results"
+    result_store = AIResultStore(uploads_dir)
 
     bin_edges_list = (
         bin_edges.tolist() if hasattr(bin_edges, "tolist") else list(bin_edges)
@@ -193,7 +198,7 @@ async def _run_inference_wsi_survival(
                 case_to_wsi=case_to_wsi,
                 times=case_times,
                 statuses=case_statuses,
-                task_type="survival",
+                task_family="survival",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
@@ -228,8 +233,8 @@ async def _run_inference_wsi_survival(
                     raw_attention = None
 
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                surv = np.cumprod(1 - hazards)
-                risk_score = float(np.sum(hazards))
+                surv = compute_survival_from_hazards(hazards)
+                risk_score = float(compute_risk_from_survival(surv))
                 all_risks.append(risk_score)
 
                 attention_np = (
@@ -258,7 +263,7 @@ async def _run_inference_wsi_survival(
                 wsi_ids=valid_wsi_ids,
                 times=times_map,
                 statuses=statuses_map,
-                task_type="survival",
+                task_family="survival",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
             total_items = len(valid_wsi_ids)
@@ -280,8 +285,8 @@ async def _run_inference_wsi_survival(
                     raw_attention = None
 
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                surv = np.cumprod(1 - hazards)
-                risk_score = float(np.sum(hazards))
+                surv = compute_survival_from_hazards(hazards)
+                risk_score = float(compute_risk_from_survival(surv))
                 all_risks.append(risk_score)
 
                 attention_np = (
@@ -329,9 +334,6 @@ async def _run_inference_wsi_survival(
             )
 
             for wsi_id in case_to_wsi[case_id]:
-                result_dir = ai_results_root / wsi_id
-                result_dir.mkdir(parents=True, exist_ok=True)
-
                 slide_att = slide_attentions.get(wsi_id)
                 slide_raw_att = slide_raw_attentions.get(wsi_id)
 
@@ -362,22 +364,19 @@ async def _run_inference_wsi_survival(
                     "aggregation_level": "case",
                 }
 
-                result_file = result_dir / f"train_{task_id}_result.json"
-                with open(result_file, "w") as f:
-                    json.dump(result_data, f, indent=2)
-
-                attention_file_path = None
+                arrays = {}
                 if slide_att is not None:
-                    att_file = result_dir / f"train_{task_id}_attention.npy"
-                    np.save(att_file, slide_att)
-                    ensure_recommendation_preview_cache(
-                        wsi_id, att_file, Config.get_uploads_dir()
-                    )
-                    attention_file_path = str(att_file)
-
+                    arrays[ATTENTION_ARTIFACT] = slide_att
                 if slide_raw_att is not None:
-                    raw_att_file = result_dir / f"train_{task_id}_attention_raw.npy"
-                    np.save(raw_att_file, slide_raw_att)
+                    arrays[ATTENTION_RAW_ARTIFACT] = slide_raw_att
+                result_store.write_wsi_result(
+                    task_id=task_id,
+                    wsi_id=wsi_id,
+                    result=result_data,
+                    arrays=arrays,
+                    finalize=False,
+                    update_index=False,
+                )
 
                 db_result_data = {
                     "wsi_id": wsi_id,
@@ -385,7 +384,7 @@ async def _run_inference_wsi_survival(
                     "pred": risk_group,
                     "probs": None,
                     "extra_metadata": {
-                        "task_type": "survival",
+                        "task_type": "wsi_survival",
                         "risk_score": risk_score,
                         "risk_group": risk_group,
                         "median_risk_score": median_risk_score,
@@ -397,8 +396,8 @@ async def _run_inference_wsi_survival(
                         "aggregator": aggregator_name,
                         "attention_type": attention_type,
                         "attention_shape": attention_shape,
-                        "result_file": str(result_file),
-                        "attention_file": attention_file_path,
+                        "result_file": None,
+                        "attention_file": None,
                         "case_id": case_id,
                         "aggregation_level": "case",
                     },
@@ -411,9 +410,6 @@ async def _run_inference_wsi_survival(
             wsi_id = slide_result["wsi_id"]
             risk_score = slide_result["risk_score"]
             risk_group = "High Risk" if risk_score >= median_risk_score else "Low Risk"
-
-            result_dir = ai_results_root / wsi_id
-            result_dir.mkdir(parents=True, exist_ok=True)
 
             attention_np = slide_result["attention_np"]
             raw_attention_np = slide_result["raw_attention_np"]
@@ -441,22 +437,20 @@ async def _run_inference_wsi_survival(
                 "attention_shape": attention_shape,
             }
 
-            result_file = result_dir / f"train_{task_id}_result.json"
-            with open(result_file, "w") as f:
-                json.dump(result_data, f, indent=2)
-
-            attention_file_path = None
+            arrays = {}
             if attention_np is not None:
-                att_file = result_dir / f"train_{task_id}_attention.npy"
-                np.save(att_file, attention_np)
-                ensure_recommendation_preview_cache(
-                    wsi_id, att_file, Config.get_uploads_dir()
-                )
-                attention_file_path = str(att_file)
+                arrays[ATTENTION_ARTIFACT] = attention_np
 
             if raw_attention_np is not None:
-                raw_att_file = result_dir / f"train_{task_id}_attention_raw.npy"
-                np.save(raw_att_file, raw_attention_np)
+                arrays[ATTENTION_RAW_ARTIFACT] = raw_attention_np
+            result_store.write_wsi_result(
+                task_id=task_id,
+                wsi_id=wsi_id,
+                result=result_data,
+                arrays=arrays,
+                finalize=False,
+                update_index=False,
+            )
 
             db_result_data = {
                 "wsi_id": wsi_id,
@@ -464,7 +458,7 @@ async def _run_inference_wsi_survival(
                 "pred": risk_group,
                 "probs": None,
                 "extra_metadata": {
-                    "task_type": "survival",
+                    "task_type": "wsi_survival",
                     "risk_score": risk_score,
                     "risk_group": risk_group,
                     "median_risk_score": median_risk_score,
@@ -476,12 +470,15 @@ async def _run_inference_wsi_survival(
                     "aggregator": aggregator_name,
                     "attention_type": attention_type,
                     "attention_shape": attention_shape,
-                    "result_file": str(result_file),
-                    "attention_file": attention_file_path,
+                    "result_file": None,
+                    "attention_file": None,
                 },
             }
             await AIResultRepository.create(db, db_result_data)
             results_saved += 1
+
+    if results_saved:
+        result_store.write_task_bundle(task_id=task_id)
 
     await db.commit()
     logger.info(

@@ -38,6 +38,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { getSidebarToggleBarClassName } from "../lib/aiChatSidebarLayout";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
 	activateMessageVariant,
@@ -100,7 +101,7 @@ import type { CachedTaskData } from "../components/chat/TaskHistoryCard";
 import { Tooltip } from "../components/ui/tooltip";
 import { removeVoiceControlBlock } from "../components/chat/VoiceControlBlock";
 import { AudioVisualizer } from "../components/common/AudioVisualizer";
-import { MULTIMODAL_MODELS } from "../components/settings/GeneralTab";
+import { MULTIMODAL_MODELS } from "../constants/models";
 import { SCENARIO_CARDS } from "../constants/scenarios";
 import { BEFORE_LOGOUT_EVENT, useAuth } from "../contexts/AuthContext";
 import {
@@ -109,6 +110,7 @@ import {
 	preserveContentOnClearMarker,
 	sanitizeConfigBlocksForAI,
 } from "../lib/chatMessageParser";
+import { mergeLoadedMessagesWithPendingAssistant } from "../lib/chatPendingMessageState";
 import { xlsxToCSV } from "../lib/csvImporter";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { formatFileSize } from "../lib/utils";
@@ -749,13 +751,19 @@ export default function AIChatPage() {
 							sortedApiMessages[sortedApiMessages.length - 1]?.role ===
 							"assistant";
 
-						if (hasAssistantReply) {
-							sessionStorage.removeItem(pendingKey);
-							if (currentConversationIdRef.current === conversationId) {
-								setMessages(mapConversationMessages(sortedApiMessages));
-							}
-							return;
+					if (hasAssistantReply) {
+						sessionStorage.removeItem(pendingKey);
+						if (currentConversationIdRef.current === conversationId) {
+							setMessages((prev) =>
+								mergeLoadedMessagesWithPendingAssistant(
+									mapConversationMessages(sortedApiMessages),
+									prev,
+									generationPhaseRef.current !== "idle",
+								),
+							);
 						}
+						return;
+					}
 					} catch (error) {
 						console.warn(
 							"Failed to refresh pending cancelled response:",
@@ -1183,7 +1191,13 @@ export default function AIChatPage() {
 				untitledBranchConversationIdsRef.current.delete(conv.conversation_id);
 			}
 
-			setMessages(messagesToShow);
+			setMessages((prev) =>
+				mergeLoadedMessagesWithPendingAssistant(
+					messagesToShow,
+					prev,
+					generationPhaseRef.current !== "idle",
+				),
+			);
 			setCurrentConversationMeta(conv);
 		setCurrentConversationId(conversationId);
 		setShowHistory(false);
@@ -2016,6 +2030,14 @@ export default function AIChatPage() {
 					);
 				},
 				options?.regenerateMessageId,
+				(_elapsedMs) => {
+					if (generationIdRef.current !== currentGenerationId) return
+					startSilenceTimer()
+				},
+				(_phase) => {
+					if (generationIdRef.current !== currentGenerationId) return
+					startSilenceTimer()
+				},
 			);
 		} catch (error) {
 			if (error instanceof DOMException && error.name === "AbortError") {
@@ -2242,6 +2264,7 @@ export default function AIChatPage() {
 		// Create a new conversation if this is the first user message
 		let conversationId = currentConversationId;
 		let isNewConversation = false;
+		let pendingNavigationConversationId: string | null = null;
 		if (!conversationId && messages.length === 0) {
 			try {
 				const newConv = await createConversation(t("aiChat.newConversation"));
@@ -2253,10 +2276,7 @@ export default function AIChatPage() {
 				updateConversationsAndCache((prevConversations) =>
 					upsertConversation(prevConversations, newConv),
 				);
-				// Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
-				skipConversationLoadRef.current = true;
-				// Update URL with new conversation ID for page refresh support
-				navigate(`/dashboard/${conversationId}`, { replace: true });
+				pendingNavigationConversationId = conversationId;
 			} catch (error) {
 				console.error("Failed to create conversation:", error);
 			}
@@ -2289,6 +2309,13 @@ export default function AIChatPage() {
 		await executeChatGeneration(chatMessages, conversationId || undefined, {
 			onError: () => stopVoiceSession(),
 			onFinally: () => {
+				if (pendingNavigationConversationId) {
+					skipConversationLoadRef.current = true;
+					navigate(`/dashboard/${pendingNavigationConversationId}`, {
+						replace: true,
+					});
+				}
+
 				// Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
 				setTimeout(() => {
 					const latestMessages = messagesRef.current;
@@ -3280,7 +3307,7 @@ export default function AIChatPage() {
 	return (
 		<section
 			aria-label={t("aiChat.chatRegion")}
-			className="flex h-full bg-gray-50 relative overflow-hidden"
+			className="relative flex h-full overflow-hidden border border-t-0 border-[color:var(--surface-border)] bg-[color:var(--surface-base)] shadow-[var(--shadow-soft)]"
 			onDragEnter={handleDragEnter}
 			onDragLeave={handleDragLeave}
 			onDragOver={handleDragOver}
@@ -3310,7 +3337,7 @@ export default function AIChatPage() {
 			{/* Mobile: always fixed + translate-x slide (never participates in flex layout) */}
 			{/* Desktop: inline flex child with width animation */}
 			<nav
-				className={`bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden
+				className={`flex flex-col overflow-hidden border-r border-[color:var(--surface-border)] bg-[color:var(--surface-work)]/94 backdrop-blur-xl
           fixed top-16 bottom-0 left-0 z-40 w-72 transition-transform duration-300 ease-in-out
           ${showHistory ? "translate-x-0" : "-translate-x-full"}
           lg:relative lg:top-auto lg:bottom-auto lg:z-auto lg:flex-shrink-0 lg:translate-x-0 lg:transition-all
@@ -3319,9 +3346,9 @@ export default function AIChatPage() {
 				aria-label={t("aiChat.history")}
 			>
 				{/* Sidebar Top Icons - hidden on mobile (header hamburger handles it) */}
-				<div
-					className={`hidden lg:flex items-center gap-1 p-2 pt-3 ${showHistory ? "px-3" : "flex-col"}`}
-				>
+					<div
+						className={getSidebarToggleBarClassName(showHistory)}
+					>
 					<Tooltip
 						content={
 							showHistory
@@ -3332,7 +3359,7 @@ export default function AIChatPage() {
 						<button
 							type="button"
 							onClick={() => setShowHistory(!showHistory)}
-							className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
+							className="flex-shrink-0 rounded-full border border-transparent p-2 text-slate-500 transition-colors hover:border-[color:var(--surface-border)] hover:bg-white/85 hover:text-slate-950"
 						>
 							<Menu className="w-5 h-5" />
 						</button>
@@ -3341,14 +3368,14 @@ export default function AIChatPage() {
 
 				{/* Expanded sidebar content - always rendered, fade in/out with opacity */}
 				<div
-					className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out pt-6 lg:pt-0 ${showHistory ? "opacity-100" : "opacity-0 pointer-events-none"}`}
+					className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out ${showHistory ? "opacity-100" : "opacity-0 pointer-events-none"}`}
 				>
 					{/* New Research Task Button */}
-					<div className="px-3 pb-3 pt-0">
+					<div className="px-3 pb-3 pt-4 lg:pt-3">
 						<button
 							type="button"
 							onClick={handleNewChat}
-							className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
+							className="flex w-full items-center justify-center gap-2 rounded-[1.1rem] border border-primary-500/80 bg-primary-600 px-4 py-3 text-sm font-semibold text-white shadow-[var(--shadow-soft)] transition-all hover:-translate-y-0.5 hover:bg-primary-700 hover:shadow-[var(--shadow-elevated)]"
 						>
 							<Plus className="w-4 h-4" />
 							{t("aiChat.newResearchTask")}
@@ -3356,7 +3383,7 @@ export default function AIChatPage() {
 					</div>
 
 					{/* Tools Section */}
-					<div className="px-3 pb-2 border-b border-gray-100">
+					<div className="border-b border-[color:var(--surface-border)] px-3 pb-2 pt-1">
 						<div className="flex items-center gap-2 px-2 mb-2">
 							<Wrench className="w-4 h-4 text-gray-400" />
 							<h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
@@ -3370,7 +3397,7 @@ export default function AIChatPage() {
 									navigate("/register");
 									setShowHistory(false);
 								}}
-								className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors group"
+							className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-orange-50/80 hover:text-orange-700"
 							>
 								<Plus className="w-4 h-4 text-orange-500 group-hover:text-orange-600" />
 								<span className="flex-1 text-left">
@@ -3384,7 +3411,7 @@ export default function AIChatPage() {
 									navigate("/wsi-list");
 									setShowHistory(false);
 								}}
-								className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors group"
+							className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-blue-50/80 hover:text-blue-700"
 							>
 								<Database className="w-4 h-4 text-blue-500 group-hover:text-blue-600" />
 								<span className="flex-1 text-left">
@@ -3398,7 +3425,7 @@ export default function AIChatPage() {
 									navigate("/task-list");
 									setShowHistory(false);
 								}}
-								className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors group"
+							className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-violet-50/80 hover:text-violet-700"
 							>
 							<ClipboardList className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
 								<span className="flex-1 text-left">
@@ -3426,7 +3453,7 @@ export default function AIChatPage() {
 									navigate("/tools");
 									setShowHistory(false);
 								}}
-								className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors group"
+							className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-700 transition-colors hover:bg-emerald-50/80 hover:text-emerald-700"
 							>
 							<Wrench className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
 								<span className="flex-1 text-left">
@@ -3577,7 +3604,7 @@ export default function AIChatPage() {
 			</nav>
 
 			{/* Main Chat Area */}
-			<div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
+			<div className="relative z-10 flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0.04)_100%)]">
 				<div
 					ref={messagesContainerRef}
 					data-chat-messages-container
@@ -3587,28 +3614,28 @@ export default function AIChatPage() {
 					aria-label={t("aiChat.chatMessages")}
 					aria-live="polite"
 				>
-					<div className="px-4 pt-6 pb-40">
-						<div className="max-w-4xl mx-auto space-y-6">
+					<div className="px-4 pb-40 pt-6 sm:px-6 lg:px-8">
+						<div className="mx-auto max-w-4xl space-y-6">
 							{/* Gemini-style Welcome Hero with Scenario Cards */}
 							{messages.length === 0 && showWelcomeHero && (
-								<div className="flex flex-col items-center justify-center min-h-[calc(100vh-16rem)] pt-6 pb-12 text-center space-y-3 sm:space-y-4">
+								<div className="flex min-h-[calc(100vh-16rem)] flex-col items-center justify-center space-y-4 pb-12 pt-6 text-center">
 									{/* Hero Title */}
 									<div className="space-y-1.5 sm:space-y-2">
 										<div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
-											<div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-lg">
+										<div className="flex h-11 w-11 items-center justify-center rounded-[1.35rem] border border-primary-300/60 bg-gradient-to-br from-primary-500 to-primary-700 shadow-[var(--shadow-elevated)] sm:h-12 sm:w-12">
 												<Sparkles className="w-5 h-5 sm:w-7 sm:h-7 text-white" />
 											</div>
 										</div>
-										<h1 className="text-xl sm:text-3xl font-bold bg-gradient-to-r from-gray-900 via-gray-700 to-gray-900 bg-clip-text text-transparent">
+										<h1 className="bg-gradient-to-r from-slate-950 via-slate-700 to-slate-950 bg-clip-text text-xl font-semibold tracking-[-0.04em] text-transparent sm:text-3xl md:text-4xl">
 											{t("aiChat.welcomeTitle")}
 										</h1>
-										<p className="text-gray-500 max-w-lg mx-auto text-sm sm:text-base">
+										<p className="mx-auto max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
 											{t("aiChat.welcomeDescription")}
 										</p>
 									</div>
 
 									{/* Scenario Cards */}
-									<div className="grid grid-cols-2 gap-2 sm:gap-3 w-full max-w-2xl mt-2">
+									<div className="mt-2 grid w-full max-w-2xl grid-cols-2 gap-2 sm:gap-3">
 										{SCENARIO_CARDS.map((card) => {
 											const Icon = card.icon;
 											return (
@@ -3616,19 +3643,19 @@ export default function AIChatPage() {
 													type="button"
 													key={card.id}
 													onClick={() => handleScenarioCardClick(card)}
-													className={`${card.bgColor} p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200`}
+													className={`${card.bgColor} group rounded-[1.35rem] border border-white/70 p-3 text-left shadow-[var(--shadow-soft)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-elevated)] sm:p-4`}
 												>
 													<div className="flex items-start gap-2.5 sm:gap-3">
 														<div
-															className={`shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow`}
+														className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/80 bg-white/90 shadow-[var(--shadow-soft)] transition-shadow group-hover:shadow-[var(--shadow-elevated)] sm:h-9 sm:w-9`}
 														>
 															<Icon className={`w-4 h-4 ${card.iconColor}`} />
 														</div>
 														<div className="min-w-0">
-															<h3 className="text-xs sm:text-sm font-semibold text-gray-900 mb-0.5">
+															<h3 className="mb-0.5 text-xs font-semibold tracking-[-0.02em] text-slate-950 sm:text-sm">
 																{t(card.titleKey)}
 															</h3>
-															<p className="text-xs text-gray-600 leading-snug">
+															<p className="text-xs leading-snug text-slate-600">
 																{t(card.descriptionKey)}
 															</p>
 														</div>
@@ -3675,12 +3702,12 @@ export default function AIChatPage() {
 									return (
 											<Fragment key={message.id}>
 												<div
-													className={`group flex gap-4 ${message.role === "user" ? "flex-row-reverse" : "flex-row"} items-start`}
+														className={`group flex items-start gap-4 ${message.role === "user" ? "flex-row-reverse" : "flex-row"}`}
 												>
 											{/* Avatar */}
 											<div className="flex-shrink-0 mt-1">
 												<div
-													className={`hidden w-8 h-8 rounded-full flex items-center justify-center border shadow-sm ${
+															className={`hidden h-8 w-8 items-center justify-center rounded-full border shadow-[var(--shadow-soft)] ${
 														message.role === "user"
 															? "bg-white border-gray-100"
 															: "bg-white border-gray-100"
@@ -3696,7 +3723,7 @@ export default function AIChatPage() {
 
 											{/* Message Content */}
 											<div
-												className={`flex-1 min-w-0 max-w-[80%] flex flex-col ${message.role === "user" ? "items-end" : "items-start"}`}
+															className={`flex max-w-[80%] min-w-0 flex-1 flex-col ${message.role === "user" ? "items-end" : "items-start"}`}
 											>
 												{/* User Images */}
 												{message.role === "user" &&
@@ -3718,11 +3745,11 @@ export default function AIChatPage() {
 
 												{/* Message Bubble */}
 												<div
-													className={`relative px-5 py-3.5 text-[15px] leading-7 shadow-sm w-full overflow-hidden ${
-														message.role === "user"
-															? "bg-gradient-to-br from-primary-500 to-primary-600 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30"
-															: "bg-white border border-gray-100 text-gray-900 rounded-[20px] rounded-tl-sm"
-													}`}
+															className={`relative w-full overflow-hidden px-5 py-3.5 text-[15px] leading-7 shadow-[var(--shadow-soft)] ${
+																message.role === "user"
+																	? "rounded-[22px] rounded-tr-md border border-primary-400/60 bg-gradient-to-br from-primary-500 to-primary-700 text-white selection:bg-white/30"
+																	: "rounded-[22px] rounded-tl-md border border-[color:var(--surface-border)] bg-[color:var(--surface-elevated)] text-slate-900"
+															}`}
 												>
 													{message.role === "user" ? (
 														(() => {
@@ -3747,8 +3774,51 @@ export default function AIChatPage() {
 																</div>
 															);
 														})()
-													) : message.content === "" ? (
-														isGenerating && index === messages.length - 1 ? (
+												) : message.content === "" ? (
+													isGenerating && index === messages.length - 1 ? (
+														// When search artifacts exist (PDF downloading/parsing, web search),
+														// render AssistantMessage so status cards are visible even before text arrives.
+														message.artifacts?.search ? (
+															(() => {
+																const referenceImages = (() => {
+																	for (let i = index - 1; i >= 0; i -= 1) {
+																		const candidate = messages[i];
+																		if (candidate.role === "user" && candidate.images?.length) {
+																			return candidate.images;
+																		}
+																	}
+																	return [] as string[];
+																})();
+																return (
+																	<AssistantMessage
+																		content={message.content}
+																		messageId={message.id}
+																		onOptionSelect={handleOptionSelect}
+																		onTaskSubmitSuccess={handleTaskSubmitSuccess}
+																		onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
+																		onTaskSubmitError={handleTaskSubmitError}
+																		onTaskHistoryDataLoaded={handleTaskHistoryDataLoaded}
+																		onQuickAnalysisDataLoaded={handleQuickAnalysisDataLoaded}
+																		onHelpfulnessFeedback={handleHelpfulnessFeedback}
+																		savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
+																		isStreaming={isGenerating && index === messages.length - 1}
+																		isLoading={isGenerating}
+																		csvContent={csvContentMap.get(message.id)?.content}
+																		csvFileName={csvContentMap.get(message.id)?.fileName}
+																		onToast={handleToast}
+																		onRegistrationSuccess={handleRegistrationSuccess}
+																		onMetadataUploadSuccess={handleMetadataUploadSuccess}
+																		submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
+																		cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
+																		onNewChat={handleNewChat}
+																		conversationId={currentConversationId || undefined}
+																		referenceImages={referenceImages}
+																		onMessageContentReplace={replaceMessageContent}
+																		searchArtifacts={message.artifacts ?? null}
+																	/>
+																);
+															})()
+														) : (
 															// ChatGPT-like Thinking Indicator with staggered bouncing dots
 															<div
 																className="flex items-center gap-2.5 py-2"
@@ -3784,12 +3854,13 @@ export default function AIChatPage() {
 																	{t("aiChat.thinking")}
 																</span>
 															</div>
-														) : (
-															<div className="py-2 text-sm text-gray-400">
-																{t("aiChat.aiErrorFallback")}
-															</div>
 														)
 													) : (
+														<div className="py-2 text-sm text-gray-400">
+															{t("aiChat.aiErrorFallback")}
+														</div>
+													)
+												) : (
 														(() => {
 															const referenceImages = (() => {
 																for (let i = index - 1; i >= 0; i -= 1) {
@@ -4211,8 +4282,8 @@ export default function AIChatPage() {
 
 				{/* Input Area - Floating Island - Fixed to viewport bottom */}
 				<div
-					className={`fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? "lg:left-72" : "lg:left-14"}`}
-				>
+				className={`fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? "lg:left-[18rem]" : "lg:left-[3.75rem]"}`}
+			>
 					<div className="max-w-4xl mx-auto pointer-events-auto relative">
 						{/* Jump to bottom button */}
 						<div

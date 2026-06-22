@@ -13,11 +13,9 @@ def reset_config_cache(monkeypatch):
     monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
     from backend.common.config import Config
 
-    Config._global_settings_cache = None
-    Config._global_settings_dirty = True
+    Config.reset_runtime_cache_for_tests()
     yield
-    Config._global_settings_cache = None
-    Config._global_settings_dirty = True
+    Config.reset_runtime_cache_for_tests()
 
 
 @pytest.fixture
@@ -76,7 +74,7 @@ class TestPublicSettings:
         ):
             from backend.common.config import Config
 
-            Config._global_settings_dirty = True
+            Config.reset_runtime_cache_for_tests()
             Config.update_global_settings(
                 {"turnstile_enabled": True, "turnstile_site_key": "my-site-key"}
             )
@@ -190,7 +188,7 @@ class TestUpdateGlobalSettings:
         ):
             from backend.common.config import Config
 
-            Config._global_settings_dirty = True
+            Config.reset_runtime_cache_for_tests()
             app = make_settings_app(_make_user("admin"))
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

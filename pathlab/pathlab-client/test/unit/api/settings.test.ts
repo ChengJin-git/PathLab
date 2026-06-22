@@ -43,6 +43,7 @@ const MOCK_GLOBAL_SETTINGS: GlobalSettings = {
   turnstile_secret_key: 'secret_key_xyz',
   resend_enabled: false,
   resend_api_key: '',
+  admin_notify_email: '',
   email_templates: {
     new_user_registration_notice: { subject: 'Welcome', html: '<p>Welcome</p>' },
     account_activated: { subject: 'Account Activated', html: '<p>Activated</p>' },
@@ -168,5 +169,19 @@ describe('updateGlobalSettings', () => {
   it('throws on error', async () => {
     mockFetch.mockResolvedValueOnce(errResp({ detail: 'Validation error' }, 422))
     await expect(updateGlobalSettings({ openrouter_model: '' })).rejects.toMatchObject({ status: 422 })
+  })
+
+  it('includes admin_notify_email in getGlobalSettings response', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ ...MOCK_GLOBAL_SETTINGS, admin_notify_email: 'admin@example.com' }))
+    const result = await getGlobalSettings()
+    expect(result.admin_notify_email).toBe('admin@example.com')
+  })
+
+  it('sends admin_notify_email in updateGlobalSettings payload', async () => {
+    const updated = { ...MOCK_GLOBAL_SETTINGS, admin_notify_email: 'notify@example.com' }
+    mockFetch.mockResolvedValueOnce(ok(updated))
+    await updateGlobalSettings({ admin_notify_email: 'notify@example.com' })
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.admin_notify_email).toBe('notify@example.com')
   })
 })

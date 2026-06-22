@@ -1,12 +1,21 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Pencil, Trash2, PackagePlus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
+import { Pencil, Trash2, PackagePlus, ChevronDown, ChevronUp, AlertTriangle, Tags, Plus, Check, X } from 'lucide-react'
 import { Tooltip } from '../ui/tooltip'
 import { AnnotationRegion, AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
 import { Card } from '../common'
 
+type AnnotationPanelTab = 'labelManagement' | 'annotationList'
+
+const ANNOTATION_PANEL_TAB_STORAGE_KEY = 'annotationListPanelActiveTab'
+const VALID_PANEL_TABS: AnnotationPanelTab[] = ['labelManagement', 'annotationList']
+
+function getInitialPanelTab(): AnnotationPanelTab {
+  const stored = localStorage.getItem(ANNOTATION_PANEL_TAB_STORAGE_KEY)
+  return VALID_PANEL_TABS.includes(stored as AnnotationPanelTab) ? stored as AnnotationPanelTab : 'labelManagement'
+}
+
 interface AnnotationListPanelProps {
-  currentWsiId: string
   regions: AnnotationRegion[]
   allAnnotations: AnnotationsMap
   preferRemoteCrossSlideSummary?: boolean
@@ -15,7 +24,14 @@ interface AnnotationListPanelProps {
   labelColors: Record<string, string>
   focusedRegionId?: string | null
   canCreateDataset?: boolean
-  onFocusRegion?: (regionId: string) => void
+  currentLabel?: string
+  visibleLabels?: string[]
+  missingCurrentLabel?: boolean
+  onCurrentLabelChange?: (label: string) => void
+  onCreateLabel?: (label: string) => void
+  onRenameLabel?: (oldLabel: string, newLabel: string) => void
+  onDeleteLabel?: (label: string) => void
+  onFocusRegion?: (regionId: string | null) => void
   onUpdateRegion: (regionId: string, updates: Partial<AnnotationRegion>) => void
   onDeleteRegion: (regionId: string) => void
   onDeleteRegions: (regionIds: string[]) => void
@@ -24,7 +40,6 @@ interface AnnotationListPanelProps {
 }
 
 export function AnnotationListPanel({
-  currentWsiId,
   regions,
   allAnnotations,
   preferRemoteCrossSlideSummary = false,
@@ -33,6 +48,13 @@ export function AnnotationListPanel({
   labelColors,
   focusedRegionId = null,
   canCreateDataset = true,
+  currentLabel = '',
+  visibleLabels = [],
+  missingCurrentLabel = false,
+  onCurrentLabelChange,
+  onCreateLabel,
+  onRenameLabel,
+  onDeleteLabel,
   onFocusRegion,
   onUpdateRegion,
   onDeleteRegion,
@@ -44,10 +66,14 @@ export function AnnotationListPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editLabel, setEditLabel] = useState('')
   const [showSummary, setShowSummary] = useState(true)
+  const [activePanelTab, setActivePanelTab] = useState<AnnotationPanelTab>(getInitialPanelTab)
   const [selectedRegionIds, setSelectedRegionIds] = useState<Set<string>>(new Set())
   const [selectedCrossSlideLabels, setSelectedCrossSlideLabels] = useState<Set<string>>(new Set())
+  const [newLabel, setNewLabel] = useState('')
+  const [editingLabel, setEditingLabel] = useState<string | null>(null)
+  const [editingLabelValue, setEditingLabelValue] = useState('')
   // Confirmation dialog state: { type, message } or null
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'current' | 'crossSlide'; message: string } | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'current' | 'crossSlide' | 'label'; message: string; label?: string } | null>(null)
 
   const localSummary = useMemo(() => {
     const counts: Record<string, { total: number; slides: Set<string> }> = {}
@@ -62,6 +88,15 @@ export function AnnotationListPanel({
   }, [allAnnotations])
 
   const hasLoadedAnnotations = Object.keys(allAnnotations).length > 0
+
+  const labelCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const label of visibleLabels) counts.set(label, 0)
+    for (const region of regions) {
+      counts.set(region.label, (counts.get(region.label) ?? 0) + 1)
+    }
+    return Array.from(counts.entries()).map(([label, count]) => ({ label, count }))
+  }, [regions, visibleLabels])
 
   const isRemoteSummaryPending = preferRemoteCrossSlideSummary && !hasLoadedAnnotations && (!crossSlideSummary || loadingCrossSlideSummary)
 
@@ -178,15 +213,174 @@ export function AnnotationListPanel({
     if (deleteConfirm.type === 'current') {
       onDeleteRegions(Array.from(selectedRegionIds))
       setSelectedRegionIds(new Set())
-    } else {
+    } else if (deleteConfirm.type === 'crossSlide') {
       onDeleteCrossSlideByLabel(Array.from(selectedCrossSlideLabels))
       setSelectedCrossSlideLabels(new Set())
+    } else if (deleteConfirm.label) {
+      onDeleteLabel?.(deleteConfirm.label)
     }
     setDeleteConfirm(null)
   }
 
+  const startRenameLabel = (label: string) => {
+    setEditingLabel(label)
+    setEditingLabelValue(label)
+  }
+
+  const submitRenameLabel = () => {
+    const trimmed = editingLabelValue.trim()
+    if (editingLabel && trimmed && trimmed !== editingLabel) {
+      onRenameLabel?.(editingLabel, trimmed)
+    }
+    setEditingLabel(null)
+    setEditingLabelValue('')
+  }
+
+  const submitNewLabel = () => {
+    const trimmed = newLabel.trim()
+    if (!trimmed) return
+    onCreateLabel?.(trimmed)
+    setNewLabel('')
+  }
+
+  const confirmDeleteLabel = (label: string, count: number) => {
+    setDeleteConfirm({
+      type: 'label',
+      label,
+      message: count > 0
+        ? t('annotation.confirmDeleteLabelWithRegions', { label, count })
+        : t('annotation.confirmDeleteLabel', { label }),
+    })
+  }
+
+  const handlePanelTabChange = (tab: AnnotationPanelTab) => {
+    setActivePanelTab(tab)
+    localStorage.setItem(ANNOTATION_PANEL_TAB_STORAGE_KEY, tab)
+  }
+
   return (
     <div className="flex flex-col gap-4">
+      <Card className="overflow-hidden">
+        <div className="flex items-center gap-1 border-b border-gray-200 bg-white p-1">
+          <button
+            type="button"
+            onClick={() => handlePanelTabChange('labelManagement')}
+            className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${activePanelTab === 'labelManagement' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+          >
+            {t('annotation.labelManagement')}
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePanelTabChange('annotationList')}
+            className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${activePanelTab === 'annotationList' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+          >
+            {t('annotation.annotationList')}
+          </button>
+        </div>
+      </Card>
+
+      {activePanelTab === 'labelManagement' ? (
+        <Card className="overflow-hidden">
+          <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
+            <Tags className="w-4 h-4 text-indigo-500" />
+            <h3 className="m-0 text-sm font-semibold text-gray-900">{t('annotation.labelManagement')}</h3>
+            <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+              {labelCounts.length} {t('annotation.labels')}
+            </span>
+          </div>
+          <div className="p-3 space-y-3">
+            {missingCurrentLabel && currentLabel && (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <span className="min-w-0 text-xs text-amber-800 break-words">{t('annotation.labelMissingInMode')}</span>
+                <button
+                  type="button"
+                  onClick={() => onCreateLabel?.(currentLabel)}
+                  className="flex-shrink-0 rounded-md bg-amber-100 px-2 py-1 text-[10px] font-semibold text-amber-900 hover:bg-amber-200"
+                >
+                  {t('annotation.createLabelInMode')}
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newLabel}
+                onChange={e => setNewLabel(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') submitNewLabel() }}
+                placeholder={t('annotation.newLabel')}
+                className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              />
+              <button
+                type="button"
+                onClick={submitNewLabel}
+                disabled={!newLabel.trim()}
+                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                {t('common.create')}
+              </button>
+            </div>
+
+            <div className="max-h-[360px] space-y-1.5 overflow-y-auto pr-1">
+              {labelCounts.length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-6">{t('annotation.noLabels')}</p>
+              ) : labelCounts.map(({ label, count }, index) => {
+                const isCurrent = label === currentLabel
+                return (
+                  <div key={label} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 transition-colors ${isCurrent ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                    <button
+                      type="button"
+                      onClick={() => onCurrentLabelChange?.(isCurrent ? '' : label)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-gray-200" style={{ backgroundColor: labelColors[label] || '#3b82f6' }} />
+                      {editingLabel === label ? (
+                        <input
+                          type="text"
+                          value={editingLabelValue}
+                          onChange={e => setEditingLabelValue(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') submitRenameLabel()
+                            if (e.key === 'Escape') setEditingLabel(null)
+                          }}
+                          className="min-w-0 flex-1 rounded border border-indigo-300 px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
+                          autoFocus
+                        />
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-gray-800">{label}</span>
+                      )}
+                      {index < 9 && <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-mono text-gray-400">{index + 1}</span>}
+                    </button>
+                    <span className="w-20 text-right text-[10px] text-gray-500">{count} {t('annotation.regions')}</span>
+                    {editingLabel === label ? (
+                      <>
+                        <button type="button" onClick={submitRenameLabel} className="p-1 text-emerald-600 hover:bg-emerald-50 rounded" aria-label={`${t('common.save')} ${label}`}>
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" onClick={() => setEditingLabel(null)} className="p-1 text-gray-400 hover:bg-gray-100 rounded" aria-label={`${t('common.cancel')} ${label}`}>
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => startRenameLabel(label)} className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded" aria-label={`${t('annotation.renameLabel')} ${label}`}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" onClick={() => confirmDeleteLabel(label, count)} className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded" aria-label={`${t('annotation.deleteLabel')} ${label}`}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </Card>
+      ) : (
+      <>
       {/* Current slide annotations */}
       <Card className="overflow-hidden">
         <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
@@ -228,12 +422,12 @@ export function AnnotationListPanel({
                   key={region.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => onFocusRegion?.(region.id)}
+                  onClick={() => onFocusRegion?.(focusedRegionId === region.id ? null : region.id)}
                   onKeyDown={e => {
                     if (e.target !== e.currentTarget) return
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      onFocusRegion?.(region.id)
+                      onFocusRegion?.(focusedRegionId === region.id ? null : region.id)
                     }
                   }}
                   className={`flex items-center gap-2 px-2.5 py-2 rounded-lg group transition-all cursor-pointer ${focusedRegionId === region.id ? 'bg-amber-50 ring-2 ring-amber-300 shadow-sm' : selectedRegionIds.has(region.id) ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-gray-50 hover:bg-gray-100'}`}
@@ -355,6 +549,8 @@ export function AnnotationListPanel({
           </div>
         )}
       </Card>
+      </>
+      )}
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
@@ -390,4 +586,3 @@ export function AnnotationListPanel({
     </div>
   )
 }
-

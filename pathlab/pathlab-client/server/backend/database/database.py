@@ -12,7 +12,8 @@ Key features:
 
 import os
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable, Mapping
+from datetime import datetime
 from sqlalchemy.exc import DBAPIError, InterfaceError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
@@ -21,6 +22,75 @@ from backend.common.config import Config
 from .models import Base
 
 logger = logging.getLogger(__name__)
+
+
+def _plan_user_identity_cleanup(rows: Iterable[Mapping[str, object]]) -> dict[str, str]:
+    """Plan deterministic username repairs for blank/duplicate identities.
+
+    Input rows must provide id, username, created_at. The first row in
+    created_at NULLS FIRST + id order keeps its username in duplicate groups;
+    later rows are renamed with deterministic suffixes derived from their UUID.
+    """
+
+    def _id_hex(user_id: object) -> str:
+        return str(user_id).replace("-", "")
+
+    def _username(row: Mapping[str, object]) -> str:
+        raw_username = row.get("username")
+        if raw_username is None:
+            return ""
+        return str(raw_username).strip()
+
+    def _sort_key(row: Mapping[str, object]) -> tuple[bool, datetime, str]:
+        created_at = row.get("created_at")
+        sortable_created_at = created_at if isinstance(created_at, datetime) else datetime.min
+        return (created_at is not None, sortable_created_at, str(row["id"]))
+
+    sorted_rows = sorted(
+        rows,
+        key=_sort_key,
+    )
+
+    reserved_usernames = {
+        username
+        for row in sorted_rows
+        if (username := _username(row)) != ""
+    }
+    seen_usernames: set[str] = set()
+    updates: dict[str, str] = {}
+
+    for row in sorted_rows:
+        username = _username(row)
+        user_id = row["id"]
+        user_id_str = str(user_id)
+        user_id_hex = _id_hex(user_id)
+
+        if username:
+            if username not in seen_usernames:
+                seen_usernames.add(username)
+                continue
+            base = username
+            suffix_len = 8
+            while True:
+                candidate = f"{base}_{user_id_hex[:suffix_len]}"
+                if candidate not in reserved_usernames:
+                    reserved_usernames.add(candidate)
+                    updates[user_id_str] = candidate
+                    break
+                suffix_len += 4
+            continue
+
+        base = "user"
+        suffix_len = 12
+        while True:
+            candidate = f"{base}_{user_id_hex[:suffix_len]}"
+            if candidate not in reserved_usernames:
+                reserved_usernames.add(candidate)
+                updates[user_id_str] = candidate
+                break
+            suffix_len += 4
+
+    return updates
 
 
 def get_database_url() -> str:
@@ -180,130 +250,259 @@ async def init_db():
     import backend.auth.models  # noqa: F401
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        logger.info("All tables created/verified successfully")
-        await conn.execute(
-            text(
-                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
-                "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
+        await conn.execute(text("SELECT pg_advisory_lock(2026040801)"))
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("All tables created/verified successfully")
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_case "
+                    "ON wsi_slides(dataset_id, case_id)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE segmentation_annotations "
-                "ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_type_case "
+                    "ON wsi_slides(dataset_id, data_type, case_id)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE segmentation_annotations "
-                "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
+            logger.info("WSI case pagination indexes ensured")
+            await conn.execute(
+                text(
+                    "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                    "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE segmentation_annotations "
-                "ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) NOT NULL DEFAULT 'personal'"
+            await conn.execute(
+                text(
+                    "ALTER TABLE segmentation_annotations "
+                    "ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE wsi_slides ADD COLUMN IF NOT EXISTS data_type VARCHAR(20)"
+            await conn.execute(
+                text(
+                    "ALTER TABLE segmentation_annotations "
+                    "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_wsi_user_type"
-                " ON wsi_slides (user_id, data_type)"
+            await conn.execute(
+                text(
+                    "ALTER TABLE segmentation_annotations "
+                    "ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) NOT NULL DEFAULT 'personal'"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_type"
-                " ON wsi_slides (dataset_id, data_type)"
+            await conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS wsi_slide_user_splits ("
+                    "    id SERIAL PRIMARY KEY,"
+                    "    wsi_id VARCHAR(255) NOT NULL REFERENCES wsi_slides(wsi_id) ON DELETE CASCADE,"
+                    "    user_id VARCHAR(255) NOT NULL,"
+                    "    split VARCHAR(20) NOT NULL,"
+                    "    created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                    "    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                    "    CONSTRAINT uq_wsi_slide_user_splits_wsi_user UNIQUE (wsi_id, user_id)"
+                    ")"
+                )
             )
-        )
-        logger.info("wsi_slides.data_type column and indexes ensured")
-        await conn.execute(
-            text(
-                "CREATE TABLE IF NOT EXISTS dataset_stats ("
-                "    dataset_id   VARCHAR(255) PRIMARY KEY"
-                "        REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
-                "    file_count        INTEGER   NOT NULL DEFAULT 0,"
-                "    total_size        BIGINT    NOT NULL DEFAULT 0,"
-                "    split_train_count INTEGER   NOT NULL DEFAULT 0,"
-                "    split_val_count   INTEGER   NOT NULL DEFAULT 0,"
-                "    split_test_count  INTEGER   NOT NULL DEFAULT 0,"
-                "    updated_at        TIMESTAMP NOT NULL DEFAULT NOW()"
-                ")"
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_slide_user_splits_user "
+                    "ON wsi_slide_user_splits(user_id)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO dataset_stats"
-                " (dataset_id, file_count, total_size,"
-                "  split_train_count, split_val_count, split_test_count, updated_at)"
-                " SELECT w.dataset_id, COUNT(*), COALESCE(SUM(w.file_size), 0),"
-                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'train' THEN"
-                "     CASE WHEN dg.aggregation_level = 'case'"
-                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
-                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) IN ('val','validation') THEN"
-                "     CASE WHEN dg.aggregation_level = 'case'"
-                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
-                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'test' THEN"
-                "     CASE WHEN dg.aggregation_level = 'case'"
-                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
-                "   NOW()"
-                " FROM wsi_slides w"
-                " JOIN datasets d ON w.dataset_id = d.dataset_id"
-                " JOIN data_groups dg ON d.group_id = dg.group_id"
-                " GROUP BY w.dataset_id"
-                " ON CONFLICT (dataset_id) DO NOTHING"
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_slide_user_splits_wsi "
+                    "ON wsi_slide_user_splits(wsi_id)"
+                )
             )
-        )
-        logger.info("dataset_stats table ensured and pre-populated")
+            logger.info(
+                "Skipping wsi_slides.data_type startup DDL; migration handled separately"
+            )
+            await conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS dataset_stats ("
+                    "    dataset_id   VARCHAR(255) PRIMARY KEY"
+                    "        REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                    "    file_count        INTEGER   NOT NULL DEFAULT 0,"
+                    "    total_size        BIGINT    NOT NULL DEFAULT 0,"
+                    "    split_train_count INTEGER   NOT NULL DEFAULT 0,"
+                    "    split_val_count   INTEGER   NOT NULL DEFAULT 0,"
+                    "    split_test_count  INTEGER   NOT NULL DEFAULT 0,"
+                    "    updated_at        TIMESTAMP NOT NULL DEFAULT NOW()"
+                    ")"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO dataset_stats"
+                    " (dataset_id, file_count, total_size,"
+                    "  split_train_count, split_val_count, split_test_count, updated_at)"
+                    " SELECT w.dataset_id, COUNT(*), COALESCE(SUM(w.file_size), 0),"
+                    "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'train' THEN"
+                    "     CASE WHEN dg.aggregation_level = 'case'"
+                    "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                    "   COUNT(DISTINCT CASE WHEN LOWER(w.split) IN ('val','validation') THEN"
+                    "     CASE WHEN dg.aggregation_level = 'case'"
+                    "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                    "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'test' THEN"
+                    "     CASE WHEN dg.aggregation_level = 'case'"
+                    "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                    "   NOW()"
+                    " FROM wsi_slides w"
+                    " JOIN datasets d ON w.dataset_id = d.dataset_id"
+                    " JOIN data_groups dg ON d.group_id = dg.group_id"
+                    " GROUP BY w.dataset_id"
+                    " ON CONFLICT (dataset_id) DO NOTHING"
+                )
+            )
+            logger.info("dataset_stats table ensured and pre-populated")
 
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "registration_email VARCHAR(320) DEFAULT NULL"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "registration_email VARCHAR(320) DEFAULT NULL"
+                )
             )
-        )
-        logger.info("users.registration_email column ensured")
+            logger.info("users.registration_email column ensured")
 
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "first_activated_at TIMESTAMP DEFAULT NULL"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "username VARCHAR(255)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "UPDATE users SET first_activated_at = NOW() "
-                "WHERE first_activated_at IS NULL"
+            await conn.execute(
+                text(
+                    "UPDATE users SET username = email "
+                    "WHERE username IS NULL OR LENGTH(TRIM(username)) = 0"
+                )
             )
-        )
-        logger.info("users.first_activated_at column ensured and backfilled")
+            await conn.execute(
+                text(
+                    "UPDATE users SET email = registration_email "
+                    "WHERE registration_email IS NOT NULL AND "
+                    "(email IS NULL OR email = username)"
+                )
+            )
+            identity_rows = [
+                dict(row)
+                for row in (
+                    await conn.execute(
+                        text(
+                            "SELECT id, username, created_at FROM users "
+                            "ORDER BY created_at NULLS FIRST, id"
+                        )
+                    )
+                )
+                .mappings()
+                .all()
+            ]
+            identity_updates = _plan_user_identity_cleanup(identity_rows)
+            for user_id, username in identity_updates.items():
+                await conn.execute(
+                    text(
+                        "UPDATE users SET username = :username "
+                        "WHERE id = :user_id"
+                    ),
+                    {"username": username, "user_id": user_id},
+                )
+            await conn.execute(text("ALTER TABLE users ALTER COLUMN email DROP NOT NULL"))
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    DECLARE c RECORD;
+                    BEGIN
+                        FOR c IN
+                            SELECT con.conname
+                            FROM pg_constraint con
+                            JOIN pg_class rel ON rel.oid = con.conrelid
+                            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                            JOIN unnest(con.conkey) AS colnum(attnum) ON TRUE
+                            JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = colnum.attnum
+                            WHERE rel.relname = 'users'
+                              AND nsp.nspname = current_schema()
+                              AND con.contype = 'u'
+                              AND att.attname = 'email'
+                        LOOP
+                            EXECUTE format('ALTER TABLE %I.users DROP CONSTRAINT IF EXISTS %I', current_schema(), c.conname);
+                        END LOOP;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    DECLARE idx RECORD;
+                    BEGIN
+                        FOR idx IN
+                            SELECT i.indexname
+                            FROM pg_indexes i
+                            JOIN pg_class rel ON rel.relname = i.tablename
+                            JOIN pg_namespace nsp ON nsp.nspname = i.schemaname
+                            JOIN pg_class ic ON ic.relname = i.indexname AND ic.relnamespace = nsp.oid
+                            JOIN pg_index pi ON pi.indexrelid = ic.oid
+                            JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(pi.indkey)
+                            WHERE i.schemaname = current_schema()
+                              AND i.tablename = 'users'
+                              AND pi.indisunique = TRUE
+                              AND att.attname = 'email'
+                        LOOP
+                            EXECUTE format('DROP INDEX IF EXISTS %I.%I', current_schema(), idx.indexname);
+                        END LOOP;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text("ALTER TABLE users ALTER COLUMN username SET NOT NULL")
+            )
+            await conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username "
+                    "ON users (username)"
+                )
+            )
+            logger.info("users.username column ensured and account identity cleanup completed")
 
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "notify_on_success BOOLEAN NOT NULL DEFAULT TRUE"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "first_activated_at TIMESTAMP DEFAULT NULL"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "notify_on_failed BOOLEAN NOT NULL DEFAULT FALSE"
+            await conn.execute(
+                text(
+                    "UPDATE users SET first_activated_at = NOW() "
+                    "WHERE first_activated_at IS NULL AND is_active = TRUE"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "notify_on_cancelled BOOLEAN NOT NULL DEFAULT FALSE"
+            logger.info("users.first_activated_at column ensured and backfilled")
+
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "notify_on_success BOOLEAN NOT NULL DEFAULT TRUE"
+                )
             )
-        )
-        logger.info("users.notify_on_* columns ensured")
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "notify_on_failed BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "notify_on_cancelled BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+            logger.info("users.notify_on_* columns ensured")
+        finally:
+            await conn.execute(text("SELECT pg_advisory_unlock(2026040801)"))
 
         await conn.execute(
             text(
@@ -396,7 +595,26 @@ async def init_db():
                 "ON chat_messages (variant_group_id)"
             )
         )
-        logger.info("chat conversation branch column and chat_messages variant columns ensured")
+        logger.info(
+            "chat conversation branch column and chat_messages variant columns ensured"
+        )
+
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "session_nonces TEXT DEFAULT NULL"
+            )
+        )
+        # Migrate existing single nonce to JSON array format (runs once per row, idempotent)
+        await conn.execute(
+            text(
+                "UPDATE users SET session_nonces = json_build_array(session_nonce)::text "
+                "WHERE session_nonce IS NOT NULL AND session_nonces IS NULL"
+            )
+        )
+        logger.info(
+            "users.session_nonces column ensured and backfilled from session_nonce"
+        )
 
         await conn.execute(
             text(
@@ -457,7 +675,37 @@ async def init_db():
         )
         logger.info("auto_research PathScientist recovery columns and event index ensured")
 
+    await _enforce_data_group_task_taxonomy_constraint()
     await _create_default_admin()
+
+
+async def _enforce_data_group_task_taxonomy_constraint() -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint
+                        WHERE conname = 'chk_data_groups_task_type_canonical'
+                          AND conrelid = 'data_groups'::regclass
+                    ) THEN
+                        ALTER TABLE data_groups
+                        ADD CONSTRAINT chk_data_groups_task_type_canonical
+                        CHECK (task_type IN (
+                            'wsi_classification',
+                            'patch_classification',
+                            'wsi_survival',
+                            'patch_segmentation'
+                        ));
+                    END IF;
+                END $$;
+                """
+            )
+        )
+    logger.info("data_groups.task_type canonical constraint ensured")
 
 
 async def _create_default_admin():
@@ -500,7 +748,8 @@ async def _create_default_admin():
 
                 admin_user = User(
                     id=uuid.uuid4(),
-                    email="admin",
+                    username="admin",
+                    email=None,
                     hashed_password=hashed_password,
                     password_sha256=password_sha256,
                     is_active=True,

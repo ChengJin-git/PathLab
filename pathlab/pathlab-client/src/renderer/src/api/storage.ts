@@ -1,5 +1,6 @@
 import { API_BASE } from '../config'
 import { createPersistentCache, PERSISTENT_CACHE_TTL } from '../lib/cache'
+import type { TaskType } from '../constants/training'
 import { apiFetch } from './client'
 
 // ============================================================================
@@ -108,6 +109,7 @@ export interface WSIStorageInfo {
 
 export interface TrainingTaskStorageInfo {
   task_id: string
+  quick?: boolean
   ai_results: {
     path: string
     size: number
@@ -137,6 +139,7 @@ export interface TrainingTaskStorageInfo {
     path: string
     size: number
     file_count: number
+    exists?: boolean
   }>
   total_size: number
   total_size_mb: number
@@ -243,9 +246,13 @@ export async function getWSIStorageInfo(wsi_id: string): Promise<WSIStorageInfo>
  * @returns Detailed storage information for the training task
  * @throws {ApiError} If the request fails
  */
-export async function getTrainingTaskStorageInfo(task_id: string): Promise<TrainingTaskStorageInfo> {
+export async function getTrainingTaskStorageInfo(
+  task_id: string,
+  options: { quick?: boolean } = {}
+): Promise<TrainingTaskStorageInfo> {
+  const quickParam = options.quick ? '?quick=true' : ''
   return apiFetch<TrainingTaskStorageInfo>(
-    `${API_BASE}/storage/training/${encodeURIComponent(task_id)}`,
+    `${API_BASE}/storage/training/${encodeURIComponent(task_id)}${quickParam}`,
     undefined,
     'Failed to get training task storage info'
   )
@@ -460,7 +467,7 @@ export interface ScanDirectoryResponse {
 
 export interface ScanDirectoryOptions {
   scanId?: string
-  taskType?: 'classification' | 'survival' | 'segmentation'
+  taskType?: TaskType
   page?: number
   pageSize?: number
 }
@@ -506,7 +513,7 @@ export interface BatchRegisterRequest {
   selected_paths?: string[]
   excluded_paths?: string[]
   aggregation_level?: 'case' | 'file'
-  task_type?: 'classification' | 'survival' | 'segmentation'
+  task_type?: TaskType
   is_public?: boolean
   default_label?: string
   default_event_time?: number
@@ -624,8 +631,8 @@ export function getExternalDatasetsCachedSync(): ExternalDatasetsResponse | null
 export interface StorageTaskStatus {
   task_id: string
   user_id: string
-  task_type: 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'unbind_dataset' | 'reset_derived_data' | 'delete_dataset' | 'cleanup_empty_datasets'
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  task_type: 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'unbind_dataset' | 'reset_derived_data' | 'delete_dataset' | 'cleanup_empty_datasets' | 'scan_directory'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
   progress: number
   error_message: string | null
   total_items: number
@@ -638,10 +645,21 @@ export interface StorageTaskStatus {
     wsi_id?: string
     status: string
     message: string
-  }> | null
+  }> | ScanDirectoryTaskResult | null
   created_at: string | null
   started_at: string | null
   completed_at: string | null
+}
+
+export interface ScanDirectoryTaskResult {
+  scan_id: string
+  directory: string
+  total_count: number
+  valid_count: number
+  wsi_count: number
+  patch_count: number
+  page_size: number
+  annotation_scan_enabled: boolean
 }
 
 /**
@@ -653,6 +671,11 @@ export interface StartBatchImportResponse {
   total_files: number
 }
 
+export interface StartScanDirectoryTaskResponse {
+  task_id: string
+  message: string
+}
+
 /**
  * Response from starting a delete external task
  */
@@ -660,6 +683,17 @@ export interface StartDeleteExternalResponse {
   task_id: string
   message: string
   total_files: number
+}
+
+export interface StartDeleteWSIsRequest {
+  wsi_ids: string[]
+  mode?: 'standard' | 'complete'
+}
+
+export interface StartDeleteWSIsResponse {
+  task_id: string
+  message: string
+  total_items: number
 }
 
 export interface StartDeleteDatasetRequest {
@@ -700,6 +734,25 @@ export async function startBatchImportTask(request: BatchRegisterRequest): Promi
   )
 }
 
+export async function startScanDirectoryTask(
+  directoryPath: string,
+  options: Pick<ScanDirectoryOptions, 'taskType' | 'pageSize'> = {}
+): Promise<StartScanDirectoryTaskResponse> {
+  return apiFetch<StartScanDirectoryTaskResponse>(
+    `${API_BASE}/storage/tasks/scan-directory`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        directory_path: directoryPath,
+        task_type: options.taskType,
+        page_size: options.pageSize ?? 100,
+      })
+    },
+    'Failed to start directory scan task'
+  )
+}
+
 /**
  * Start a delete external files background task (Admin only)
  * Files are deleted asynchronously in the background
@@ -716,6 +769,20 @@ export async function startDeleteExternalTask(wsiIds: string[]): Promise<StartDe
       body: JSON.stringify({ wsi_ids: wsiIds })
     },
     'Failed to start delete external task'
+  )
+}
+
+export async function startDeleteWSIsTask(
+  request: StartDeleteWSIsRequest
+): Promise<StartDeleteWSIsResponse> {
+  return apiFetch<StartDeleteWSIsResponse>(
+    `${API_BASE}/storage/tasks/delete-wsis`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start delete WSI task'
   )
 }
 

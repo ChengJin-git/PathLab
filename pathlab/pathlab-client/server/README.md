@@ -1,8 +1,8 @@
 # PathLab Python Backend
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
-`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI** 三个服务进程，并复用 `backend/` 下的共享模块。
+`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI / TaskWorker** 四个进程，并复用 `backend/` 下的共享模块。
 
 ## 当前启动方式
 
@@ -12,58 +12,66 @@
 - 作用：
   - 选择固定端口或动态端口
   - 设置服务发现环境变量
-  - 启动 3 个 uvicorn 进程
+  - 启动 Gateway / Preprocessing / AI 三个 uvicorn 进程，以及独立 TaskWorker 进程
   - 在退出时统一清理子进程
 
 ### 两种端口模式
 
 | 模式 | 端口 | 触发方式 |
 |------|------|----------|
-| 调试 / 固定端口 | Gateway `6100`、Preprocessing `6101`、AI `6102` | `PATHLAB_DEBUG=1` |
-| Electron / 动态端口 | 3 个服务自动分配可用端口 | 默认 sidecar 启动方式 |
+| 调试 / 固定端口 | Gateway `6100`、Preprocessing `6101`、AI `6102`；TaskWorker 无 HTTP 端口 | `PATHLAB_DEBUG=1` |
+| Electron / 动态端口 | 3 个 HTTP 服务自动分配可用端口，TaskWorker 作为无端口后台进程运行 | 默认 sidecar 启动方式 |
 
 ## 当前目录结构
 
 ```text
 server/
-├── main.py                 # 统一入口，负责拉起 3 个服务
+├── main.py                 # 统一入口，负责拉起 3 个 HTTP 服务和 TaskWorker
 ├── requirements.txt        # Python 依赖
 ├── requirements-test.txt   # 测试依赖（pytest、pytest-asyncio、httpx）
 ├── pytest.ini              # asyncio_mode = auto
 ├── main.spec               # PyInstaller 配置
-├── tests/                  # 后端单元测试
+├── tests/                  # 后端单元测试（pytest）
 │   ├── conftest.py         # fixtures：auth mock、app factory、load_dotenv
-│   ├── test_config.py      # Config 类测试（28）
-│   ├── test_settings.py    # /settings 路由测试（19）
-│   ├── test_queue_config.py # /queue 路由测试（15）
-│   ├── test_ai_models.py   # AI 模型 GPU 测试（54）
-│   └── test_ai_extractors_pretrained.py  # HF 预训练模型测试（~144）
+│   ├── helpers.py          # 测试工具函数
+│   └── test_*.py           # 路由 / 权限 / 任务 / 存储 / 结果 / AI 回归，完整清单以文件系统为准
 ├── gateway/                # 对外 API 网关
+├── task_worker/            # Redis 描述符队列消费者、GPU 队列运行时与任务恢复
 ├── backend/
 │   ├── ai/                 # AI 服务与任务实现
 │   ├── auth/               # 认证模型与 FastAPI-Users 配置
 │   ├── common/             # 配置、Redis、端口发现、通用工具
 │   ├── database/           # SQLAlchemy 模型与仓储层
-│   ├── deep-research/      # 内部 research/chat 代码树，当前不由 main.py 独立启动
+│   ├── annotation/         # 协作标注 pubsub、presence、COCO/summary 辅助
 │   ├── preprocessing/      # WSI 图像服务与辅助缓存逻辑
 │   └── storage/            # 存储统计、迁移、清理
 ├── build/                  # 打包产物目录
 └── dist/                   # 打包产物目录
 ```
 
-## 三个服务的职责
+## 服务职责
 
 | 服务 | 当前职责 |
 |------|----------|
 | Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置等对外 API |
 | Preprocessing | WSI 基本信息、图像、缩略图、DZI、瓦片、热图辅助、ROI 提取与部分 COCO 标注导出逻辑 |
 | AI | 训练、推理、特征提取、聚合器 / 分类器注册与模型内部接口 |
+| TaskWorker | 独立消费 Redis 任务描述符，拥有 GPU 任务队列、取消订阅、运行时快照发布与训练恢复 |
+
+## 任务调度边界
+
+Gateway 负责把训练、推理、分析和补丁类长任务序列化为 Redis 任务描述符，并通过 `/queue` 等接口读取 TaskWorker 发布的运行时状态。Gateway 不在自身生命周期中初始化队列运行时或执行训练恢复；GPU 队列运行时由 TaskWorker 初始化并消费描述符。聊天 PDF 的 Marker GPU 升级路径仍通过共享 `TaskQueueManager` 提交，但队列所有权属于 TaskWorker 运行时。
+
+TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务，放入 processing 列表，执行完成后 ack；失败时按重试上限重新入队，达到上限后进入 DLQ。取消请求会先写入短 TTL 的 durable cancellation key，再发布 pub/sub 消息；TaskWorker 同时用 job lock 防止同一 job descriptor 被重复执行。启动恢复时，TaskWorker 会先把遗留在 processing 列表中的描述符救回 pending 队列，再执行持久化训练恢复。
+
+`/queue` 返回的运行时状态区分两类计数：GPU 队列内部的 `running_count` / `pending_count` / `queue_size`，以及 Redis 描述符队列的 `descriptor_pending_count` / `descriptor_processing_count` / `descriptor_dlq_count`。
 
 ## 运行依赖
 
 - PostgreSQL：元数据与业务状态
 - Redis：任务队列、日志、进度与部分缓存
 - `uploads/`：WSI、特征缓存、模型、日志、标注及衍生文件
+- 上传目录解析顺序：`PATHLAB_UPLOADS_DIR` 环境变量 > `storage.json` 中的 `uploads_dir` > 系统 app data 目录下的 `uploads/`
 
 默认配置可在 `backend/common/config.py` 中看到，包括：
 
@@ -72,12 +80,13 @@ server/
 
 ## 当前实现重点
 
-- `main.py` 中 Preprocessing 允许多 worker，并支持 `PREPROCESSING_MAX_REQUESTS`
-- `main.py` 通过 `multiprocessing.Process` 拉起 3 个 uvicorn 服务并统一清理子进程
-- Gateway 会在自身生命周期中初始化数据库、Redis、任务队列和若干启动期清理逻辑
+- `main.py` 中 Preprocessing 默认以 **4 个 worker** 启动（`PREPROCESSING_WORKERS` 环境变量可覆盖），并默认设置 `PREPROCESSING_MAX_REQUESTS=500`（每个 worker 处理满 500 个请求后自动回收，释放 C 库内存；`PREPROCESSING_MAX_REQUESTS` 可覆盖）
+- `main.py` 通过 `multiprocessing.Process` 拉起 3 个 uvicorn 服务和 1 个 TaskWorker，并统一清理子进程
+- Gateway 会在自身生命周期中初始化数据库、Redis 和若干启动期清理逻辑
+- 任务队列初始化、GPU 探测与训练恢复由独立的 `TaskWorker` 进程负责，Gateway 通过 Redis 消费其发布的运行时快照与心跳
 - AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
 - `main.spec` 用于将 sidecar 打包为独立可执行文件
-- 代码树中虽然存在 `backend/deep-research/`，但当前 sidecar 默认只启动 Gateway / Preprocessing / AI 三个服务
+- `main.py` 会尊重预先设置的 `CUDA_VISIBLE_DEVICES`，否则在启动时自动探测坏卡并收缩可见 GPU 集合
 
 ## 单元测试
 
@@ -100,20 +109,14 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 pip install -r server/requirements-test.txt
 ```
 
-当前后端测试文件（10 个测试文件，116 个常规测试 + ~144 个预训练模型测试；其中 5 个为权限专项测试）：
+当前后端测试按行为域组织，完整清单以 `server/tests/test_*.py` 为准，主要覆盖：
 
-| 文件 | 测试数 | 覆盖内容 |
-|------|--------|---------|
-| `tests/test_config.py` | 28 | Config 全局设置、任务超时、并发数、维护模式 |
-| `tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm（在线/离线/超时/无模型）|
-| `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
-| `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
-| `tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
-| `tests/test_permission_logic.py` | — | 权限判断核心逻辑（数据集 / WSI 访问层次规则）|
-| `tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归（GPU grant、shared annotation、个人草稿）|
-| `tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证（in-process revoke、GPU 路径、分析提交 403）|
-| `tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试（CSV 上传路由 guest 可用性等）|
-| `tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
+- 配置与运行时：`test_config.py`、`test_settings.py`、`test_queue_config.py`、`test_gateway_*`、`test_gpu_*`
+- 认证与权限：`test_auth_*`、`test_user_activation_backfill.py`、`test_permission_*`
+- 任务 taxonomy 与调度：`test_task_taxonomy.py`、`test_*_task_taxonomy.py`、`test_training_*`、`test_resume_tasks.py`
+- 存储与数据一致性：`test_storage_*`、`test_uploads_boundary.py`、`test_dataset_repository_namespacing.py`
+- 结果、分析与推理：`test_ai_result_store*.py`、`test_*analysis*.py`、`test_batch_inference.py`、`test_patching_stage.py`
+- AI 模型 smoke：`test_ai_models.py`、`test_fm_segmentation_decoders.py`；`test_ai_extractors_pretrained.py` 需 GPU / HuggingFace token，单独运行
 
 **测试设计要点**
 

@@ -10,7 +10,7 @@ import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckSquare, Settings, AlignLeft, Layers, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react'
 import { ConfigurationValidation } from '../../types/training'
-import { DataLevel, TaskType, TrainingStatus, ExtractorOption, AGGREGATORS, PATCH_CLASSIFIERS, SEGMENTATION_ARCHITECTURES, SEGMENTATION_BACKBONES, SEGMENTATION_LOSSES, isSegFmEncoder } from '../../constants/training'
+import { DataLevel, TaskType, TrainingStatus, ExtractorOption, AGGREGATORS, PATCH_CLASSIFIERS, SEGMENTATION_ARCHITECTURES, SEGMENTATION_BACKBONES, SEGMENTATION_LOSSES, SplitStrategy, isSegFmEncoder, isSegmentationTask } from '../../constants/training'
 
 export interface ReviewSubmitStepProps {
   // Task info
@@ -37,8 +37,12 @@ export interface ReviewSubmitStepProps {
   // Segmentation-specific
   segArchitecture?: string
   segBackbone?: string
+  segFmDecoderType?: string
   segLossNames?: string[]
   segLossWeights?: number[]
+  splitStrategy: SplitStrategy
+  kFoldSplits: number
+  stratified: boolean
 
   // Validation
   validateConfiguration: ConfigurationValidation
@@ -78,8 +82,12 @@ export function ReviewSubmitStep({
   classifier,
   segArchitecture,
   segBackbone,
+  segFmDecoderType,
   segLossNames,
   segLossWeights,
+  splitStrategy,
+  kFoldSplits,
+  stratified,
   validateConfiguration,
   trainingStatus,
   submitError,
@@ -91,6 +99,12 @@ export function ReviewSubmitStep({
   getErrorSuggestion,
 }: ReviewSubmitStepProps) {
   const { t } = useTranslation()
+  const splitLabel = splitStrategy === 'random'
+    ? t('training.dataSplit.randomSplit')
+    : splitStrategy === 'k_fold'
+      ? `${kFoldSplits}${t('taskDetail.configuration.splitKFold')}`
+      : t('training.dataSplit.customSplit')
+  const isSegmentation = isSegmentationTask(taskType)
 
   return (
     <>
@@ -143,7 +157,7 @@ export function ReviewSubmitStep({
                   <Layers className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  {taskType === 'segmentation' ? (
+                  {isSegmentation ? (
                     <>
                       {isSegFmEncoder(segBackbone) ? (
                         <>
@@ -156,7 +170,7 @@ export function ReviewSubmitStep({
                           </div>
                           <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
                             <span className="text-gray-400">{t('training.review.segDecoder')}:</span>
-                            <span className="font-bold text-gray-700 truncate">{t('taskDetail.configuration.convDecoder')}</span>
+                             <span className="font-bold text-gray-700 truncate">{t(`training.modelConfig.decoder.${segFmDecoderType || 'conv'}`, (segFmDecoderType || 'conv').toUpperCase())}</span>
                           </div>
                         </>
                       ) : (
@@ -244,6 +258,18 @@ export function ReviewSubmitStep({
                   <div className="text-[10px] text-gray-400">
                     {autoBalance ? t('training.review.balanced') : t('training.review.standard')} • Pati. {earlyStoppingPatience}
                   </div>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-3">
+                <span className="text-gray-400 font-bold uppercase tracking-tight">{t('training.review.split')}</span>
+                <div className="text-right">
+                  <div className="font-bold text-gray-900">{splitLabel}</div>
+                  {isSegmentation && splitStrategy !== 'manual' && (
+                    <div className="text-[10px] text-gray-400">
+                      {stratified ? t('training.review.stratifiedEnabled') : t('training.review.stratifiedDisabled')}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -7,6 +7,7 @@
 
 import type { TrainedModel } from '../../api/training'
 import type { ValidationDataset } from '../../api/analysis'
+import { isSegmentationTask as isCanonicalSegmentationTask, isSurvivalTask as isCanonicalSurvivalTask } from '../../constants/training'
 
 /**
  * Feature extractor name → embedding dimension mapping.
@@ -36,11 +37,11 @@ export const EXTRACTOR_EMBED_DIM: Record<string, number> = {
  * Helper to determine if a task type is survival
  */
 export function isSurvivalTask(taskType: string | undefined): boolean {
-  return taskType === 'survival' || taskType === 'wsi_survival' || taskType === 'patch_survival'
+  return isCanonicalSurvivalTask(taskType)
 }
 
 export function isSegmentationTask(taskType: string | undefined): boolean {
-  return taskType === 'segmentation' || taskType === 'patch_segmentation'
+  return isCanonicalSegmentationTask(taskType)
 }
 
 /**
@@ -58,7 +59,7 @@ export interface TrainingTaskMetadata {
 
 function normalizeLabels(labels: string[] | null | undefined): string[] {
   const normalized = (labels || [])
-    .map(label => label?.trim())
+    .map(label => label?.trim().toLowerCase())
     .filter((label): label is string => Boolean(label))
   return [...new Set(normalized)].sort()
 }
@@ -97,14 +98,12 @@ export function getDatasetCompatibilityError(
   const modelIsSegmentation = isSegmentationTask(modelTask.task_type)
   const modelClasses = new Set(normalizeLabels(model.classes || []))
   const modelWsiIds = new Set(modelTask.wsi_ids || [])
-  const modelExtractor = model.feature_extractor || ''
-  const modelEmbedDim = EXTRACTOR_EMBED_DIM[modelExtractor] ?? 0
 
   if (dataset.data_type !== modelDataType) {
     return 'Data type mismatch between source model and target dataset.'
   }
 
-  const datasetIsSurvival = dataset.task_type === 'survival'
+  const datasetIsSurvival = isSurvivalTask(dataset.task_type)
   const datasetIsSegmentation = isSegmentationTask(dataset.task_type)
   if (modelIsSurvival !== datasetIsSurvival) {
     return 'Task type mismatch between source model and target dataset.'
@@ -154,23 +153,13 @@ export function getDatasetCompatibilityError(
   }
 
   if (!modelIsSurvival) {
-    const dsLabels = new Set(dataset.distinct_labels || [])
+    const dsLabels = new Set(normalizeLabels(dataset.distinct_labels || []))
     if (modelClasses.size !== dsLabels.size) {
       return 'Label sets must exactly match between source model and target dataset.'
     }
     for (const cls of modelClasses) {
       if (!dsLabels.has(cls)) {
         return 'Label sets must exactly match between source model and target dataset.'
-      }
-    }
-  }
-
-  if (modelDataType === 'wsi' && modelExtractor && modelEmbedDim > 0) {
-    const dsExtractors = dataset.available_feature_extractors || []
-    if (dsExtractors.length > 0) {
-      const hasSameDim = dsExtractors.some(e => (EXTRACTOR_EMBED_DIM[e] ?? 0) === modelEmbedDim)
-      if (!hasSameDim) {
-        return 'Feature extractor embedding dimensions do not match.'
       }
     }
   }
@@ -191,8 +180,7 @@ export function getDatasetCompatibilityError(
  * 3. For classification: label sets must match exactly
  * 4. For segmentation: source/target datasets must differ, architecture metadata must be consistent,
  *    segmentation labels must match exactly, and WSIs must not overlap
- * 5. For WSI: feature extractor embedding dimensions must match
- * 6. No WSI overlap with training data (data leakage prevention)
+ * 5. No WSI overlap with training data (data leakage prevention)
  * 
  * @param model - The trained model to validate against
  * @param modelTask - The training task metadata for the model

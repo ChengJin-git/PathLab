@@ -99,6 +99,11 @@ export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
                 <span className="font-medium text-slate-700">{user.email}</span>
               </div>
             )}
+            {!user?.email && (
+              <div className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+                {t('setEmail.noEmailSet')}
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold text-slate-700 uppercase tracking-wide">
@@ -113,6 +118,9 @@ export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
                 autoComplete="email"
                 disabled={isSubmitting || success}
               />
+              <p className="text-xs text-slate-400">
+                {t('setEmail.emailHint')}
+              </p>
             </div>
 
             <div className="border-t border-slate-100 pt-4">

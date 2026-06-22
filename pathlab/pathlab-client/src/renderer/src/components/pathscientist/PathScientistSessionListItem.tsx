@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { Download, Loader2, Share2, Trash2 } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
@@ -16,6 +16,7 @@ import {
   sessionTrainingProgressLabel,
 } from '../../lib/pathscientistSessions'
 import { useToast } from '../../contexts/ToastContext'
+import { ConfirmDialog } from '../settings/ConfirmDialog'
 
 interface PathScientistSessionListItemProps {
   session: PathScientistSessionSummary
@@ -56,6 +57,15 @@ export default function PathScientistSessionListItem({
   const isActive = location.pathname === `/pathscientist/sessions/${session.session_id}`
   const canDelete = !isLiveSessionStatus(session.status)
   const trainingProgressLabel = sessionTrainingProgressLabel(session)
+  const [dialogState, setDialogState] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+
+  const showConfirmDialog = (config: { title: string; message: string; onConfirm: () => void }) => {
+    setDialogState({ isOpen: true, ...config })
+  }
+
+  const closeConfirmDialog = () => {
+    setDialogState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+  }
 
   const handleShare = async (event: MouseEvent) => {
     event.preventDefault()
@@ -96,21 +106,26 @@ export default function PathScientistSessionListItem({
     event.preventDefault()
     event.stopPropagation()
     if (!canDelete || isDeleting) return
-    const confirmed = window.confirm(t('pathScientist.sessionActions.deleteConfirm'))
-    if (!confirmed) return
-    onDeleteStart(session.session_id)
-    try {
-      await deletePathScientistSession(session.session_id)
-      onSessionDeleted(session.session_id)
-      if (isActive) {
-        navigate('/pathscientist/new')
-      }
-      toast.success(t('pathScientist.sessionActions.deleteSuccess'))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('pathScientist.sessionActions.deleteFailed'))
-    } finally {
-      onDeleteEnd(session.session_id)
-    }
+    showConfirmDialog({
+      title: t('pathScientist.sessionActions.deleteConfirmTitle'),
+      message: t('pathScientist.sessionActions.deleteConfirm'),
+      onConfirm: async () => {
+        closeConfirmDialog()
+        onDeleteStart(session.session_id)
+        try {
+          await deletePathScientistSession(session.session_id)
+          onSessionDeleted(session.session_id)
+          if (isActive) {
+            navigate('/pathscientist/new')
+          }
+          toast.success(t('pathScientist.sessionActions.deleteSuccess'))
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : t('pathScientist.sessionActions.deleteFailed'))
+        } finally {
+          onDeleteEnd(session.session_id)
+        }
+      },
+    })
   }
 
   return (
@@ -186,6 +201,11 @@ export default function PathScientistSessionListItem({
           </Tooltip>
         </div>
       </div>
+
+      <ConfirmDialog
+        dialog={dialogState}
+        onClose={closeConfirmDialog}
+      />
     </li>
   )
 }

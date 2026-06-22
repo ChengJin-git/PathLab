@@ -5,7 +5,12 @@
  */
 
 import { useState, useCallback, useMemo } from 'react'
-import { TaskType, DataLevel, TrainingStatus } from '../../constants/training'
+import {
+  TaskType,
+  DataLevel,
+  TrainingStatus,
+  getTaskMetadata,
+} from '../../constants/training'
 import { useDraftState } from './useDraftState'
 
 const D = 'draft:wizard:'
@@ -45,7 +50,7 @@ export interface UseTaskWizardReturn {
 export function useTaskWizard(): UseTaskWizardReturn {
   const [currentStep, setCurrentStep] = useDraftState(`${D}step`, 1)
   const [taskName, setTaskName] = useDraftState(`${D}taskName`, '')
-  const [taskType, setTaskType] = useDraftState<TaskType>(`${D}taskType`, 'classification')
+  const [taskType, setTaskType] = useDraftState<TaskType>(`${D}taskType`, 'wsi_classification')
   const [dataLevel, setDataLevel] = useDraftState<DataLevel>(`${D}dataLevel`, 'wsi')
   const [taskDescription, setTaskDescription] = useDraftState(`${D}taskDescription`, '')
 
@@ -70,26 +75,19 @@ export function useTaskWizard(): UseTaskWizardReturn {
     return taskName.trim().length > 0 && taskDescription.trim().length > 0
   }, [taskName, taskDescription])
 
-  // Handle dataLevel change - reset taskType if needed
+  // Handle dataLevel change without treating data shape as an aggregation level.
   const handleSetDataLevel = useCallback((level: DataLevel) => {
     setDataLevel(level)
-    if (level === 'wsi' && taskType === 'segmentation') {
-      setTaskType('classification')
+    if (getTaskMetadata(taskType).dataType === level) {
+      return
     }
-    if (level === 'patch' && taskType === 'survival') {
-      setTaskType('classification')
-    }
+    setTaskType(level === 'wsi' ? 'wsi_classification' : 'patch_classification')
   }, [taskType, setDataLevel, setTaskType])
 
   const handleSetTaskType = useCallback((type: TaskType) => {
-    if (type === 'survival' && dataLevel === 'patch') {
-      return
-    }
-    if (type === 'segmentation' && dataLevel === 'wsi') {
-      return
-    }
     setTaskType(type)
-  }, [dataLevel, setTaskType])
+    setDataLevel(getTaskMetadata(type).dataType)
+  }, [setDataLevel, setTaskType])
 
   return {
     // Step navigation
@@ -123,4 +121,3 @@ export function useTaskWizard(): UseTaskWizardReturn {
     totalSteps,
   }
 }
-

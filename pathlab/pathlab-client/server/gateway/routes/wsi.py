@@ -31,7 +31,13 @@ from backend.database.repositories import (
     SegmentationAnnotationRepository,
     DatasetStatsRepository,
 )
+from backend.services.dataset_splits import DatasetSplitService
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
+from backend.common.split_generation import (
+    generate_split_assignments,
+    load_segmentation_multilabels,
+)
+from backend.ai.task_taxonomy import is_canonical_task_type, is_segmentation_task, is_survival_task
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import (
     require_pathologist_or_admin,
@@ -40,14 +46,10 @@ from backend.auth.dependencies import (
     get_user_id_filter,
     get_wsi_with_access,
 )
-from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
+from backend.storage import external_availability
 from backend.annotation.summary_cache import (
     load_dataset_annotation_summary_cache,
     is_dataset_annotation_summary_cache_valid,
-)
-from backend.annotation.coco_utils import (
-    merge_coco_datasets,
-    extract_coco_wsi_label_sets,
 )
 from ..dependencies import logger, storage_manager
 from ..models import (
@@ -108,6 +110,38 @@ def _get_wsi_data_type(wsi) -> str:
     return get_effective_wsi_data_type(wsi)
 
 
+def _attach_cached_availability(item: dict[str, Any], wsi_path: str | None = None) -> None:
+    if not external_availability.is_external_path(wsi_path):
+        return
+
+    wsi_id = item.get("wsi_id")
+    if not wsi_id:
+        return
+    item["availability"] = external_availability.get_wsi_availability(str(wsi_id))
+
+
+async def _attach_dataset_availability(
+    db: AsyncSession, datasets: List[dict[str, Any]]
+) -> None:
+    dataset_ids = [str(item["dataset_id"]) for item in datasets if item.get("dataset_id")]
+    refs_by_dataset = (
+        await DatasetRepository.get_external_wsi_path_refs_batch(db, dataset_ids)
+        if dataset_ids
+        else {}
+    )
+
+    for item in datasets:
+        dataset_id = item.get("dataset_id")
+        refs = refs_by_dataset.get(str(dataset_id), []) if dataset_id else []
+        external_wsi_ids = [str(ref["wsi_id"]) for ref in refs]
+        if not external_wsi_ids:
+            continue
+        item["availability"] = external_availability.roll_up_dataset_availability(
+            external_wsi_ids
+        )
+        item["availability"]["external_count"] = len(external_wsi_ids)
+
+
 def _is_split_stratification_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return isinstance(exc, (ValueError, NotFittedError)) and any(
@@ -126,7 +160,7 @@ def _is_split_stratification_error(exc: Exception) -> bool:
 
 def _build_export_fieldnames(task_type: str) -> List[str]:
     common = ["filename", "case_id", "age", "gender", "split"]
-    if task_type == "survival":
+    if is_survival_task(task_type):
         return [
             "filename",
             "event_time",
@@ -136,7 +170,7 @@ def _build_export_fieldnames(task_type: str) -> List[str]:
             "gender",
             "split",
         ]
-    if task_type == SEGMENTATION_TASK_TYPE:
+    if is_segmentation_task(task_type):
         return common
     return ["filename", "label", *common[1:]]
 
@@ -149,10 +183,10 @@ def _build_export_row(wsi, task_type: str, split_value: str) -> Dict[str, object
         "gender": wsi.gender or "",
         "split": split_value,
     }
-    if task_type == "survival":
+    if is_survival_task(task_type):
         row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
         row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
-    elif task_type != SEGMENTATION_TASK_TYPE:
+    elif not is_segmentation_task(task_type):
         row["label"] = wsi.label or ""
     return row
 
@@ -172,26 +206,33 @@ def _generate_split_assignments(
     test_ratio: float,
     segmentation_multilabels: Dict[str, Set[str]],
 ) -> tuple[Dict[str, str], bool]:
-    split_kwargs: Dict[str, object] = {
+    split_config: Dict[str, object] = {
         "strategy": strategy,
         "seed": seed,
+        "stratified": stratified,
     }
     if strategy == "k_fold":
-        split_kwargs["n_splits"] = n_splits
+        split_config["n_splits"] = n_splits
     else:
-        split_kwargs["ratios"] = {
+        split_config["ratios"] = {
             "train": train_ratio,
             "val": val_ratio,
             "test": test_ratio,
         }
 
-    if task_type == "survival":
+    survival_task = is_survival_task(task_type)
+    segmentation_task = is_segmentation_task(task_type)
+    splitter_task_type = (
+        "segmentation" if segmentation_task else "survival" if survival_task else "classification"
+    )
+
+    if survival_task:
         labels = {
             wsi.wsi_id: str(wsi.event_status)
             for wsi in wsis
             if wsi.event_status is not None
         }
-    elif task_type == SEGMENTATION_TASK_TYPE:
+    elif segmentation_task:
         labels = {}
     else:
         labels = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
@@ -199,44 +240,12 @@ def _generate_split_assignments(
     wsi_ids = [wsi.wsi_id for wsi in wsis]
 
     try:
-        if aggregation_level == "case":
-            case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
-            case_labels: Dict[str, str] = {}
-            for wsi in wsis:
-                case_id = wsi.case_id or wsi.wsi_id
-                if case_id in case_labels:
-                    continue
-                if task_type == "survival" and wsi.event_status is not None:
-                    case_labels[case_id] = str(wsi.event_status)
-                elif task_type != SEGMENTATION_TASK_TYPE and wsi.label:
-                    case_labels[case_id] = wsi.label
-            return (
-                split_case_dataset(
-                    wsi_ids=wsi_ids,
-                    case_id_map=case_id_map,
-                    multilabels=segmentation_multilabels
-                    if task_type == SEGMENTATION_TASK_TYPE
-                    else None,
-                    labels=case_labels
-                    if stratified and task_type != SEGMENTATION_TASK_TYPE
-                    else None,
-                    **split_kwargs,
-                ),
-                False,
-            )
-
-        return (
-            split_wsi_dataset(
-                wsi_ids=wsi_ids,
-                multilabels=segmentation_multilabels
-                if task_type == SEGMENTATION_TASK_TYPE
-                else None,
-                labels=labels
-                if stratified and task_type != SEGMENTATION_TASK_TYPE
-                else None,
-                **split_kwargs,
-            ),
-            False,
+        return generate_split_assignments(
+            wsis,
+            aggregation_level=aggregation_level,
+            task_type=splitter_task_type,
+            split_config=split_config,
+            segmentation_multilabels=segmentation_multilabels,
         )
     except Exception as exc:
         if _is_split_stratification_error(exc):
@@ -250,31 +259,16 @@ def _generate_split_assignments(
                 stratified,
                 exc,
             )
-            if aggregation_level == "case":
-                case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
-                return (
-                    split_case_dataset(
-                        wsi_ids=wsi_ids,
-                        case_id_map=case_id_map,
-                        multilabels=segmentation_multilabels
-                        if task_type == SEGMENTATION_TASK_TYPE
-                        else None,
-                        labels=None,
-                        **split_kwargs,
-                    ),
-                    True,
-                )
-            return (
-                split_wsi_dataset(
-                    wsi_ids=wsi_ids,
-                    multilabels=segmentation_multilabels
-                    if task_type == SEGMENTATION_TASK_TYPE
-                    else None,
-                    labels=None,
-                    **split_kwargs,
-                ),
-                True,
+            fallback_config = dict(split_config)
+            fallback_config["stratified"] = False
+            assignments, _ = generate_split_assignments(
+                wsis,
+                aggregation_level=aggregation_level,
+                task_type=splitter_task_type,
+                split_config=fallback_config,
+                segmentation_multilabels=segmentation_multilabels,
             )
+            return assignments, True
         raise
 
 
@@ -422,6 +416,7 @@ async def _serialize_dataset_wsi_items(
         item = wsi.to_summary_dict()
         item["data_type"] = dataset_data_type or _get_wsi_data_type(wsi)
         item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+        _attach_cached_availability(item, wsi.wsi_path)
         if annotation_presence:
             item["has_segmentation_annotation"] = annotation_presence.get(
                 wsi.wsi_id, False
@@ -445,9 +440,9 @@ async def list_wsi(
     ),
     page_size: int = Query(
         10,
-        ge=0,
+        ge=1,
         le=10000,
-        description="Number of case groups per page. 0 = return all (no pagination).",
+        description="Number of case groups per page.",
     ),
     sort_by: Optional[str] = Query(
         None,
@@ -484,44 +479,6 @@ async def list_wsi(
     is_admin = user.is_admin()
 
     if dataset_id is not None:
-        if page_size == 0:
-            # ---- No pagination: return ALL files in this dataset ----
-            wsi_slides = await WSIRepository.get_by_dataset(
-                db,
-                dataset_id,
-                skip=0,
-                limit=0,
-                user_id=user_id_filter,
-                data_type=data_type,
-                search=search,
-                elevated_dataset_ids=elevated_dataset_ids,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-            total = await WSIRepository.count_by_dataset(
-                db,
-                dataset_id,
-                user_id=user_id_filter,
-                data_type=data_type,
-                search=search,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-            items = await _serialize_dataset_wsi_items(
-                db,
-                dataset_id,
-                wsi_slides,
-                is_admin=is_admin,
-                user_id_str=user_id_str,
-            )
-            return {
-                "items": items,
-                "total": total,
-                "total_cases": 0,
-                "page": 1,
-                "page_size": 0,
-                "has_multi_slide_cases": False,
-            }
-
         # ---- Case-level pagination (dataset view) ----
         case_meta = await WSIRepository.count_cases_by_dataset(
             db,
@@ -562,45 +519,29 @@ async def list_wsi(
             "has_multi_slide_cases": case_meta["has_multi_slide_cases"],
         }
     else:
-        if page_size == 0:
-            # ---- No pagination: return ALL files ----
-            wsi_slides = await WSIRepository.get_all_with_dataset(
-                db,
-                skip=0,
-                limit=0,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-            total = await WSIRepository.count(
-                db,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-        else:
-            # ---- File-level pagination (all-datasets view) ----
-            skip = (page - 1) * page_size
-            wsi_slides = await WSIRepository.get_all_with_dataset(
-                db,
-                skip=skip,
-                limit=page_size,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
-            total = await WSIRepository.count(
-                db,
-                user_id=user_id_filter,
-                data_type=data_type,
-                elevated_dataset_ids=elevated_dataset_ids,
-            )
+        # ---- File-level pagination (all-datasets view) ----
+        skip = (page - 1) * page_size
+        wsi_slides = await WSIRepository.get_all_with_dataset(
+            db,
+            skip=skip,
+            limit=page_size,
+            user_id=user_id_filter,
+            data_type=data_type,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
+        total = await WSIRepository.count(
+            db,
+            user_id=user_id_filter,
+            data_type=data_type,
+            elevated_dataset_ids=elevated_dataset_ids,
+        )
 
         items = []
         for wsi in wsi_slides:
             item = wsi.to_summary_dict()
             item["data_type"] = _get_wsi_data_type(wsi)
             item["can_delete"] = is_admin or (wsi.user_id == user_id_str)
+            _attach_cached_availability(item, wsi.wsi_path)
             items.append(item)
 
         return {
@@ -661,14 +602,17 @@ async def list_datasets(
     source_organ: Optional[str] = Query(
         None, description="Filter by normalized source organ"
     ),
+    is_public: Optional[bool] = Query(
+        None, description="Filter by dataset visibility"
+    ),
     page: int = Query(
-        1, ge=1, description="Page number (1-based). Ignored when page_size=0."
+        1, ge=1, description="Page number (1-based)."
     ),
     page_size: int = Query(
-        0,
-        ge=0,
+        20,
+        ge=1,
         le=100,
-        description="Datasets per page. 0 = return all (legacy behavior).",
+        description="Datasets per page.",
     ),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
@@ -686,8 +630,8 @@ async def list_datasets(
     Args:
         data_type: Optional filter - "wsi" for WSI files, "patch" for image files
         search: Optional dataset name search
-        page: 1-based page number when pagination is enabled
-        page_size: page size, 0 keeps legacy all-in-one behavior
+        page: 1-based page number
+        page_size: page size
 
     Returns:
         {
@@ -702,7 +646,7 @@ async def list_datasets(
     """
     # Get elevated dataset IDs for non-admin users
     elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
-    skip = 0 if page_size == 0 else (page - 1) * page_size
+    skip = (page - 1) * page_size
 
     datasets, total = await WSIRepository.get_datasets_with_total(
         db,
@@ -713,6 +657,7 @@ async def list_datasets(
         task_type=task_type,
         aggregation_level=aggregation_level,
         source_organ=source_organ,
+        is_public=is_public,
         skip=skip,
         limit=page_size,
     )
@@ -732,11 +677,11 @@ async def list_datasets(
         if owner_ids:
             result = await db.execute(
                 sql_select(
-                    cast(AuthUser.id, String), AuthUser.email, AuthUser.nickname
+                    cast(AuthUser.id, String), AuthUser.username, AuthUser.nickname
                 ).where(cast(AuthUser.id, String).in_(owner_ids))
             )
-            for uid, email, nickname in result.all():
-                username_map[uid] = nickname or email or None
+            for uid, username, nickname in result.all():
+                username_map[uid] = nickname or username or None
 
     items = []
     for dataset in datasets:
@@ -751,12 +696,45 @@ async def list_datasets(
             )
         items.append(dataset)
 
+    await _attach_dataset_availability(db, items)
+
     return {
         "items": items,
         "total": total,
-        "page": 1 if page_size == 0 else page,
+        "page": page,
         "page_size": page_size,
     }
+
+
+@router.get("/dataset-source-options")
+async def list_dataset_source_options(
+    data_type: Optional[str] = Query(
+        None,
+        description="Filter by data type: 'wsi' for WSI files, 'patch' for image files",
+    ),
+    task_type: Optional[str] = Query(None, description="Filter by task type"),
+    aggregation_level: Optional[str] = Query(
+        None, description="Filter by aggregation level"
+    ),
+    is_public: Optional[bool] = Query(
+        None, description="Filter by dataset visibility"
+    ),
+    user: User = Depends(current_active_user),
+    user_id_filter: Optional[str] = Depends(get_user_id_filter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return distinct visible dataset source organs for filter dropdowns."""
+    elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
+    items = await WSIRepository.get_dataset_source_options(
+        db,
+        data_type=data_type,
+        user_id=user_id_filter,
+        elevated_dataset_ids=elevated_dataset_ids,
+        task_type=task_type,
+        aggregation_level=aggregation_level,
+        is_public=is_public,
+    )
+    return {"items": items}
 
 
 @router.get("/datasets/{dataset_id}")
@@ -789,12 +767,14 @@ async def get_dataset_summary(
         from backend.auth.models import User as AuthUser
 
         result = await db.execute(
-            sql_select(AuthUser.email, AuthUser.nickname).where(
+            sql_select(AuthUser.username, AuthUser.nickname).where(
                 cast(AuthUser.id, String) == dataset["user_id"]
             )
         )
         owner = result.one_or_none()
-        dataset["username"] = (owner.nickname or owner.email) if owner else None
+        dataset["username"] = (owner.nickname or owner.username) if owner else None
+
+    await _attach_dataset_availability(db, [dataset])
 
     return dataset
 
@@ -823,9 +803,7 @@ async def rename_dataset(
             forbidden_detail="You don't have permission to rename this dataset",
         )
 
-        updated = await DatasetRepository.update(
-            db, req.dataset_id, {"name": req.new_name}
-        )
+        updated = await DatasetRepository.update(db, req.dataset_id, name=req.new_name)
         await db.commit()
         await invalidate_chat_context(str(user.id))
         return {"message": "Dataset renamed successfully", "dataset": updated.to_dict()}
@@ -861,10 +839,10 @@ async def update_dataset_type(
     """
     try:
         # Validate task_type
-        if req.task_type not in ["classification", "survival", "segmentation"]:
+        if not is_canonical_task_type(req.task_type):
             raise HTTPException(
                 status_code=400,
-                detail="task_type must be 'classification', 'survival', or 'segmentation'",
+                detail="task_type must be one of the canonical training task ids",
             )
 
         # Check dataset exists (with data_group loaded)
@@ -885,7 +863,7 @@ async def update_dataset_type(
             )
         ensure_dataset_segmentation_contract(dataset, context="Dataset update")
 
-        if req.task_type == "segmentation":
+        if is_segmentation_task(req.task_type):
             ensure_segmentation_contract(
                 req.task_type,
                 current_data_group.data_type,
@@ -897,7 +875,7 @@ async def update_dataset_type(
         from sqlalchemy import update as sql_update
         from backend.database.models import WSISlide
 
-        if req.task_type == "survival":
+        if is_survival_task(req.task_type):
             # Set default event_time=0, event_status=0 for WSIs without event_time
             result = await db.execute(
                 sql_update(WSISlide)
@@ -907,7 +885,7 @@ async def update_dataset_type(
             )
             updated_count = result.rowcount
             message = f"Dataset type changed to survival. Set default event_time/status for {updated_count} slides."
-        elif req.task_type == SEGMENTATION_TASK_TYPE:
+        elif is_segmentation_task(req.task_type):
             result = await db.execute(
                 sql_update(WSISlide)
                 .where(WSISlide.dataset_id == dataset_id)
@@ -937,9 +915,7 @@ async def update_dataset_type(
         )
 
         # Update dataset's group_id
-        await DatasetRepository.update(
-            db, dataset_id, {"group_id": new_data_group.group_id}
-        )
+        await DatasetRepository.update(db, dataset_id, group_id=new_data_group.group_id)
 
         await db.commit()
         await invalidate_chat_context(str(user.id))
@@ -1014,7 +990,7 @@ async def update_dataset_data_level(
             dataset, context="Dataset data-level update"
         )
 
-        if current_group.task_type == "segmentation" and aggregation_level != "file":
+        if is_segmentation_task(current_group.task_type) and aggregation_level != "file":
             raise HTTPException(
                 status_code=400,
                 detail="Segmentation datasets must keep aggregation_level='file'",
@@ -1187,6 +1163,7 @@ async def get_wsi(
     meta["data_type"] = _get_wsi_data_type(wsi)
     # can_delete: True if admin or user owns the WSI
     meta["can_delete"] = user.is_admin() or (wsi.user_id == str(user.id))
+    _attach_cached_availability(meta, wsi.wsi_path)
 
     return {
         "wsi_id": wsi_id,
@@ -1489,81 +1466,50 @@ async def upload_dataset_splits(
             status_code=400, detail="Invalid CSV file: not valid UTF-8 encoding"
         )
 
-    # Parse CSV
-    try:
-        f = io.StringIO(text)
-        reader = csv.DictReader(f)
+    rows, filename_key, split_key = DatasetSplitService.parse_csv_assignments(text)
 
-        # Check columns exist
-        if not reader.fieldnames:
-            raise HTTPException(
-                status_code=400, detail="CSV is empty or has no header row"
-            )
-
-        # Identify filename column (required)
-        filename_key = next(
-            (
-                h
-                for h in reader.fieldnames
-                if h.strip().lower() in ["filename", "file_name", "original_filename"]
-            ),
-            None,
-        )
-        if not filename_key:
-            raise HTTPException(
-                status_code=400, detail="CSV must contain 'filename' column"
-            )
-
-        # Identify split column (optional)
-        split_key = next(
-            (h for h in reader.fieldnames if h.strip().lower() == "split"), None
-        )
-
-        rows = list(reader)
-        if not rows:
-            raise HTTPException(status_code=400, detail="CSV has no data rows")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
-
-    # Validate split values (only if split column exists)
-    valid_splits = {"train", "val", "validation", "test"}
-    if split_key:
-        for i, row in enumerate(rows, start=2):  # start=2 because row 1 is header
-            split_val = row.get(split_key, "").strip().lower()
-            if split_val and split_val not in valid_splits:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test",
-                )
-
-    # Validate dataset exists
+    # Validate dataset exists and that public readers can create only their own overrides.
     dataset = await get_dataset_with_access(
         dataset_id,
         user,
         db,
-        require_owner=True,
+        require_owner=False,
         not_found_detail=f"Dataset not found: {dataset_id}",
         forbidden_detail="You don't have permission to modify this dataset",
     )
+    user_id_str = str(user.id)
+    is_public_dataset = bool(getattr(dataset, "is_public", False))
+    is_owner_or_admin = bool(user.is_admin()) or str(dataset.user_id) == user_id_str
+    if not is_owner_or_admin and not is_public_dataset:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the dataset owner or an admin can modify private dataset splits",
+        )
 
-    # Get existing WSIs for mapping (only user's WSIs if not admin)
-    wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=user_id_filter)
+    # Public override uploads must match all dataset slides, not only the uploader's slides.
+    wsi_user_filter = None if not is_owner_or_admin else user_id_filter
+    wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=wsi_user_filter)
     if not wsis:
         raise HTTPException(
             status_code=404, detail=f"No slides found in dataset: {dataset_id}"
         )
-
-    # Create lookup map: original filename -> WSI object
-    filename_map = {w.original_filename: w for w in wsis}
+    has_csv_split_values = bool(
+        split_key and any(row.get(split_key, "").strip() for row in rows)
+    )
+    has_baseline_splits = any(getattr(wsi, "split", None) for wsi in wsis)
+    should_initialize_public_baseline = (
+        not is_owner_or_admin
+        and is_public_dataset
+        and has_csv_split_values
+        and not has_baseline_splits
+    )
+    target_user_id = None if is_owner_or_admin or should_initialize_public_baseline else user_id_str
 
     # Validate case-level + survival: all slides in a case must have same event_time/event_status
     # Access aggregation_level and task_type through the DataGroup relationship
     data_group = dataset.data_group
     aggregation_level = data_group.aggregation_level if data_group else "file"
-    task_type = data_group.task_type if data_group else "classification"
+    task_type = data_group.task_type if data_group else "wsi_classification"
     if task_type == SEGMENTATION_TASK_TYPE:
         label_key = (
             next((h for h in rows[0].keys() if h.strip().lower() == "label"), None)
@@ -1587,7 +1533,7 @@ async def upload_dataset_splits(
                         f"Invalid rows: {', '.join(invalid_rows)}"
                     ),
                 )
-    if aggregation_level == "case" and task_type == "survival":
+    if aggregation_level == "case" and is_survival_task(task_type):
         # Group rows by case_id to check for consistency
         case_groups = {}  # case_id -> [(event_time, event_status, filename), ...]
         case_id_key = (
@@ -1672,93 +1618,35 @@ async def upload_dataset_splits(
                 )
                 raise HTTPException(status_code=400, detail=error_msg)
 
-    updated_count = 0
-    not_found_files = []
-
-    for row in rows:
-        fname = row.get(filename_key, "").strip()
-        if not fname:
-            continue
-
-        target_wsi = filename_map.get(fname)
-
-        if not target_wsi:
-            not_found_files.append(fname)
-            continue
-
-        # Update split (only if split column exists)
-        if split_key:
-            split_val = row.get(split_key, "").strip().lower()
-            if split_val:
-                if split_val == "validation":
-                    split_val = "val"
-                target_wsi.split = split_val
-
-        # Update other metadata if present
-        for key, val in row.items():
-            norm_key = key.strip().lower()
-            if not val:
-                continue
-
-            val = val.strip()
-            if norm_key == "label":
-                if task_type == SEGMENTATION_TASK_TYPE:
-                    continue
-                target_wsi.label = val
-            elif norm_key == "case_id":
-                target_wsi.case_id = val
-            elif norm_key == "age":
-                if val.isdigit():
-                    target_wsi.age = int(val)
-            elif norm_key == "gender":
-                target_wsi.gender = val
-            elif norm_key == "event_time":
-                try:
-                    target_wsi.event_time = float(val)
-                except (ValueError, TypeError):
-                    pass
-            elif norm_key == "event_status":
-                if val in ["0", "1"]:
-                    target_wsi.event_status = int(val)
-
-        updated_count += 1
-
-    # Auto-create val split if empty
-    # Count splits after update
-    train_wsis = [w for w in wsis if w.split == "train"]
-    val_wsis = [w for w in wsis if w.split == "val"]
-
-    auto_val_count = 0
-    if len(val_wsis) == 0 and len(train_wsis) > 0:
-        import random
-
-        n_val = max(1, int(len(train_wsis) * 0.1))
-        # Shuffle and select
-        random.shuffle(train_wsis)
-        for i in range(min(n_val, len(train_wsis))):
-            train_wsis[i].split = "val"
-            auto_val_count += 1
+    split_result = await DatasetSplitService.apply_csv_splits(
+        db=db,
+        dataset_id=dataset_id,
+        slides=wsis,
+        csv_text=text,
+        task_type=task_type,
+        target_user_id=target_user_id,
+    )
+    if split_result.auto_val_count > 0:
         logger.info(
-            f"Auto-created val split: moved {auto_val_count} samples from train to val"
+            f"Auto-created val split: moved {split_result.auto_val_count} samples from train to val"
         )
-
     await db.commit()
     await invalidate_chat_context(str(user.id))
 
     # Build response message
-    message = f"Successfully updated {updated_count} slides from CSV"
-    if auto_val_count > 0:
-        message += f". Auto-assigned {auto_val_count} samples from train to val (10%)"
-    if not_found_files:
-        message += f". Warning: {len(not_found_files)} files not found in dataset"
+    message = f"Successfully updated {split_result.updated_count} slides from CSV"
+    if split_result.auto_val_count > 0:
+        message += f". Auto-assigned {split_result.auto_val_count} samples from train to val (10%)"
+    if split_result.not_found_files:
+        message += f". Warning: {len(split_result.not_found_files)} files not found in dataset"
 
     return {
         "message": message,
-        "updated_count": updated_count,
-        "auto_val_count": auto_val_count,
-        "not_found_count": len(not_found_files),
-        "not_found_files": not_found_files[:10]
-        if not_found_files
+        "updated_count": split_result.updated_count,
+        "auto_val_count": split_result.auto_val_count,
+        "not_found_count": len(split_result.not_found_files),
+        "not_found_files": split_result.not_found_files[:10]
+        if split_result.not_found_files
         else [],  # Return first 10 for debugging
     }
 
@@ -1772,7 +1660,7 @@ async def export_dataset_labels(
     strategy: Literal["random", "k_fold"] = Query(
         "random", description="Split strategy for generated splits"
     ),
-    n_splits: int = Query(5, ge=2, description="Number of folds when strategy=k_fold"),
+    n_splits: int = Query(5, ge=2, le=20, description="Number of folds when strategy=k_fold"),
     seed: int = Query(42, description="Random seed for split generation"),
     stratified: bool = Query(
         True, description="Use stratified split (by label or event_status)"
@@ -1811,7 +1699,7 @@ async def export_dataset_labels(
     aggregation_level = (
         dataset.data_group.aggregation_level if dataset.data_group else "file"
     )
-    task_type = dataset.data_group.task_type if dataset.data_group else "classification"
+    task_type = dataset.data_group.task_type if dataset.data_group else "wsi_classification"
 
     # Get all WSI slides in dataset
     wsis = await WSIRepository.get_by_dataset(db, dataset_id, skip=0, limit=0)
@@ -1831,12 +1719,6 @@ async def export_dataset_labels(
         splits = {wsi.wsi_id: wsi.split or "unknown" for wsi in wsis}
         logger.info(f"Exporting dataset {dataset_id} with predefined splits")
     elif generate_split:
-        if strategy == "k_fold" and task_type == SEGMENTATION_TASK_TYPE:
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation export does not support k-fold splits",
-            )
-
         if strategy == "random":
             total_ratio = train_ratio + val_ratio + test_ratio
             if abs(total_ratio - 1.0) > 0.01:
@@ -1853,10 +1735,19 @@ async def export_dataset_labels(
 
         segmentation_multilabels: Dict[str, Set[str]] = {}
         if task_type == SEGMENTATION_TASK_TYPE:
-            segmentation_multilabels = await _load_segmentation_multilabels(
-                db, dataset_id, wsis
-            )
+            _, segmentation_multilabels = await load_segmentation_multilabels(db, wsis)
 
+        split_config = {
+            "strategy": strategy,
+            "n_splits": n_splits,
+            "seed": seed,
+            "stratified": stratified,
+            "ratios": {
+                "train": train_ratio,
+                "val": val_ratio,
+                "test": test_ratio,
+            },
+        }
         splits, split_fallback_applied = _generate_split_assignments(
             wsis,
             dataset_id=dataset_id,

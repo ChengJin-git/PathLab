@@ -1,6 +1,6 @@
 # PathLab Frontend Source
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 `src/renderer/src` 是当前 React 应用的真实源码目录。
 
@@ -11,11 +11,13 @@ src/
 ├── App.tsx                 # 路由入口
 ├── main.tsx                # BrowserRouter / HashRouter 选择、Context 装配、PWA 注册
 ├── config.ts               # Gateway / Preprocessing / AI 地址解析
+├── i18n.ts                 # i18next 初始化
 ├── api/                    # 按业务拆分的 API 客户端
 ├── components/             # 可复用 UI、聊天、阅片、结果、设置等组件
 ├── contexts/               # Auth / BackgroundTask / Toast 状态
 ├── constants/              # 文件类型、指标、训练等常量
-├── lib/                    # hooks 与辅助工具
+├── hooks/                  # 独立 React Hook 模块
+├── lib/                    # 工具函数与辅助逻辑
 ├── locales/                # `en-US` / `zh-CN` / `zh-HK`
 ├── pages/                  # 页面级组件
 └── types/                  # 类型声明
@@ -23,20 +25,20 @@ src/
 
 ## 当前路由
 
-`App.tsx` 中当前有 14 个主路由入口，外加 1 个兜底 `*` 路由：
+`App.tsx` 中当前定义这些主路由入口，外加 1 个兜底 `*` 路由：
 
 - 公开页：`/`、`/login`
 - 受保护页面：
   - `/dashboard`
   - `/dashboard/:conversationId`
   - `/tools`
-  - `/settings`
-  - `/task-setup`
+  - `/settings`（requireAdmin）
+  - `/task-setup`（requireGpu）
   - `/task-list`
   - `/task/:task_id`
   - `/wsi-list`
   - `/register`
-  - `/results`
+  - `/results`（requireGpu）
   - `/reports`
   - `/wsi/:wsi_id`
 
@@ -49,16 +51,17 @@ src/
 - `main.tsx` 会先调用 `initializeApiConfig()`，优先从 preload / Electron IPC 获取全部后端端口
 - `config.ts` 优先走 `getServicePorts()` / `onServicePorts()`，同时兼容只暴露 `gateway-port` 的旧桥接
 - 收到端口更新时会调用 `updateApiBase()`，刷新 `API_BASE` / `PREPROCESSING_BASE` / `AI_BASE`
-- 运行时组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
+- 运行时组合 `QueryClientProvider`、`TooltipProvider`、`ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
 - 浏览器模式会注册 Service Worker；Electron 模式不会注册
 
 ## API 客户端现状
 
-旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见 **20 个 API 模块文件**，包括：
+旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前 API 模块以 `api/*.ts` 为准，核心业务模块包括：
 
 - `api/analysis.ts`
 - `api/annotation.ts`
 - `api/auth.ts`
+- `api/batchInference.ts`（无标签数据集批量推理）
 - `api/chat.ts`
 - `api/export.ts`
 - `api/feedback.ts`
@@ -94,6 +97,7 @@ src/
 - `charts/`（分析图表组件）
 - `chat/`
 - `common/`（语言切换、音频可视化等公共 UI 组件）
+- `landing/`
 - `legal/`（隐私政策、免责声明等法律文本内联链接）
 - `list/`
 - `results/`

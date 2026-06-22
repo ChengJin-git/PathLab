@@ -3,9 +3,8 @@ DataGroupRepository - Data Access Layer
 """
 
 import logging
-from datetime import datetime
-from typing import List, Optional, Dict, Any
-from sqlalchemy import select, delete, insert, update
+from typing import Optional
+from sqlalchemy import select, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,36 +20,51 @@ from ..models import (
     TrainingTaskWSI,
     TrainedModel,
     TrainingLog,
-    utc_now,
 )
+from ...ai.task_taxonomy import get_task_metadata, normalize_task_type, validate_task_axes
 from .base import BaseRepository
 
 
 class DataGroupRepository(BaseRepository[DataGroup]):
     """Repository for DataGroup operations"""
 
-    model = DataGroup
-    pk_field = "group_id"
+    model: type[DataGroup] = DataGroup
+    pk_field: str = "group_id"
 
-    @staticmethod
+    @classmethod
     async def create(
+        cls,
         db: AsyncSession,
-        group_id: str,
-        name: str,
-        data_type: str,
-        aggregation_level: str,
-        task_type: str,
-        description: str = None,
+        **kwargs,
     ) -> DataGroup:
         """Create a new data group record"""
-        data_group = DataGroup(
-            group_id=group_id,
-            name=name,
+        group_id = kwargs["group_id"]
+        name = kwargs["name"]
+        data_type = kwargs["data_type"]
+        aggregation_level = kwargs["aggregation_level"]
+        task_type = kwargs["task_type"]
+        description = kwargs.get("description")
+
+        canonical_task_type = normalize_task_type(
+            task_type=task_type,
             data_type=data_type,
             aggregation_level=aggregation_level,
-            task_type=task_type,
-            description=description,
         )
+        validate_task_axes(
+            task_type=canonical_task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+
+        payload = {
+            "group_id": group_id,
+            "name": name,
+            "data_type": data_type,
+            "aggregation_level": aggregation_level,
+            "task_type": canonical_task_type,
+            "description": description,
+        }
+        data_group = cls.model(**payload)
         db.add(data_group)
         await db.flush()
         await db.refresh(data_group)
@@ -61,11 +75,22 @@ class DataGroupRepository(BaseRepository[DataGroup]):
         db: AsyncSession, data_type: str, aggregation_level: str, task_type: str
     ) -> Optional[DataGroup]:
         """Get data group by unique combination of data_type, aggregation_level, task_type"""
+        canonical_task_type = normalize_task_type(
+            task_type=task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+        validate_task_axes(
+            task_type=canonical_task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+
         result = await db.execute(
             select(DataGroup).where(
                 DataGroup.data_type == data_type,
                 DataGroup.aggregation_level == aggregation_level,
-                DataGroup.task_type == task_type,
+                DataGroup.task_type == canonical_task_type,
             )
         )
         return result.scalar_one_or_none()
@@ -76,8 +101,8 @@ class DataGroupRepository(BaseRepository[DataGroup]):
         data_type: str,
         aggregation_level: str,
         task_type: str,
-        name: str = None,
-        description: str = None,
+        name: str | None = None,
+        description: str | None = None,
     ) -> DataGroup:
         """Get existing data group by combination or create new one with UUID.
 
@@ -87,45 +112,57 @@ class DataGroupRepository(BaseRepository[DataGroup]):
         """
         import uuid
 
+        canonical_task_type = normalize_task_type(
+            task_type=task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+        validate_task_axes(
+            task_type=canonical_task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+
         existing = await DataGroupRepository.get_by_combination(
-            db, data_type, aggregation_level, task_type
+            db, data_type, aggregation_level, canonical_task_type
         )
         if existing:
             return existing
 
         # Auto-generate name if not provided
         if name is None:
-            name = f"{data_type.upper()} {aggregation_level.capitalize()}-level {task_type.capitalize()}"
+            canonical_label = get_task_metadata(canonical_task_type).label
+            name = f"{data_type.upper()} {aggregation_level.capitalize()}-level {canonical_label}"
 
         group_id = str(uuid.uuid4())
         try:
             async with db.begin_nested():
                 return await DataGroupRepository.create(
                     db,
-                    group_id,
-                    name,
-                    data_type,
-                    aggregation_level,
-                    task_type,
-                    description,
+                    group_id=group_id,
+                    name=name,
+                    data_type=data_type,
+                    aggregation_level=aggregation_level,
+                    task_type=canonical_task_type,
+                    description=description,
                 )
         except IntegrityError:
             # Another concurrent request created the same combination — re-query
             logger.debug(
-                f"DataGroup concurrent insert detected for ({data_type}, {aggregation_level}, {task_type}), re-querying"
+                f"DataGroup concurrent insert detected for ({data_type}, {aggregation_level}, {canonical_task_type}), re-querying"
             )
             existing = await DataGroupRepository.get_by_combination(
-                db, data_type, aggregation_level, task_type
+                db, data_type, aggregation_level, canonical_task_type
             )
             if existing:
                 return existing
             raise  # Should not happen — re-raise if still not found
 
     @staticmethod
-    async def get_all(db: AsyncSession) -> List[DataGroup]:
+    async def get_all(db: AsyncSession) -> list[DataGroup]:
         """Get all data groups"""
         result = await db.execute(select(DataGroup).order_by(DataGroup.name))
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
     async def delete(db: AsyncSession, group_id: str) -> bool:

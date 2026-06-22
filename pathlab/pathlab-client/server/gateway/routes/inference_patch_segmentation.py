@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast as type_cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.config import Config
+from backend.ai.result_store import AIResultStore, CAM_ARTIFACT, PRED_MASK_ARTIFACT
 from backend.database.repositories import WSIRepository
 
 from .analysis_utils import (
@@ -233,8 +235,15 @@ async def _run_inference_patch_segmentation(
     if deleted_count > 0:
         logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
 
-    # Discover COCO annotations for ground truth metrics
-    def _discover_annotations():
+    def _resolve_annotations_from_config() -> tuple[Optional[str], Optional[str]]:
+        test_cfg = (model_config.get("dataset") or {}).get("test", {})
+        ann_path = test_cfg.get("annotations_path")
+        img_dir = test_cfg.get("image_dir")
+        if ann_path and Path(ann_path).exists():
+            return ann_path, img_dir
+        return None, None
+
+    def _discover_annotations() -> tuple[Optional[str], Optional[str]]:
         from pathlib import Path as _Path
 
         image_dirs = set()
@@ -259,17 +268,24 @@ async def _run_inference_patch_segmentation(
                         continue
         return None, None
 
-    annotations_path, annotations_img_dir = await asyncio.to_thread(
-        _discover_annotations
-    )
-    has_annotations = annotations_path is not None
-
-    if has_annotations:
-        logger.info(f"Found COCO annotations: {annotations_path}")
-    else:
+    annotations_path, annotations_img_dir = _resolve_annotations_from_config()
+    if annotations_path:
         logger.info(
-            "No COCO annotations found — running inference only (no per-image metrics)"
+            f"Using test-split annotations from model config: {annotations_path}"
         )
+    else:
+        annotations_path, annotations_img_dir = await asyncio.to_thread(
+            _discover_annotations
+        )
+        if annotations_path:
+            logger.info(
+                f"Found COCO annotations via filesystem scan: {annotations_path}"
+            )
+        else:
+            logger.info(
+                "No COCO annotations found — running inference only (no per-image metrics)"
+            )
+    has_annotations = annotations_path is not None
 
     # Run inference
     val_transform = get_transforms(
@@ -278,7 +294,7 @@ async def _run_inference_patch_segmentation(
         normalization_mean=norm_mean,
         normalization_std=norm_std,
     )
-    ai_results_root = uploads_dir / "ai_results"
+    result_store = AIResultStore(uploads_dir)
     results_saved = 0
     total_items = len(image_paths)
 
@@ -337,26 +353,33 @@ async def _run_inference_patch_segmentation(
                             mode="multilabel",
                             threshold=None,
                         )
-                        iou_per_class = smp.metrics.iou_score(
-                            tp, fp, fn, tn, reduction="none"
+                        iou_per_class = torch.nan_to_num(
+                            smp.metrics.iou_score(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        dice_per_class = smp.metrics.f1_score(
-                            tp, fp, fn, tn, reduction="none"
+                        dice_per_class = torch.nan_to_num(
+                            smp.metrics.f1_score(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        precision_per_class = smp.metrics.precision(
-                            tp, fp, fn, tn, reduction="none"
+                        precision_per_class = torch.nan_to_num(
+                            smp.metrics.precision(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        recall_per_class = smp.metrics.recall(
-                            tp, fp, fn, tn, reduction="none"
+                        recall_per_class = torch.nan_to_num(
+                            smp.metrics.recall(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        accuracy = smp.metrics.accuracy(
-                            tp, fp, fn, tn, reduction="micro"
+                        accuracy = torch.nan_to_num(
+                            smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro"),
+                            nan=0.0,
                         )
-                        precision_val = smp.metrics.precision(
-                            tp, fp, fn, tn, reduction="micro"
+                        precision_val = torch.nan_to_num(
+                            smp.metrics.precision(tp, fp, fn, tn, reduction="micro"),
+                            nan=0.0,
                         )
-                        recall_val = smp.metrics.recall(
-                            tp, fp, fn, tn, reduction="micro"
+                        recall_val = torch.nan_to_num(
+                            smp.metrics.recall(tp, fp, fn, tn, reduction="micro"),
+                            nan=0.0,
                         )
 
                         per_image_metrics = _build_segmentation_per_image_metrics(
@@ -369,18 +392,12 @@ async def _run_inference_patch_segmentation(
                             recall_val,
                         )
 
-                    # Save prediction mask
-                    wsi_result_dir = ai_results_root / wsi_id
-                    wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
                     # Keep segmentation artifacts streamed to disk during inference to avoid
                     # retaining many large masks/CAMs in memory. Store binary masks as uint8
                     # to reduce write volume without changing viewer semantics.
                     pred_mask = (
                         preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
                     )
-                    mask_file = wsi_result_dir / f"train_{task_id}_pred_mask.npy"
-                    np.save(mask_file, pred_mask)
 
                     # Extract Grad-CAM for segmentation model
                     try:
@@ -431,9 +448,6 @@ async def _run_inference_patch_segmentation(
                             (img_tensor.shape[2], img_tensor.shape[3]), dtype=np.float32
                         )
 
-                    cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
-                    np.save(cam_file, cam_map)
-
                     # Save result JSON
                     result_data = {
                         "wsi_id": wsi_id,
@@ -443,15 +457,23 @@ async def _run_inference_patch_segmentation(
                         "num_classes": num_classes,
                         "class_names": class_names,
                         "image_size": list(original_size),
-                        "pred_mask_file": str(mask_file),
-                        "cam_file": str(cam_file),
+                        "pred_mask_file": None,
+                        "cam_file": None,
                         "cam_size": list(cam_map.shape),
                         "has_ground_truth": has_gt,
                         "metrics": per_image_metrics,
                     }
-                    result_file = wsi_result_dir / f"train_{task_id}_result.json"
-                    with open(result_file, "w", encoding="utf-8") as f:
-                        json.dump(result_data, f, ensure_ascii=False, indent=2)
+                    result_store.write_wsi_result(
+                        task_id=task_id,
+                        wsi_id=wsi_id,
+                        result=result_data,
+                        arrays={
+                            PRED_MASK_ARTIFACT: pred_mask,
+                            CAM_ARTIFACT: cam_map,
+                        },
+                        finalize=False,
+                        update_index=False,
+                    )
 
                     all_results.append(
                         {
@@ -459,8 +481,10 @@ async def _run_inference_patch_segmentation(
                             "metrics": per_image_metrics,
                             "has_ground_truth": has_gt,
                             "class_names": class_names,
-                            "pred_mask_file": str(mask_file),
-                            "result_file": str(result_file),
+                            "num_classes": num_classes,
+                            "image_size": list(original_size),
+                            "pred_mask_file": None,
+                            "result_file": None,
                         }
                     )
                     results_saved += 1
@@ -469,6 +493,8 @@ async def _run_inference_patch_segmentation(
                     logger.warning(f"Failed to process {wsi_id}: {e}")
                     continue
 
+        if results_saved:
+            result_store.write_task_bundle(task_id=task_id)
         return all_results
 
     all_results = await asyncio.to_thread(_run_inference)
@@ -490,6 +516,8 @@ async def _run_inference_patch_segmentation(
                     "aggregation_level": "file",
                     "has_ground_truth": r["has_ground_truth"],
                     "class_names": r.get("class_names", []),
+                    "num_classes": r.get("num_classes"),
+                    "image_size": r.get("image_size"),
                     "metrics": r["metrics"],
                     "pred_mask_file": r["pred_mask_file"],
                     "result_file": r["result_file"],

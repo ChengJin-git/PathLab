@@ -4,6 +4,7 @@ This MVP exposes a small, local-first control surface for PathScientist while
 keeping the heavy OpenHands/PathScientist imports lazy. Gateway startup should
 not fail just because the optional research-agent runtime is unavailable.
 """
+# pyright: reportImplicitRelativeImport=false, reportMissingImports=false
 from __future__ import annotations
 
 import asyncio
@@ -51,20 +52,12 @@ SERVER_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_LLM_PROFILE = "codex-relay"
 DEFAULT_LLM_WIRE_API = "completion"
-GATEWAY_SESSION_REGISTRY = "gateway_sessions.json"
-GATEWAY_EVENT_DIR = "gateway_events"
-GATEWAY_DELETED_SESSIONS = "gateway_deleted_sessions.json"
-GATEWAY_DELETE_AUDIT_LOG = "gateway_delete_audit.jsonl"
 LEGACY_RUNNING_STALE_SECONDS = int(os.environ.get("PATHSCIENTIST_LEGACY_RUNNING_STALE_SEC", "600"))
 TRAINING_LOG_ACTIVE_SECONDS = int(os.environ.get("PATHSCIENTIST_TRAINING_LOG_ACTIVE_SEC", "7200"))
 DEFAULT_DATASET_CACHE_DIR = ""
 DOWNLOAD_PROGRESS_POLL_SECONDS = float(os.environ.get("PATHSCIENTIST_DOWNLOAD_PROGRESS_POLL_SEC", "1"))
-_DB_HISTORY_ENABLED = os.environ.get("PATHSCIENTIST_DB_HISTORY", "1").strip().lower() not in {"0", "false", "no"}
 
 router = APIRouter(prefix="/pathscientist", tags=["pathscientist"])
-_REGISTRY_LOCK = threading.Lock()
-_EVENT_LOG_LOCK = threading.Lock()
-_DELETE_AUDIT_LOCK = threading.Lock()
 _WORKSPACE_SIZE_CACHE_LOCK = threading.Lock()
 _WORKSPACE_SIZE_CACHE_TTL_SECONDS = float(os.environ.get("PATHSCIENTIST_WORKSPACE_SIZE_TTL_SEC", "30"))
 _WORKSPACE_SIZE_CACHE: dict[str, tuple[float, int]] = {}
@@ -138,7 +131,6 @@ class SessionRecord:
             self.events.append(payload)
             self.updated_at = payload["ts"]
             self._condition.notify_all()
-        _append_gateway_session_event(self.session_id, payload)
         pathscientist_persistence.persist_event(
             session_id=self.session_id,
             event=payload,
@@ -291,7 +283,6 @@ class PathScientistSessionManager:
         )
         with self._lock:
             self._sessions[record.session_id] = record
-        _save_gateway_session_record(record)
         pathscientist_persistence.persist_session_created(
             session_id=record.session_id,
             user_id=record.user_id,
@@ -334,7 +325,6 @@ class PathScientistSessionManager:
             record._condition.notify_all()
         with self._lock:
             self._sessions[record.session_id] = record
-        _save_gateway_session_record(record)
         _persist_record_state(record, req)
         record.add_event({
             "kind": "session",
@@ -432,7 +422,6 @@ class PathScientistSessionManager:
             }
             record.updated_at = time.time()
             record._condition.notify_all()
-        _save_gateway_session_record(record)
         record.add_event({
             "kind": "state",
             "status": "interrupted",
@@ -452,15 +441,8 @@ class PathScientistSessionManager:
             raise SessionDeleteRejected("Stop this session before deleting it.")
 
         workspace_delete = _delete_session_workspace(record)
-        _append_gateway_delete_audit(record, workspace_delete)
         with self._lock:
             self._sessions.pop(session_id, None)
-        _remove_gateway_session_record(session_id)
-        _mark_gateway_session_deleted(
-            session_id=session_id,
-            conversation_id=record.conversation_id,
-        )
-        _delete_gateway_session_events(session_id)
         pathscientist_persistence.delete_session(session_id)
         return {
             "session_id": session_id,
@@ -470,34 +452,8 @@ class PathScientistSessionManager:
         }
 
     def list(self, *, include_persisted: bool = False) -> list[SessionRecord]:
-        self._maybe_hydrate_registry()
-        deleted = _load_deleted_gateway_sessions()
         with self._lock:
             records = list(self._sessions.values())
-
-        try:
-            legacy_records = _scan_persisted_conversations(
-                curated_only=not include_persisted,
-            )
-        except Exception as exc:
-            logger.debug("PathScientist disk hydration skipped: %s", exc)
-            legacy_records = []
-        seen_session_ids = {record.session_id for record in records}
-        seen_conversation_ids = {
-            _record_conversation_id(record)
-            for record in records
-            if _record_conversation_id(record)
-        }
-        records.extend(
-            record for record in legacy_records
-            if record.session_id not in seen_session_ids
-            and (
-                not _record_conversation_id(record)
-                or _record_conversation_id(record) not in seen_conversation_ids
-            )
-            and not _is_deleted_gateway_session(record, deleted)
-        )
-
         return sorted(
             records,
             key=lambda record: record.created_at,
@@ -505,22 +461,9 @@ class PathScientistSessionManager:
         )
 
     def get(self, session_id: str) -> SessionRecord | None:
-        deleted = _load_deleted_gateway_sessions()
         with self._lock:
             record = self._sessions.get(session_id)
-        if record is not None:
             return record
-        self._maybe_hydrate_registry()
-        with self._lock:
-            record = self._sessions.get(session_id)
-        if record is not None:
-            return record
-
-        # Details for curated legacy rows shown in the history list.
-        for legacy in _scan_persisted_conversations(curated_only=True):
-            if legacy.session_id == session_id and not _is_deleted_gateway_session(legacy, deleted):
-                return _hydrate_persisted_record_detail(legacy)
-        return None
 
     def register_hydrated(self, record: SessionRecord) -> SessionRecord:
         with self._lock:
@@ -530,24 +473,6 @@ class PathScientistSessionManager:
             self._sessions[record.session_id] = record
             return record
 
-    def _maybe_hydrate_registry(self) -> None:
-        """Populate stub SessionRecords from the Gateway-owned registry.
-
-        One-shot per manager instance. Safe to call repeatedly; only mutates
-        when the in-memory map is missing entries that exist in the registry.
-        """
-        if self._hydrated_registry:
-            return
-        stubs = _load_gateway_session_records()
-        deleted = _load_deleted_gateway_sessions()
-        deleted_session_ids, _deleted_conversation_ids = deleted
-        with self._lock:
-            for stub in stubs:
-                if stub.session_id in deleted_session_ids:
-                    continue
-                self._sessions.setdefault(stub.session_id, stub)
-            self._hydrated_registry = True
-
     def _run(
         self,
         record: SessionRecord,
@@ -555,7 +480,6 @@ class PathScientistSessionManager:
         config: Any,
     ) -> None:
         record.set_status("running", stage="starting")
-        _save_gateway_session_record(record)
         record.add_event({"kind": "session", "status": "running"})
         def emit_event(event: dict[str, Any]) -> None:
             if record.cancel_requested:
@@ -579,7 +503,6 @@ class PathScientistSessionManager:
                     stage="interrupted",
                     error=record.error or "Stopped by user from PathLab.",
                 )
-                _save_gateway_session_record(record)
                 _persist_record_state(record, req)
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
                 return
@@ -600,7 +523,6 @@ class PathScientistSessionManager:
                 stage=final_stage,
                 error=final_error or None,
             )
-            _save_gateway_session_record(record)
             _persist_record_state(record, req)
             record.add_event({"kind": "state", "state": state, "status": final_status})
         except SessionStopRequested as exc:
@@ -611,7 +533,6 @@ class PathScientistSessionManager:
                 "interrupted_reason": str(exc),
             }
             record.set_status("interrupted", stage="interrupted", error=str(exc))
-            _save_gateway_session_record(record)
             _persist_record_state(record, req)
             record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
         except Exception as exc:
@@ -623,12 +544,10 @@ class PathScientistSessionManager:
                     "interrupted_reason": "Stopped by user from PathLab.",
                 }
                 record.set_status("interrupted", stage="interrupted", error="Stopped by user from PathLab.")
-                _save_gateway_session_record(record)
                 _persist_record_state(record, req)
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
                 return
             record.set_status("failed", stage="failed", error=str(exc))
-            _save_gateway_session_record(record)
             record.state = {
                 **_record_state(record),
                 "stage": "failed",
@@ -706,7 +625,6 @@ class PathScientistSessionManager:
                 stage=final_stage,
                 error=final_error or None,
             )
-            _save_gateway_session_record(record)
             _persist_record_state(record, req)
             record.add_event({"kind": "state", "state": record.state, "status": record.status})
         except SessionStopRequested as exc:
@@ -717,7 +635,6 @@ class PathScientistSessionManager:
                 "interrupted_reason": str(exc),
             }
             record.set_status("interrupted", stage="interrupted", error=str(exc))
-            _save_gateway_session_record(record)
             _persist_record_state(record, req)
             record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
         except Exception as exc:
@@ -727,7 +644,6 @@ class PathScientistSessionManager:
                 "stage": "failed",
                 "error": str(exc),
             }
-            _save_gateway_session_record(record)
             _persist_record_state(record, req)
             record.add_event({"kind": "error", "message": str(exc)})
         finally:
@@ -1036,7 +952,6 @@ def _apply_live_state_event_to_record(record: SessionRecord, event: dict[str, An
             record.conversation_id = conversation_id
             should_persist = True
     if should_persist:
-        _save_gateway_session_record(record)
         _persist_record_state(record)
 
 
@@ -1378,7 +1293,6 @@ def _refresh_session_title(record: SessionRecord, config: Any | None = None) -> 
         record.title_pending = False
         record.updated_at = time.time()
         record._condition.notify_all()
-    _save_gateway_session_record(record)
     record.add_event({
         "kind": "session_title",
         "title": title,
@@ -1398,235 +1312,34 @@ def _queue_session_title_generation(record: SessionRecord, config: Any | None = 
     thread.start()
 
 
+def _resolve_autoresearch_root() -> Path:
+    return Config.get_autoresearch_dir().expanduser().resolve()
+
+
+def _resolve_autoresearch_sessions_root() -> Path:
+    return (_resolve_pathscientist_base_dir() / "autoresearch_sessions").expanduser().resolve()
+
+
+def _canonical_session_workspace_path(session_id: str) -> Path | None:
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return None
+    if session_id.startswith("session_"):
+        name = session_id
+    else:
+        name = f"session_{session_id}"
+    return _resolve_autoresearch_sessions_root() / name
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    resolved_path = path.expanduser().resolve(strict=False)
+    resolved_root = root.expanduser().resolve(strict=False)
+    return resolved_path == resolved_root or resolved_path.is_relative_to(resolved_root)
+
+
 def _resolve_pathscientist_base_dir() -> Path:
-    """Resolve the PathScientist base dir without importing heavy runtime pieces."""
-    try:
-        from backend.pathscientist.runtime.session import _resolve_base_dir
-
-        return Path(_resolve_base_dir()).expanduser().resolve()
-    except Exception:
-        default_base_dir = Path(__file__).resolve().parents[3] / "uploads" / "pathscientist"
-        return Path(
-            os.environ.get(
-                "PATHSCIENTIST_BASE_DIR",
-                str(default_base_dir),
-            )
-        ).expanduser().resolve()
-
-
-def _gateway_session_registry_path() -> Path:
-    base_dir = _resolve_pathscientist_base_dir()
-    base_dir.mkdir(parents=True, exist_ok=True)
-    return base_dir / GATEWAY_SESSION_REGISTRY
-
-
-def _gateway_deleted_sessions_path() -> Path:
-    return _gateway_session_registry_path().parent / GATEWAY_DELETED_SESSIONS
-
-
-def _gateway_delete_audit_log_path() -> Path:
-    return _gateway_session_registry_path().parent / GATEWAY_DELETE_AUDIT_LOG
-
-
-def _safe_session_filename(session_id: str) -> str:
-    safe = "".join(ch for ch in str(session_id) if ch.isalnum() or ch in {"-", "_"})
-    return (safe[:128] or "unknown") + ".jsonl"
-
-
-def _gateway_event_log_path(session_id: str) -> Path:
-    event_dir = _gateway_session_registry_path().parent / GATEWAY_EVENT_DIR
-    event_dir.mkdir(parents=True, exist_ok=True)
-    return event_dir / _safe_session_filename(session_id)
-
-
-def _append_gateway_session_event(session_id: str, event: dict[str, Any]) -> None:
-    """Append one projected Gateway SSE event to the per-session JSONL log."""
-    try:
-        path = _gateway_event_log_path(session_id)
-        line = json.dumps(event, ensure_ascii=False, default=str)
-        with _EVENT_LOG_LOCK:
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
-    except Exception as exc:
-        logger.debug("PathScientist event persistence skipped: %s", exc)
-
-
-def _load_gateway_session_events(session_id: str) -> list[dict[str, Any]]:
-    """Load persisted Gateway SSE events for one session."""
-    path = _gateway_event_log_path(session_id)
-    if not path.exists():
-        return []
-
-    events: list[dict[str, Any]] = []
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            payload = json.loads(line)
-            if isinstance(payload, dict):
-                events.append(payload)
-    except Exception as exc:
-        logger.debug("PathScientist event log unreadable for %s: %s", session_id, exc)
-        return []
-    return events
-
-
-def _delete_gateway_session_events(session_id: str) -> None:
-    try:
-        _gateway_event_log_path(session_id).unlink(missing_ok=True)
-    except Exception as exc:
-        logger.debug("PathScientist event log delete skipped for %s: %s", session_id, exc)
-
-
-def _registry_payload(record: SessionRecord) -> dict[str, Any]:
-    return {
-        **record.summary(),
-        "source": "pathlab-gateway",
-        "state": record.state,
-    }
-
-
-def _load_gateway_session_records() -> list[SessionRecord]:
-    """Load only sessions previously created through the Gateway UI/API."""
-    path = _gateway_session_registry_path()
-    if not path.exists():
-        return []
-
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.debug("PathScientist gateway session registry unreadable: %s", exc)
-        return []
-
-    items = payload.get("items", payload) if isinstance(payload, dict) else payload
-    if not isinstance(items, list):
-        return []
-
-    records: list[SessionRecord] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        session_id = str(item.get("session_id") or "")
-        if not session_id:
-            continue
-        status = str(item.get("status") or "completed")
-        stage = str(item.get("stage") or status)
-        error = str(item.get("error") or "")
-        if status in {"queued", "running"}:
-            item_state = item.get("state") if isinstance(item.get("state"), dict) else {}
-            workspace = _resolve_workspace_from_state({
-                **item_state,
-                "workspace_path": item.get("workspace_path") or item_state.get("workspace_path"),
-                "workspace_dir": item.get("workspace_path") or item_state.get("workspace_dir"),
-            })
-            if _workspace_has_recent_training_log(workspace):
-                stage = str(item_state.get("stage") or stage or "execution")
-                error = ""
-            else:
-                status = "interrupted"
-                stage = "interrupted"
-                error = error or "Gateway restarted before this session reached a final state."
-        title_pending = bool(item.get("title_pending")) and status in {"queued", "running"}
-        title = str(item.get("title") or "")
-        if not title and not title_pending:
-            title = _fallback_session_title(str(item.get("question") or ""))
-        try:
-            created_at = float(item.get("created_at") or time.time())
-        except (TypeError, ValueError):
-            created_at = time.time()
-        try:
-            updated_at = float(item.get("updated_at") or created_at)
-        except (TypeError, ValueError):
-            updated_at = created_at
-        record = SessionRecord(
-            session_id=session_id,
-            conversation_id=str(item.get("conversation_id") or ""),
-            question=str(item.get("question") or "(PathScientist session)")[:280],
-            model=str(item.get("model") or ""),
-            user_id=str(item.get("user_id") or ""),
-            title=title,
-            title_pending=title_pending,
-            status=status,
-            stage=stage,
-            created_at=created_at,
-            updated_at=updated_at,
-            error=error,
-            state=item.get("state") if isinstance(item.get("state"), dict) else {},
-        )
-        events = _load_gateway_session_events(session_id)
-        record.hydrate_events(events)
-        for event in events:
-            _apply_live_state_event_to_record(record, event)
-        records.append(record)
-    return records
-
-
-def _load_deleted_gateway_sessions() -> tuple[set[str], set[str]]:
-    path = _gateway_deleted_sessions_path()
-    if not path.exists():
-        return set(), set()
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.debug("PathScientist deleted-session registry unreadable: %s", exc)
-        return set(), set()
-    items = payload.get("items", payload) if isinstance(payload, dict) else payload
-    if not isinstance(items, list):
-        return set(), set()
-    session_ids: set[str] = set()
-    conversation_ids: set[str] = set()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        session_id = str(item.get("session_id") or "").strip()
-        conversation_id = str(item.get("conversation_id") or "").strip()
-        if session_id:
-            session_ids.add(session_id)
-        if conversation_id:
-            conversation_ids.add(conversation_id)
-    return session_ids, conversation_ids
-
-
-def _is_deleted_gateway_session(
-    record: SessionRecord,
-    deleted: tuple[set[str], set[str]] | None = None,
-    *,
-    match_conversation: bool = True,
-) -> bool:
-    session_ids, conversation_ids = deleted or _load_deleted_gateway_sessions()
-    if record.session_id in session_ids:
-        return True
-    return bool(
-        match_conversation
-        and record.conversation_id
-        and record.conversation_id in conversation_ids
-    )
-
-
-def _append_gateway_delete_audit(record: SessionRecord, workspace_delete: dict[str, Any]) -> None:
-    """Append an audit line for UI-triggered session/workspace deletion."""
-    payload = {
-        "ts": time.time(),
-        "action": "delete_session",
-        "source": "pathlab_ui",
-        "session_id": record.session_id,
-        "conversation_id": record.conversation_id,
-        "title": record.title,
-        "status_before_delete": record.status,
-        "stage_before_delete": record.stage,
-        "workspace_path": workspace_delete.get("workspace_path", ""),
-        "workspace_deleted": bool(workspace_delete.get("workspace_deleted")),
-        "workspace_delete_reason": workspace_delete.get("workspace_delete_reason", ""),
-    }
-    try:
-        path = _gateway_delete_audit_log_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(payload, ensure_ascii=False, default=str)
-        with _DELETE_AUDIT_LOCK:
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
-    except Exception as exc:
-        logger.debug("PathScientist delete audit skipped for %s: %s", record.session_id, exc)
+    """Resolve the web PathScientist base dir from the Settings uploads root."""
+    return _resolve_autoresearch_root()
 
 
 def _delete_session_workspace(record: SessionRecord) -> dict[str, Any]:
@@ -1638,6 +1351,13 @@ def _delete_session_workspace(record: SessionRecord) -> dict[str, Any]:
             "workspace_delete_reason": "No workspace found for this session.",
         }
 
+    if workspace.is_symlink():
+        return {
+            "workspace_deleted": False,
+            "workspace_path": str(workspace),
+            "workspace_delete_reason": "Workspace is a symlink; skipped for safety.",
+        }
+
     workspace = workspace.resolve(strict=False)
     base_dir = _resolve_pathscientist_base_dir().resolve(strict=False)
     payload: dict[str, Any] = {
@@ -1647,7 +1367,7 @@ def _delete_session_workspace(record: SessionRecord) -> dict[str, Any]:
     if workspace == base_dir or not workspace.is_relative_to(base_dir):
         payload["workspace_delete_reason"] = "Workspace is outside PathScientist base dir; skipped for safety."
         return payload
-    if workspace.name in {GATEWAY_EVENT_DIR, ".conversations", "conversations"}:
+    if workspace.name in {"gateway_events", ".conversations", "conversations"}:
         payload["workspace_delete_reason"] = "Workspace path looks like a shared PathScientist directory; skipped for safety."
         return payload
 
@@ -1667,118 +1387,6 @@ def _delete_session_workspace(record: SessionRecord) -> dict[str, Any]:
         _WORKSPACE_SIZE_CACHE.pop(str(workspace), None)
         _WORKSPACE_SIZE_PENDING.discard(str(workspace))
     return payload
-
-
-def _mark_gateway_session_deleted(*, session_id: str, conversation_id: str = "") -> None:
-    path = _gateway_deleted_sessions_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _REGISTRY_LOCK:
-        existing: list[dict[str, Any]] = []
-        if path.exists():
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                items = payload.get("items", payload) if isinstance(payload, dict) else payload
-                if isinstance(items, list):
-                    existing = [item for item in items if isinstance(item, dict)]
-            except Exception as exc:
-                logger.debug("PathScientist deleted-session registry reset: %s", exc)
-
-        by_session_id = {
-            str(item.get("session_id")): item
-            for item in existing
-            if item.get("session_id")
-        }
-        by_session_id[session_id] = {
-            "session_id": session_id,
-            "conversation_id": conversation_id,
-            "deleted_at": time.time(),
-        }
-        items = sorted(
-            by_session_id.values(),
-            key=lambda item: float(item.get("deleted_at") or 0),
-            reverse=True,
-        )
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps({"items": items}, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        tmp.replace(path)
-
-
-def _remove_gateway_session_record(session_id: str) -> None:
-    path = _gateway_session_registry_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _REGISTRY_LOCK:
-        existing: list[dict[str, Any]] = []
-        if path.exists():
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                items = payload.get("items", payload) if isinstance(payload, dict) else payload
-                if isinstance(items, list):
-                    existing = [item for item in items if isinstance(item, dict)]
-            except Exception as exc:
-                logger.debug("PathScientist gateway session registry reset: %s", exc)
-        items = [
-            item for item in existing
-            if str(item.get("session_id") or "") != session_id
-        ]
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps({"items": items}, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        tmp.replace(path)
-
-
-def _save_gateway_session_record(record: SessionRecord) -> None:
-    """Persist the compact session registry used by the web UI history list."""
-    path = _gateway_session_registry_path()
-    with _REGISTRY_LOCK:
-        existing: list[dict[str, Any]] = []
-        if path.exists():
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                items = payload.get("items", payload) if isinstance(payload, dict) else payload
-                if isinstance(items, list):
-                    existing = [item for item in items if isinstance(item, dict)]
-            except Exception as exc:
-                logger.debug("PathScientist gateway session registry reset: %s", exc)
-
-        by_session_id = {
-            str(item.get("session_id")): item
-            for item in existing
-            if item.get("session_id")
-        }
-        by_session_id[record.session_id] = _registry_payload(record)
-        items = sorted(
-            by_session_id.values(),
-            key=lambda item: float(item.get("created_at") or 0),
-            reverse=True,
-        )
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps({"items": items}, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-        tmp.replace(path)
-
-
-def _is_curated_persisted_summary(summary: dict[str, Any]) -> bool:
-    """Return True for legacy runs that are useful enough for default history."""
-    status = str(summary.get("execution_status") or "").lower()
-    try:
-        event_count = int(summary.get("event_count") or 0)
-    except (TypeError, ValueError):
-        event_count = 0
-
-    if status == "finished":
-        return event_count > 20
-    if status == "running":
-        # A restarted Gateway can see stale "running" conversations; require
-        # enough events to avoid showing empty boot stubs.
-        return event_count >= 6
-    return False
 
 
 def _timestamp_to_epoch(value: Any, *, fallback: float | None = None) -> float:
@@ -1803,37 +1411,6 @@ def _timestamp_to_epoch_or_none(value: Any) -> float | None:
         return None
 
 
-def _legacy_runtime_status(summary: dict[str, Any], *, now: float | None = None) -> LegacyRuntimeStatus:
-    """Normalize disk-only conversation status for the web history.
-
-    Persisted OpenHands conversations can remain marked ``running`` after the
-    user kills the agent process. Without a live Gateway thread we use the last
-    event timestamp as the source of truth and mark stale runs interrupted.
-    """
-    status = str(summary.get("execution_status") or "completed").strip().lower()
-    stage = status or "completed"
-    if status != "running":
-        return LegacyRuntimeStatus(status=status or "completed", stage=stage)
-
-    timestamp = _timestamp_to_epoch_or_none(summary.get("updated_at") or summary.get("started_at"))
-    now = time.time() if now is None else now
-    if timestamp is None:
-        return LegacyRuntimeStatus(
-            status="interrupted",
-            stage="interrupted",
-            error="No persisted updates were recorded; this run is not attached to a live Gateway process.",
-        )
-
-    age_seconds = max(0.0, now - timestamp)
-    if age_seconds > LEGACY_RUNNING_STALE_SECONDS:
-        return LegacyRuntimeStatus(
-            status="interrupted",
-            stage="interrupted",
-            error="No persisted updates; this run was likely stopped outside the web Gateway.",
-        )
-    return LegacyRuntimeStatus(status="running", stage="running")
-
-
 def _db_runtime_status(session: Any, *, now: float | None = None) -> LegacyRuntimeStatus:
     status = str(getattr(session, "status", None) or "completed").strip().lower()
     stage = str(getattr(session, "phase", None) or status or "completed").strip().lower()
@@ -1844,6 +1421,7 @@ def _db_runtime_status(session: Any, *, now: float | None = None) -> LegacyRunti
     recovery = getattr(session, "recovery_metadata", None)
     recovery = recovery if isinstance(recovery, dict) else {}
     workspace = _resolve_workspace_from_state({
+        "session_id": recovery.get("session_id"),
         "workspace_path": getattr(session, "workspace_path", None),
         "workspace_dir": getattr(session, "workspace_path", None),
         "recovery_metadata": recovery,
@@ -1868,155 +1446,6 @@ def _db_runtime_status(session: Any, *, now: float | None = None) -> LegacyRunti
             error="No recent database updates; this run was likely stopped outside the web Gateway.",
         )
     return LegacyRuntimeStatus(status=status, stage=stage or status)
-
-
-def _first_content_text(content: Any) -> str:
-    if isinstance(content, str):
-        return _safe_text(content)
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and item.get("text"):
-                parts.append(_safe_text(item.get("text")))
-            elif isinstance(item, str):
-                parts.append(_safe_text(item))
-        return "\n".join(part for part in parts if part)[:4000]
-    return _safe_text(content) if content else ""
-
-
-def _compact_persisted_observation(observation: Any) -> dict[str, Any]:
-    """Keep replay payloads readable; don't send giant file lists to the UI."""
-    if not isinstance(observation, dict):
-        return {"text": _safe_text(observation)}
-    compact: dict[str, Any] = {
-        "kind": observation.get("kind"),
-        "is_error": observation.get("is_error"),
-        "exit_code": observation.get("exit_code"),
-        "metrics": observation.get("metrics"),
-        "duration": observation.get("duration"),
-        "commit_hash": observation.get("commit_hash"),
-        "reverted_to": observation.get("reverted_to"),
-        "best_metric": observation.get("best_metric"),
-        "best_metric_name": observation.get("best_metric_name"),
-        "iteration": observation.get("iteration"),
-        "history": observation.get("history"),
-        "text": _first_content_text(observation.get("content")),
-    }
-    return {key: value for key, value in compact.items() if value not in (None, "", [])}
-
-
-def _project_persisted_openhands_event(
-    raw: dict[str, Any],
-    *,
-    iteration: int | None,
-) -> dict[str, Any] | None:
-    """Project a persisted OpenHands JSON event into the Gateway event schema."""
-    kind = str(raw.get("kind") or "")
-    tool_name = str(raw.get("tool_name") or "").strip()
-    base = {
-        "source": raw.get("source"),
-        "event_class": kind,
-        "raw_event_id": raw.get("id"),
-    }
-
-    if kind == "ActionEvent" and tool_name:
-        payload: dict[str, Any] = {
-            **base,
-            "kind": "tool_call",
-            "tool": tool_name,
-            "summary": _safe_text(raw.get("summary") or tool_name),
-            "action": _safe_dump(raw.get("action")),
-        }
-        if iteration is not None:
-            payload["iteration"] = iteration
-        return payload
-
-    if kind == "ObservationEvent" and tool_name:
-        observation = raw.get("observation")
-        compact = _compact_persisted_observation(observation)
-        payload = {
-            **base,
-            "kind": "tool_observation",
-            "tool": tool_name,
-            "exit_code": compact.get("exit_code"),
-            "observation": compact,
-        }
-        if raw.get("summary"):
-            payload["summary"] = _safe_text(raw.get("summary"))
-        observed_iteration = _coerce_iteration(compact.get("iteration"))
-        if observed_iteration is not None:
-            payload["iteration"] = observed_iteration
-        elif iteration is not None:
-            payload["iteration"] = iteration
-        return payload
-
-    if kind == "MessageEvent":
-        llm_message = raw.get("llm_message")
-        message = llm_message if isinstance(llm_message, dict) else {}
-        return {
-            **base,
-            "kind": "message",
-            "role": str(message.get("role") or raw.get("source") or "agent"),
-            "text": _first_content_text(message.get("content")),
-        }
-
-    if kind == "SystemPromptEvent":
-        return {
-            **base,
-            "kind": "message",
-            "role": "system",
-            "text": "PathScientist system prompt initialized",
-        }
-
-    if kind:
-        return {**base, "kind": "agent_event", "summary": kind}
-    return None
-
-
-def _load_persisted_conversation_events(
-    conversation_dir: Path,
-    *,
-    start_seq: int = 1,
-) -> list[dict[str, Any]]:
-    """Load legacy OpenHands events as normalized Gateway replay events."""
-    events_dir = conversation_dir / "events"
-    if not events_dir.is_dir():
-        return []
-
-    events: list[dict[str, Any]] = []
-    iteration = 0
-    for raw_path in sorted(events_dir.glob("event-*.json")):
-        try:
-            raw = json.loads(raw_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.debug("PathScientist legacy event unreadable %s: %s", raw_path, exc)
-            continue
-        if not isinstance(raw, dict):
-            continue
-
-        projected = _project_persisted_openhands_event(raw, iteration=iteration)
-        if projected is None:
-            continue
-        seq = start_seq + len(events)
-        event = _normalize_gateway_event(
-            {
-                "seq": seq,
-                "ts": _timestamp_to_epoch(raw.get("timestamp")),
-                **projected,
-            }
-        )
-        events.append(event)
-
-        observation = raw.get("observation")
-        if isinstance(observation, dict):
-            observed_iteration = _coerce_iteration(observation.get("iteration"))
-            if observed_iteration is not None:
-                iteration = observed_iteration
-            if raw.get("tool_name") in {"ratchet_commit", "ratchet_revert"}:
-                # The next experiment belongs to the next ratcheted attempt.
-                iteration += 1
-
-    return events
 
 
 def _db_datetime_to_epoch(value: Any, *, fallback: float | None = None) -> float:
@@ -2136,11 +1565,8 @@ async def _load_db_record(
     *,
     user: User | None = None,
     include_events: bool = True,
-    hydrate_disk: bool = True,
     register: bool = True,
 ) -> SessionRecord | None:
-    if not _DB_HISTORY_ENABLED:
-        return None
     try:
         async with safe_session() as db:
             owner_scope = _db_owner_scope_for_user(user)
@@ -2170,18 +1596,12 @@ async def _load_db_record(
 
     db_events = [_event_row_to_gateway_event(row) for row in event_rows]
     record = _db_session_to_record(session, db_events)
-    if hydrate_disk and record.conversation_id:
-        record = _hydrate_persisted_record_detail(record)
-        if db_events:
-            record.hydrate_events(db_events)
     if register:
         record = _SESSION_MANAGER.register_hydrated(record)
     return record
 
 
 async def _load_db_events(session_id: str, *, user: User | None = None) -> list[dict[str, Any]]:
-    if not _DB_HISTORY_ENABLED:
-        return []
     try:
         async with safe_session() as db:
             owner_scope = _db_owner_scope_for_user(user)
@@ -2213,8 +1633,6 @@ async def _load_db_session_list(
     include_persisted: bool,
     limit: int = 100,
 ) -> list[SessionRecord]:
-    if not _DB_HISTORY_ENABLED:
-        return []
     user_id = None if _user_is_admin(user) else str(getattr(user, "id", "") or "")
     if user is not None and not user_id and not _user_is_admin(user):
         return []
@@ -2313,8 +1731,6 @@ def _merge_session_records(*groups: list[SessionRecord]) -> list[SessionRecord]:
     conversation_seen: dict[str, str] = {}
     for group in groups:
         for record in group:
-            if _is_deleted_gateway_session(record, match_conversation=False):
-                continue
             existing_key = selected.get(record.session_id)
             if existing_key is None:
                 conv = _record_conversation_id(record)
@@ -2343,423 +1759,6 @@ def _record_rank(record: SessionRecord) -> int:
     if record.user_id:
         rank += 2
     return rank
-
-
-def _has_persisted_stage_context(summary: dict[str, Any]) -> bool:
-    return any(
-        summary.get(key)
-        for key in (
-            "research_question",
-            "research_summary",
-            "event_count",
-            "tracker_state",
-            "iteration_state",
-        )
-    )
-
-
-def _format_metric_value(value: Any) -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return ""
-    if number >= 10:
-        return f"{number:.2f}"
-    return f"{number:.4f}"
-
-
-def _load_research_session_from_conversation_dir(conversation_dir: Path) -> dict[str, Any]:
-    """Read the rich research_session payload stored in legacy base_state.json."""
-    try:
-        payload = json.loads((conversation_dir / "base_state.json").read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-    if not isinstance(payload, dict):
-        return {}
-    agent_state = payload.get("agent_state")
-    if not isinstance(agent_state, dict):
-        return {}
-    research_session = agent_state.get("research_session")
-    return research_session if isinstance(research_session, dict) else {}
-
-
-def _enrich_persisted_summary(
-    summary: dict[str, Any],
-    conversation_dir: Path,
-) -> dict[str, Any]:
-    """Merge detail-only persisted state into the compact history summary."""
-    research_session = _load_research_session_from_conversation_dir(conversation_dir)
-    if not research_session:
-        return summary
-    enriched = dict(summary)
-    enriched.setdefault("research_session", research_session)
-    objective = research_session.get("objective")
-    if isinstance(objective, dict) and objective.get("question"):
-        enriched.setdefault("research_question", objective.get("question"))
-    grounding = research_session.get("grounding")
-    if isinstance(grounding, dict):
-        enriched.setdefault("grounding", grounding)
-    return enriched
-
-
-def _owner_from_persisted_summary(summary: dict[str, Any]) -> str:
-    candidates: list[Any] = [
-        summary.get("user_id"),
-        summary.get("pathlab_user_id"),
-        summary.get("owner_user_id"),
-    ]
-    research_session = summary.get("research_session")
-    if isinstance(research_session, dict):
-        candidates.extend([
-            research_session.get("user_id"),
-            research_session.get("pathlab_user_id"),
-            research_session.get("owner_user_id"),
-        ])
-        recovery = research_session.get("recovery_metadata")
-        if isinstance(recovery, dict):
-            candidates.extend([
-                recovery.get("user_id"),
-                recovery.get("pathlab_user_id"),
-                recovery.get("owner_user_id"),
-            ])
-    recovery = summary.get("recovery_metadata")
-    if isinstance(recovery, dict):
-        candidates.extend([
-            recovery.get("user_id"),
-            recovery.get("pathlab_user_id"),
-            recovery.get("owner_user_id"),
-        ])
-    for value in candidates:
-        owner = str(value or "").strip()
-        if owner:
-            return owner
-    return ""
-
-
-def _read_nested_dict(container: dict[str, Any], *keys: str) -> dict[str, Any]:
-    current: Any = container
-    for key in keys:
-        if not isinstance(current, dict):
-            return {}
-        current = current.get(key)
-    return current if isinstance(current, dict) else {}
-
-
-def _display_token(value: Any) -> str:
-    return " ".join(str(value or "").replace("_", " ").split())
-
-
-def _display_sota_status(status: str) -> str:
-    normalized = str(status or "").strip().lower()
-    if normalized in {"cache_negative", "miss", "no_dataset_hint", "no_dataset"}:
-        return "no SOTA target found"
-    if normalized == "disabled":
-        return "SOTA lookup disabled"
-    if normalized == "error":
-        return "SOTA lookup error"
-    if normalized in {"cache_hit", "pwc_hit", "fulltext_llm_hit", "local_store_hit", "openalex_llm_hit"}:
-        return "SOTA target found"
-    return f"SOTA status {status}" if status else ""
-
-
-def _build_grounding_stage_summary(summary: dict[str, Any], metric_name: str) -> str:
-    """Describe what grounding decided, not the final execution result."""
-    research_session = _read_nested_dict(summary, "research_session")
-    objective = _read_nested_dict(research_session, "objective")
-    grounding = (
-        _read_nested_dict(research_session, "grounding")
-        or _read_nested_dict(summary, "grounding")
-    )
-    profile = _read_nested_dict(grounding, "task_profile")
-
-    selected_skill = str(grounding.get("selected_skill") or "").strip()
-    task_type = str(profile.get("task_type") or "").strip()
-    asset_level = str(profile.get("asset_level") or "").strip()
-    prediction_target = _display_token(profile.get("prediction_target"))
-    dataset = str(
-        objective.get("dataset_hint")
-        or grounding.get("dataset_hint_inferred")
-        or grounding.get("sota_dataset_used")
-        or ""
-    ).strip()
-    sota_status = str(grounding.get("sota_lookup_status") or "").strip()
-    sota_text = _display_sota_status(sota_status)
-    target_payload = grounding.get("sota_target")
-    target = target_payload if isinstance(target_payload, dict) else {}
-    target_value = _format_metric_value(target.get("metric_value"))
-
-    routed = selected_skill or task_type
-    if routed:
-        scope_bits = []
-        if asset_level:
-            scope_bits.append(f"{asset_level}-level")
-        if prediction_target:
-            scope_bits.append(prediction_target)
-        elif task_type and task_type != routed:
-            scope_bits.append(_display_token(task_type))
-        scope = " ".join(scope_bits)
-        dataset_text = f" on {dataset}" if dataset else ""
-        target_text = (
-            f"; SOTA target {metric_name}={target_value}"
-            if target_value
-            else f"; {sota_text}" if sota_text else ""
-        )
-        return f"Routed to {routed}{f' for {scope}' if scope else ''}{dataset_text}{target_text}."
-
-    return f"Objective grounded for {metric_name} evaluation."
-
-
-def _build_persisted_stage_events(
-    summary: dict[str, Any],
-    *,
-    start_seq: int = 1,
-) -> list[dict[str, Any]]:
-    """Synthesize stage breadcrumbs for legacy OpenHands-only event logs.
-
-    Older PathScientist runs persisted detailed OpenHands execution events but
-    not the orchestrator's high-level intake/grounding/acquisition milestones.
-    The UI stage cards need one normalized event per non-execution milestone.
-    """
-    if not _has_persisted_stage_context(summary):
-        return []
-
-    tracker_state = summary.get("tracker_state")
-    if not isinstance(tracker_state, dict):
-        tracker_state = {}
-    iteration_state = summary.get("iteration_state")
-    if not isinstance(iteration_state, dict):
-        iteration_state = {}
-
-    question = " ".join(str(summary.get("research_question") or "").split())
-    event_count = summary.get("event_count") or 0
-    metric_name = str(tracker_state.get("primary_metric") or "metric")
-    best_value = _format_metric_value(tracker_state.get("best_value"))
-    iteration_index = iteration_state.get("iteration_index") or tracker_state.get("iteration")
-    max_iterations = iteration_state.get("max_iterations")
-    status = str(summary.get("execution_status") or "completed")
-    has_summary = bool(str(summary.get("research_summary") or "").strip())
-    grounding_summary = _build_grounding_stage_summary(summary, metric_name)
-
-    metric_summary = (
-        f"best {metric_name}={best_value}"
-        if best_value
-        else f"primary metric: {metric_name}"
-    )
-    iteration_summary = (
-        f"{iteration_index}/{max_iterations} iterations"
-        if iteration_index and max_iterations
-        else f"{iteration_index} iterations"
-        if iteration_index
-        else "iteration budget prepared"
-    )
-    stage_summaries = [
-        (
-            "intake",
-            f"Research request captured: {question[:140]}"
-            if question
-            else "Research request captured.",
-        ),
-        ("grounding", grounding_summary),
-        (
-            "acquisition",
-            "Dataset and feature inputs prepared before execution.",
-        ),
-        ("pre_execution_ready", f"Execution contract ready: {iteration_summary}."),
-        ("review", f"Reviewed execution history; {metric_summary}."),
-        (
-            "synthesis",
-            "Session summary generated."
-            if has_summary
-            else "Synthesis reached from persisted run state.",
-        ),
-        (
-            "completed",
-            f"Legacy run marked {status}; {event_count} persisted OpenHands events available.",
-        ),
-    ]
-
-    started_ts = _timestamp_to_epoch(summary.get("started_at"), fallback=time.time())
-    updated_ts = _timestamp_to_epoch(summary.get("updated_at"), fallback=started_ts)
-    span = max(1.0, updated_ts - started_ts)
-
-    events: list[dict[str, Any]] = []
-    for index, (stage, text) in enumerate(stage_summaries):
-        ts = started_ts + (span * index / max(1, len(stage_summaries) - 1))
-        event = _normalize_gateway_event(
-            {
-                "seq": start_seq + len(events),
-                "ts": ts,
-                "kind": "stage_summary",
-                "stage": stage,
-                "source": "persisted_summary",
-                "summary": text,
-            }
-        )
-        events.append(event)
-    return events
-
-
-def _metric_value_from_history_entry(
-    entry: dict[str, Any],
-    metric_name: str,
-) -> float | None:
-    metrics = entry.get("metrics")
-    if not isinstance(metrics, dict):
-        return None
-    value = metrics.get(metric_name)
-    if value is None and metric_name == "auc":
-        value = metrics.get("AUC")
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _build_persisted_session_state(summary: dict[str, Any]) -> dict[str, Any]:
-    """Project legacy history summaries into the state shape the UI expects."""
-    research_session = summary.get("research_session")
-    if not isinstance(research_session, dict):
-        research_session = {}
-    tracker_state = summary.get("tracker_state")
-    if not isinstance(tracker_state, dict):
-        tracker_state = {}
-    iteration_state = summary.get("iteration_state")
-    if not isinstance(iteration_state, dict):
-        iteration_state = {}
-    metric_name = str(tracker_state.get("primary_metric") or "metric")
-    history = tracker_state.get("history")
-    if not isinstance(history, list):
-        history = iteration_state.get("history") if isinstance(iteration_state.get("history"), list) else []
-
-    run_history: list[dict[str, Any]] = []
-    for item in history:
-        if not isinstance(item, dict):
-            continue
-        metric_value = _metric_value_from_history_entry(item, metric_name)
-        run_history.append(
-            {
-                "iteration": item.get("iteration"),
-                "metric_name": metric_name,
-                "metric_value": metric_value,
-                "committed": bool(item.get("committed")),
-                "run_id": item.get("run_id") or "",
-                "metrics": item.get("metrics") if isinstance(item.get("metrics"), dict) else {},
-            }
-        )
-
-    execution_status = str(summary.get("execution_status") or "").strip()
-    research_stage = str(research_session.get("stage") or "").strip()
-    state_stage = (
-        research_stage
-        if execution_status in {"queued", "running"} and research_stage
-        else execution_status or research_stage or "completed"
-    )
-
-    state = {
-        "stage": state_stage,
-        "objective": {
-            "question": summary.get("research_question") or "",
-            "success_metric": metric_name,
-        },
-        "best_metric_value": tracker_state.get("best_value"),
-        "iteration_index": iteration_state.get("iteration_index") or tracker_state.get("iteration"),
-        "max_iterations": iteration_state.get("max_iterations"),
-        "run_history": run_history,
-        "persisted_summary": summary,
-    }
-    stage_history = research_session.get("stage_history")
-    if isinstance(stage_history, list):
-        state["stage_history"] = stage_history
-    if research_session.get("stage_started_at") is not None:
-        state["stage_started_at"] = research_session.get("stage_started_at")
-    for key in (
-        "task_profile",
-        "selected_dataset",
-        "data_readiness",
-        "execution_plan",
-    ):
-        value = research_session.get(key)
-        if isinstance(value, dict) and value:
-            state[key] = value
-    dataset_candidates = research_session.get("dataset_candidates")
-    if isinstance(dataset_candidates, list):
-        state["dataset_candidates"] = dataset_candidates
-    for key in ("dataset_manifest_path", "acquisition_status", "acquisition_notes"):
-        value = research_session.get(key)
-        if value not in (None, "", [], {}):
-            state[key] = value
-    grounding = research_session.get("grounding")
-    if not isinstance(grounding, dict):
-        grounding = summary.get("grounding")
-    if isinstance(grounding, dict) and grounding:
-        state["grounding"] = grounding
-    ui_run_summary = research_session.get("ui_run_summary")
-    if isinstance(ui_run_summary, dict):
-        state["ui_run_summary"] = ui_run_summary
-    latest_review = research_session.get("latest_review")
-    if isinstance(latest_review, dict):
-        state["latest_review"] = latest_review
-    review_history = research_session.get("review_history")
-    if isinstance(review_history, list):
-        state["review_history"] = review_history
-    if research_session.get("review_decision"):
-        state["review_decision"] = research_session.get("review_decision")
-    return {key: value for key, value in state.items() if value not in (None, "", [])}
-
-
-def _hydrate_persisted_record_detail(record: SessionRecord) -> SessionRecord:
-    """Attach replay events/state to a legacy disk-only session detail record."""
-    return _refresh_persisted_record_detail(record)
-
-
-def _refresh_persisted_record_detail(record: SessionRecord) -> SessionRecord:
-    """Reload a legacy disk-only session from its persisted conversation dir."""
-    try:
-        from backend.pathscientist.persistence.history import load_conversation_summary
-        from backend.pathscientist.persistence.layout import get_persistence_root
-        from backend.pathscientist.runtime.session import _resolve_base_dir
-    except Exception as exc:
-        logger.debug("PathScientist persistence import failed: %s", exc)
-        return record
-
-    summary = record.state.get("persisted_summary") if isinstance(record.state, dict) else None
-    conversation_dir = Path(get_persistence_root(_resolve_base_dir())) / record.conversation_id
-    if not conversation_dir.is_dir() and "-" in record.conversation_id:
-        conversation_dir = conversation_dir.with_name(record.conversation_id.replace("-", ""))
-    if conversation_dir.is_dir():
-        try:
-            loaded_summary = load_conversation_summary(conversation_dir)
-            if isinstance(summary, dict):
-                loaded_summary = {**summary, **loaded_summary}
-            summary = loaded_summary
-        except Exception as exc:
-            logger.debug("PathScientist summary refresh failed for %s: %s", record.conversation_id, exc)
-
-    stage_events: list[dict[str, Any]] = []
-    if isinstance(summary, dict):
-        summary = _enrich_persisted_summary(summary, conversation_dir)
-        record.state = _build_persisted_session_state(summary)
-        stage_events = _build_persisted_stage_events(summary)
-        runtime = _legacy_runtime_status(summary)
-        if runtime.status == "interrupted":
-            record.state["stage"] = "interrupted"
-            record.state["interrupted_reason"] = runtime.error
-        record.status = runtime.status
-        research = summary.get("research_session") if isinstance(summary.get("research_session"), dict) else {}
-        record.stage = runtime.stage if runtime.status == "interrupted" else str(research.get("stage") or runtime.stage)
-        record.error = runtime.error
-        record.updated_at = _timestamp_to_epoch(
-            summary.get("updated_at") or summary.get("started_at"),
-            fallback=record.updated_at,
-        )
-
-    events = stage_events + _load_persisted_conversation_events(
-        conversation_dir,
-        start_seq=len(stage_events) + 1,
-    )
-    if events:
-        record.hydrate_events(events)
-    return record
 
 
 def _canonical_conversation_uuid(conversation_id: str) -> str:
@@ -2831,85 +1830,6 @@ def _conversation_base_state_exists(
     state: dict[str, Any] | None = None,
 ) -> bool:
     return any((path / "base_state.json").is_file() for path in _candidate_conversation_dirs(conversation_id, state))
-
-
-def _scan_persisted_conversations(*, curated_only: bool = False) -> list[SessionRecord]:
-    """Build stub SessionRecords for every persisted conversation on disk.
-
-    Uses ``persistence.history.list_conversations`` to find every
-    ``<persistence_root>/<conv_uuid>/base_state.json``. Records hydrated here
-    are flagged ``status=completed`` (best-effort — disk-only sessions are
-    not actively running) and carry no event timeline; the SSE endpoint will
-    serve the final state snapshot on connect.
-    """
-    try:
-        from backend.pathscientist.persistence.history import list_conversations
-        from backend.pathscientist.persistence.layout import get_persistence_root
-        from backend.pathscientist.runtime.session import _resolve_base_dir
-    except Exception as exc:
-        logger.debug("PathScientist persistence import failed: %s", exc)
-        return []
-
-    base_dir = _resolve_base_dir()
-    persistence_root = get_persistence_root(base_dir)
-    if not Path(persistence_root).is_dir():
-        return []
-
-    stubs: list[SessionRecord] = []
-    for summary in list_conversations(Path(persistence_root)):
-        if curated_only and not _is_curated_persisted_summary(summary):
-            continue
-        conv_id = str(summary.get("conversation_id") or "")
-        if not conv_id:
-            continue
-        conversation_dir = Path(persistence_root) / conv_id
-        if not conversation_dir.is_dir() and "-" in conv_id:
-            conversation_dir = conversation_dir.with_name(conv_id.replace("-", ""))
-        if conversation_dir.is_dir():
-            summary = _enrich_persisted_summary(summary, conversation_dir)
-        # Stable, short session id derived from conversation id so repeated
-        # hydration is idempotent.
-        session_id = conv_id.replace("-", "")[:12] or uuid.uuid4().hex[:12]
-        research = (summary.get("research_session") or {})
-        objective = research.get("objective") or {}
-        question = (
-            objective.get("question")
-            or summary.get("research_question", "")
-            or summary.get("research_summary", "")
-            or "(persisted session)"
-        )
-        created_ts = _timestamp_to_epoch(
-            summary.get("started_at") or summary.get("updated_at"),
-            fallback=time.time(),
-        )
-        updated_ts = _timestamp_to_epoch(
-            summary.get("updated_at") or summary.get("started_at"),
-            fallback=created_ts,
-        )
-        runtime = _legacy_runtime_status(summary)
-        state = _build_persisted_session_state(summary)
-        if runtime.status == "interrupted":
-            state["stage"] = "interrupted"
-            state["interrupted_reason"] = runtime.error
-        stub = SessionRecord(
-            session_id=session_id,
-            conversation_id=conv_id,
-            question=str(question)[:280],
-            model="",
-            user_id=_owner_from_persisted_summary(summary),
-            # Avoid blocking the history list on many LLM calls. New web
-            # sessions queue title generation at creation; legacy sessions get
-            # a deterministic concise fallback unless already migrated later.
-            title=_fallback_session_title(str(question)),
-            status=runtime.status,
-            stage=runtime.stage if runtime.status == "interrupted" else str(research.get("stage") or runtime.stage),
-            created_at=created_ts,
-            updated_at=updated_ts,
-            error=runtime.error,
-            state=state,
-        )
-        stubs.append(stub)
-    return stubs
 
 
 def _unique_nonempty_strings(values: list[str]) -> list[str]:
@@ -4577,7 +3497,7 @@ def _apply_pathlab_huggingface_token(config: Any) -> bool:
 
 def _default_pathscientist_dataset_cache_dir() -> str:
     try:
-        return str(Config.get_uploads_dir())
+        return str(_resolve_pathscientist_base_dir() / "dataset_cache")
     except Exception as exc:
         logger.debug("PathLab uploads dir unavailable for PathScientist cache: %s", exc)
         return DEFAULT_DATASET_CACHE_DIR
@@ -4595,6 +3515,8 @@ def _apply_pathscientist_gateway_defaults(config: Any) -> None:
 
     _apply_pathlab_huggingface_token(config)
     _set_env_default("PATHLAB_CKPT_DIR", str(_pathlab_feature_checkpoint_dir()))
+    canonical_base_dir = str(_resolve_pathscientist_base_dir())
+    os.environ["PATHSCIENTIST_BASE_DIR"] = canonical_base_dir
 
     if _set_env_default("PATHSCIENTIST_SANDBOX", "auto"):
         config.sandbox_mode = "auto"
@@ -4697,7 +3619,6 @@ async def stop_session(
             session_id,
             user=user,
             include_events=False,
-            hydrate_disk=False,
             register=False,
         )
     record = _SESSION_MANAGER.stop(session_id)
@@ -4742,15 +3663,16 @@ async def delete_session(
     if existing is not None and not _can_access_record(existing, user):
         raise HTTPException(status_code=403, detail="PathScientist session access denied")
     if existing is None:
-        await _load_db_record(
+        existing = await _load_db_record(
             session_id,
             user=user,
             include_events=False,
-            hydrate_disk=False,
             register=False,
         )
+    if existing is None:
+        raise HTTPException(status_code=404, detail="PathScientist session not found")
     try:
-        result = _SESSION_MANAGER.delete(session_id)
+        result = _SESSION_MANAGER.delete(existing.session_id)
     except SessionDeleteRejected as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
@@ -4926,24 +3848,12 @@ async def stream_session_events(
         db_events = await _load_db_events(session_id, user=user)
         if db_events:
             record.hydrate_events(db_events)
-        elif not record.events and record.conversation_id:
-            record = _hydrate_persisted_record_detail(record)
 
     async def event_generator():
         next_index = 0
-        last_state_signature = ""
         loop = asyncio.get_running_loop()
         terminal_states = {"queued", "running"}
         while True:
-            if record.conversation_id and isinstance(_record_state(record).get("persisted_summary"), dict):
-                await loop.run_in_executor(None, _refresh_persisted_record_detail, record)
-                state_payload = _record_state_sse_payload(record)
-                if state_payload:
-                    signature = json.dumps(state_payload, sort_keys=True, default=str)
-                    if signature != last_state_signature:
-                        last_state_signature = signature
-                        yield _format_sse(state_payload)
-
             # 1. Drain anything already queued under a single lock-acquire.
             new_events, next_index = await loop.run_in_executor(
                 None, record.snapshot_events, next_index,
@@ -5042,10 +3952,31 @@ def _record_state_sse_payload(record: SessionRecord) -> dict[str, Any]:
 
 def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
     """Find the workspace associated with a serialized PathScientist state."""
+    recovery = state.get("recovery_metadata")
+    recovery = recovery if isinstance(recovery, dict) else {}
+    summary = state.get("persisted_summary")
+    summary = summary if isinstance(summary, dict) else {}
+    research_session = summary.get("research_session")
+    research_session = research_session if isinstance(research_session, dict) else {}
+
+    internal_session_ids = [
+        state.get("session_id"),
+        recovery.get("session_id"),
+        summary.get("session_id"),
+        research_session.get("session_id"),
+    ]
+    for session_id in internal_session_ids:
+        canonical_workspace = _canonical_session_workspace_path(str(session_id or ""))
+        if canonical_workspace is not None and canonical_workspace.is_dir():
+            return canonical_workspace if canonical_workspace.is_symlink() else canonical_workspace.resolve()
+
     candidates: list[Any] = [
         state.get("workspace_path"),
         state.get("workspace_dir"),
         state.get("workspace_root"),
+        recovery.get("workspace_path"),
+        recovery.get("workspace_dir"),
+        recovery.get("workspace_root"),
     ]
     grounding = state.get("grounding")
     if isinstance(grounding, dict):
@@ -5054,38 +3985,74 @@ def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
             grounding.get("workspace_dir"),
             grounding.get("workspace_root"),
         ])
-    summary = state.get("persisted_summary")
-    if isinstance(summary, dict):
-        candidates.extend([
-            summary.get("workspace_path"),
-            summary.get("workspace_dir"),
-            (summary.get("research_session") or {}).get("workspace_path")
-            if isinstance(summary.get("research_session"), dict)
-            else "",
-            (summary.get("research_session") or {}).get("workspace_dir")
-            if isinstance(summary.get("research_session"), dict)
-            else "",
-        ])
+    candidates.extend([
+        summary.get("workspace_path"),
+        summary.get("workspace_dir"),
+        research_session.get("workspace_path"),
+        research_session.get("workspace_dir"),
+    ])
+    canonical_root = _resolve_pathscientist_base_dir()
     for candidate in candidates:
         if not candidate:
             continue
         path = Path(str(candidate)).expanduser()
-        if path.is_dir():
-            return path.resolve()
+        if not _path_is_under(path, canonical_root):
+            logger.debug("PathScientist workspace path outside canonical root skipped: %s", path)
+            continue
+        try:
+            is_workspace_dir = path.is_dir()
+        except OSError as exc:
+            logger.debug("PathScientist workspace probe skipped for %s: %s", path, exc)
+            continue
+        if is_workspace_dir:
+            return path if path.is_symlink() else path.resolve()
 
     # Web-created sessions store the internal PathScientist session_id in
-    # research state. Default workspaces live at <base>/session_<session_id>.
-    internal_session_id = str(state.get("session_id") or "").strip()
-    if internal_session_id:
-        path = _resolve_pathscientist_base_dir() / f"session_{internal_session_id}"
-        if path.is_dir():
-            return path.resolve()
+    # research state. Default workspaces live under <base>/autoresearch_sessions.
+    for internal_session_id in internal_session_ids:
+        path = _canonical_session_workspace_path(str(internal_session_id or ""))
+        if path is None:
+            continue
+        try:
+            is_workspace_dir = path.is_dir()
+        except OSError as exc:
+            logger.debug("PathScientist workspace probe skipped for %s: %s", path, exc)
+            continue
+        if is_workspace_dir:
+            return path if path.is_symlink() else path.resolve()
     return None
+
+
+def _state_contains_workspace_reference(state: dict[str, Any]) -> bool:
+    if any(state.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")):
+        return True
+    for container_key in ("recovery_metadata", "grounding"):
+        container = state.get(container_key)
+        if isinstance(container, dict) and any(
+            container.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")
+        ):
+            return True
+    summary = state.get("persisted_summary")
+    if isinstance(summary, dict):
+        if any(summary.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")):
+            return True
+        research_session = summary.get("research_session")
+        if isinstance(research_session, dict) and any(
+            research_session.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")
+        ):
+            return True
+    return False
 
 
 def _resolve_session_workspace(record: SessionRecord) -> Path | None:
     """Find the workspace that owns a Gateway session."""
-    return _resolve_workspace_from_state(_record_state(record))
+    state = _record_state(record)
+    workspace = _resolve_workspace_from_state(state)
+    if workspace is not None:
+        return workspace
+    if _state_contains_workspace_reference(state):
+        return None
+    return _canonical_session_workspace_path(record.session_id)
 
 
 

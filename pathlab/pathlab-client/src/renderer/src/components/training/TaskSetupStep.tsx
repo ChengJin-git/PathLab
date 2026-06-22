@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
-import { TaskType, DataLevel } from '../../constants/training'
+import { TaskType, DataLevel, TASK_TYPES, getTaskMetadata } from '../../constants/training'
 
 export interface TaskSetupStepProps {
   taskName: string
@@ -123,42 +123,58 @@ export function TaskSetupStep({
             />
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8">
-            {/* Task Type */}
+          <div className="space-y-4 sm:space-y-6">
             <div>
-              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.taskTypeLabel')}</label>
+              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.patchLevel')}</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <RadioOption
-                  selected={taskType === 'classification'}
-                  onClick={() => setTaskType('classification')}
-                  title={t('training.taskSetup.classification')}
-                  subtitle={t('training.taskSetup.categoricalLabels')}
-                />
-                <RadioOption
-                  selected={dataLevel === 'patch' ? taskType === 'segmentation' : taskType === 'survival'}
-                  onClick={() => setTaskType(dataLevel === 'patch' ? 'segmentation' : 'survival')}
-                  title={dataLevel === 'patch' ? t('training.taskSetup.segmentation') : t('training.taskSetup.survivalPrediction')}
-                  subtitle={dataLevel === 'patch' ? t('training.taskSetup.segmentationMasks') : t('training.taskSetup.timeToEvent')}
-                />
+                {TASK_TYPES.filter((option) => getTaskMetadata(option.value).dataType === 'patch').map((option) => {
+                  const metadata = getTaskMetadata(option.value)
+                  const title = metadata.taskFamily === 'segmentation'
+                    ? t('training.taskSetup.segmentation')
+                    : t('training.taskSetup.classification')
+                  const subtitle = metadata.taskFamily === 'segmentation'
+                    ? t('training.taskSetup.segmentationMasks')
+                    : t('training.taskSetup.categoricalLabels')
+                  return (
+                    <RadioOption
+                      key={option.value}
+                      selected={taskType === option.value}
+                      onClick={() => {
+                        setDataLevel(metadata.dataType)
+                        setTaskType(option.value)
+                      }}
+                      title={title}
+                      subtitle={subtitle}
+                    />
+                  )
+                })}
               </div>
             </div>
 
-            {/* Data Level */}
             <div>
-              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.dataLevelLabel')}</label>
+              <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.wsiLevel')}</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <RadioOption
-                  selected={dataLevel === 'wsi'}
-                  onClick={() => setDataLevel('wsi')}
-                  title={t('training.taskSetup.wsiLevel')}
-                  subtitle={t('training.taskSetup.wholeSlides')}
-                />
-                <RadioOption
-                  selected={dataLevel === 'patch'}
-                  onClick={() => setDataLevel('patch')}
-                  title={t('training.taskSetup.patchLevel')}
-                  subtitle={t('training.taskSetup.imagePatches')}
-                />
+                {TASK_TYPES.filter((option) => getTaskMetadata(option.value).dataType === 'wsi').map((option) => {
+                  const metadata = getTaskMetadata(option.value)
+                  const title = metadata.taskFamily === 'survival'
+                    ? t('training.taskSetup.survivalPrediction')
+                    : t('training.taskSetup.classification')
+                  const subtitle = metadata.taskFamily === 'survival'
+                    ? t('training.taskSetup.timeToEvent')
+                    : t('training.taskSetup.categoricalLabels')
+                  return (
+                    <RadioOption
+                      key={option.value}
+                      selected={taskType === option.value}
+                      onClick={() => {
+                        setDataLevel(metadata.dataType)
+                        setTaskType(option.value)
+                      }}
+                      title={title}
+                      subtitle={subtitle}
+                    />
+                  )
+                })}
               </div>
             </div>
           </div>

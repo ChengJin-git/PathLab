@@ -1,6 +1,6 @@
 # PathLab Deployment
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 如果目标是给新服务器部署完整的 PathLab + PathScientist Web 服务，先看
 [`../docs/pathscientist-deployment-quickstart.md`](../docs/pathscientist-deployment-quickstart.md)。本文档主要解释
@@ -88,7 +88,7 @@ PostgreSQL 由 `embedded-postgres` npm 包在运行时自动管理，无需预�
 打包后的 Electron 应用启动时：
 
 1. 自动启动嵌入式 PostgreSQL（首次运行自动 `initdb`，约 3–5 秒）
-2. 自动启动嵌入式 Redis（随机端口，AOF 持久化）
+2. 自动启动嵌入式 Redis（随机端口；Linux/macOS 使用 Redis + AOF，Windows 使用 Garnet）
 3. 自动启动 Python sidecar，注入 `DATABASE_URL` 和 `REDIS_URL`
 4. 应用退出时自动停止上述服务
 
@@ -170,7 +170,7 @@ CUDA_VISIBLE_DEVICES=0,1,3
 5. 用 Vite 构建前端到 `src/renderer/dist`
 6. 导出 `PATHLAB_DEBUG=1` 与固定端口环境变量
 7. 以 `nohup` 方式启动 `server/main.py`
-8. 通过 `http://127.0.0.1:6100/health` 做 Gateway 健康检查
+8. 同时通过 `http://127.0.0.1:6100/health`、`6101/health`、`6102/health` 做三服务健康检查；TaskWorker 是无 HTTP 端口后台进程，通过 Redis 队列状态间接观察
 9. 将日志写入 `logs/backend.log`，并记录 `logs/backend.pid`
 
 该脚本是“直接执行型”的，不需要额外传 `start` 子命令。
@@ -215,10 +215,10 @@ HTTPS 版本额外包含证书与 SSL 配置；HTTP-only 版本仅保留静态�
 - `GATEWAY_PORT=6100`
 - `PREPROCESSING_PORT=6101`
 - `AI_PORT=6102`
-- `PATHLAB_UPLOADS_DIR`
 - `DATABASE_URL`
 
-因此 systemd 模板与 shell 部署脚本的端口策略保持一致。
+默认模板不再覆盖 `PATHLAB_UPLOADS_DIR`，因此服务会沿用 `storage.json` 中保存的上传目录。
+如果部署机需要固定外置存储路径，请在 systemd 覆盖文件或 `server/.env` 中显式设置 `PATHLAB_UPLOADS_DIR`。
 
 ### 当前部署前提
 
@@ -233,6 +233,7 @@ HTTPS 版本额外包含证书与 SSL 配置；HTTP-only 版本仅保留静态�
 - 前端构建输出：`src/renderer/dist`
 - 部署日志：`logs/`
 - 后端环境变量：`server/.env`
+- 上传目录：优先由 `PATHLAB_UPLOADS_DIR` 指定；未设置时沿用 `storage.json`，再回退到系统 app data 目录
 
 ### 相关文档
 

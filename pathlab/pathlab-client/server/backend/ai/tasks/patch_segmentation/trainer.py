@@ -176,6 +176,8 @@ class SegmentationTrainer(BaseTrainer):
             encoder_name=self.config["backbone"],
             in_channels=self.config["dataset"]["channels"],
             classes=self.config["dataset"]["classes"],
+            decoder_type=self.config.get("decoder_type", "conv"),
+            decoder_kwargs=self.config.get("decoder_kwargs", {}),
         )
 
         self.is_fm = segmentor.is_fm
@@ -552,7 +554,11 @@ class SegmentationTrainer(BaseTrainer):
             tn = tn.sum(dim=0)
 
         # Per-class IoU, then average
-        iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction="none")
+        # nan_to_num: when all samples are negative (TP=FP=FN=0), SMP returns nan;
+        # treat as 0.0 (zero_division=0 convention, mirrors sklearn behaviour).
+        iou_per_class = torch.nan_to_num(
+            smp.metrics.iou_score(tp, fp, fn, tn, reduction="none"), nan=0.0
+        )
         primary_iou_key = self._get_primary_iou_metric_key()
         metrics[primary_iou_key] = iou_per_class.mean().item()
         metrics["iou_per_class"] = (
@@ -562,7 +568,9 @@ class SegmentationTrainer(BaseTrainer):
         )
 
         # Dice Score (F1 for segmentation)
-        dice_per_class = smp.metrics.f1_score(tp, fp, fn, tn, reduction="none")
+        dice_per_class = torch.nan_to_num(
+            smp.metrics.f1_score(tp, fp, fn, tn, reduction="none"), nan=0.0
+        )
         metrics["dice"] = dice_per_class.mean().item()
         metrics["dice_per_class"] = (
             dice_per_class.tolist()
@@ -571,13 +579,19 @@ class SegmentationTrainer(BaseTrainer):
         )
 
         # Accuracy
-        accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro")
+        accuracy = torch.nan_to_num(
+            smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro"), nan=0.0
+        )
         metrics["accuracy"] = accuracy.item()
 
         # Precision
-        precision = smp.metrics.precision(tp, fp, fn, tn, reduction="micro")
+        precision = torch.nan_to_num(
+            smp.metrics.precision(tp, fp, fn, tn, reduction="micro"), nan=0.0
+        )
         metrics["precision"] = precision.item()
-        precision_per_class = smp.metrics.precision(tp, fp, fn, tn, reduction="none")
+        precision_per_class = torch.nan_to_num(
+            smp.metrics.precision(tp, fp, fn, tn, reduction="none"), nan=0.0
+        )
         metrics["precision_per_class"] = (
             precision_per_class.tolist()
             if precision_per_class.dim() > 0
@@ -585,9 +599,13 @@ class SegmentationTrainer(BaseTrainer):
         )
 
         # Recall / Sensitivity
-        recall = smp.metrics.recall(tp, fp, fn, tn, reduction="micro")
+        recall = torch.nan_to_num(
+            smp.metrics.recall(tp, fp, fn, tn, reduction="micro"), nan=0.0
+        )
         metrics["recall"] = recall.item()
-        recall_per_class = smp.metrics.recall(tp, fp, fn, tn, reduction="none")
+        recall_per_class = torch.nan_to_num(
+            smp.metrics.recall(tp, fp, fn, tn, reduction="none"), nan=0.0
+        )
         metrics["recall_per_class"] = (
             recall_per_class.tolist()
             if recall_per_class.dim() > 0

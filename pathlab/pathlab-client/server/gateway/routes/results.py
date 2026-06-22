@@ -10,21 +10,27 @@ import functools
 import logging
 import json
 import base64
+import os
 import shutil
 import traceback
+import uuid
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Callable, Tuple, cast as type_cast
 from collections import defaultdict
-from fastapi import APIRouter, Depends, Query, HTTPException
+import tempfile
+
+import numpy as np
+from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, cast, String
 from sqlalchemy.orm import selectinload
 
 from backend.ai.schemas.base import TaskStatus
-from backend.database import get_db, safe_session
+from backend.database import get_db, safe_session, async_session_maker
 from backend.database.models import (
     AIResult,
     AITask,
@@ -35,6 +41,7 @@ from backend.database.models import (
     DataGroup,
     Dataset,
     AnalysisRun,
+    SegmentationAnnotation,
 )
 from backend.database.repositories import (
     AIResultRepository,
@@ -44,11 +51,13 @@ from backend.database.repositories import (
     DataGroupRepository,
     DatasetRepository,
     DatasetGrantRepository,
+    ExportTaskRepository,
+    SegmentationAnnotationRepository,
 )
 from backend.common.config import Config
 from ..dependencies import make_sse_response
 from backend.common.redis_client import get_redis, make_key
-from backend.storage import StorageManager
+from backend.storage import StorageManager, external_availability
 from backend.auth import (
     current_active_user,
     User,
@@ -63,10 +72,16 @@ from backend.auth.dependencies import (
 )
 from .access_control import assert_owner
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+from backend.ai.result_store import AIResultStore, IncompleteAIResultBundleError, PRED_MASK_ARTIFACT
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
-from gateway.models import ExternalValidationRequest, QuickAnalysisRequest
+from gateway.models import (
+    ExternalValidationRequest,
+    QuickAnalysisRequest,
+    BatchInferenceRequest,
+    IndependentInferenceRequest,
+)
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
@@ -103,6 +118,7 @@ from .analysis_metrics import (
     _generate_km_analysis,
     _calculate_integrated_brier_score,
 )
+from backend.common.progress_store import get_progress
 from .inference_wsi_classification import _run_inference_wsi_classification
 from .inference_patch_classification import _run_inference_patch_classification
 from .inference_patch_segmentation import _run_inference_patch_segmentation
@@ -113,12 +129,150 @@ from .inference_external_validation import (
     _run_external_validation,
     _auto_trigger_external_validation_analysis,
 )
+from .inference_batch import _run_batch_inference
+from gateway.task_dispatch import (
+    JsonPayload,
+    build_task_descriptor,
+    enqueue_task_descriptor,
+    is_worker_healthy,
+    publish_task_cancellation,
+)
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
 
 router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
+
+
+def _external_unavailable_detail(
+    *,
+    reason: str | None,
+    dataset_id: str | None = None,
+    wsi_ids: List[str] | None = None,
+    unavailable_count: int | None = None,
+) -> Dict[str, Any]:
+    detail: Dict[str, Any] = {
+        "code": "EXTERNAL_DATASET_UNAVAILABLE",
+        "message": "Selected data is temporarily unavailable because its external storage cannot be reached.",
+        "reason": reason or "External storage unavailable",
+    }
+    if dataset_id:
+        detail["dataset_id"] = dataset_id
+    if wsi_ids:
+        detail["wsi_ids"] = wsi_ids
+    if unavailable_count is not None:
+        detail["unavailable_count"] = unavailable_count
+    return detail
+
+
+async def _raise_if_dataset_cached_unavailable(db: AsyncSession, dataset_id: str) -> None:
+    availability = external_availability.get_dataset_availability(dataset_id)
+    if availability.get("status") != external_availability.UNAVAILABLE:
+        return
+    refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, [dataset_id])
+    external_refs = [
+        ref
+        for ref in refs_by_dataset.get(dataset_id, [])
+        if external_availability.is_external_path(ref.get("wsi_path"))
+    ]
+    if not external_refs:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            dataset_id=dataset_id,
+            reason=availability.get("reason"),
+            unavailable_count=int(availability.get("unavailable_count") or 0),
+        ),
+    )
+
+
+def _raise_if_wsi_cached_unavailable(wsis: List[Any]) -> None:
+    unavailable: List[Tuple[str, Dict[str, Any]]] = []
+    for wsi in wsis:
+        wsi_path = getattr(wsi, "wsi_path", None)
+        if wsi_path is not None and not external_availability.is_external_path(wsi_path):
+            continue
+        wsi_id = _coerce_str(getattr(wsi, "wsi_id", wsi))
+        availability = external_availability.get_wsi_availability(wsi_id)
+        if availability.get("status") == external_availability.UNAVAILABLE:
+            unavailable.append((wsi_id, availability))
+    if not unavailable:
+        return
+
+    raise HTTPException(
+        status_code=409,
+        detail=_external_unavailable_detail(
+            reason=unavailable[0][1].get("reason"),
+            wsi_ids=[wsi_id for wsi_id, _ in unavailable],
+            unavailable_count=len(unavailable),
+        ),
+    )
+
+
+async def _fail_training_task_enqueue(task_id: str, detail: str) -> None:
+    async with safe_session() as db_cleanup:
+        await TrainingTaskRepository.update_status(
+            db_cleanup,
+            task_id,
+            TaskStatus.FAILED,
+            error_message=detail,
+        )
+        await db_cleanup.commit()
+
+
+async def _fail_analysis_enqueue(analysis_id: str, detail: str) -> None:
+    state = get_analysis_state()
+    try:
+        await state.set_failed(analysis_id, detail)
+    except Exception as err:
+        logger.warning(f"Failed to mark analysis {analysis_id} failed after enqueue error: {err}")
+
+
+async def _enqueue_descriptor_or_503(
+    *,
+    job_id: str,
+    job_kind: str,
+    handler: str,
+    payload: JsonPayload,
+    on_enqueue_failure: Optional[Callable[[str], Any]] = None,
+) -> None:
+    descriptor = build_task_descriptor(
+        job_id=job_id,
+        job_kind=job_kind,
+        handler=handler,
+        payload=payload,
+    )
+    try:
+        await enqueue_task_descriptor(descriptor)
+    except Exception as err:
+        detail = f"Failed to enqueue task descriptor: {err}"
+        logger.error(f"Failed to enqueue descriptor for {job_id}: {err}")
+        if on_enqueue_failure is not None:
+            await on_enqueue_failure(detail)
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
+
+def _is_external_validation_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("extval_")
+
+
+def _is_batch_inference_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("binfer_")
+
+
+def _is_independent_inference_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("indinfer_")
+
+
+def _has_selected_wsi_inference_config(task: object) -> bool:
+    model_config = getattr(task, "model_config", None)
+    return isinstance(model_config, dict) and bool(model_config.get("wsi_ids"))
+
+
+def _is_inference_only_task_id(task_id: object) -> bool:
+    return _is_batch_inference_task_id(task_id) or _is_independent_inference_task_id(task_id)
 
 
 def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
@@ -214,16 +368,14 @@ def _required_ai_result_artifacts(
     wsi_id: str,
     extra_metadata: Optional[Dict[str, Any]],
 ) -> List[Tuple[str, Path]]:
-    uploads_dir = Config.get_uploads_dir()
-    result_dir = uploads_dir / "ai_results" / wsi_id
     metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
 
-    result_file = _coerce_path(metadata.get("result_file")) or (
-        result_dir / f"train_{task_id}_result.json"
+    result_file = _coerce_path(metadata.get("result_file")) or Path(
+        f"bundle://{task_id}/{wsi_id}/result"
     )
     artifacts: List[Tuple[str, Path]] = [("result_file", result_file)]
 
-    if task_type in ("segmentation", "patch_segmentation"):
+    if task_type == "patch_segmentation":
         pred_mask_file = _coerce_path(
             metadata.get("pred_mask_file")
         ) or _derive_companion_artifact_path(result_file, "_pred_mask.npy")
@@ -253,6 +405,31 @@ def _required_ai_result_artifacts(
     return artifacts
 
 
+def _artifact_exists_via_store(
+    task_id: str,
+    wsi_id: str,
+    artifact_name: str,
+    artifact_path: Path,
+    artifact_presence: Optional[Dict[str, set[tuple[str, Optional[str]]]]] = None,
+    fold_key: Optional[str] = None,
+) -> bool:
+    artifact_map = {
+        "result_file": "result",
+        "attention_file": "attention",
+        "cam_file": "cam",
+        "pred_mask_file": "pred_mask",
+    }
+    store_artifact = artifact_map.get(artifact_name)
+    if store_artifact is None:
+        return artifact_path.exists()
+    if artifact_presence is not None:
+        return (wsi_id, fold_key) in artifact_presence.get(store_artifact, set())
+    store = AIResultStore(Config.get_uploads_dir())
+    return store.artifact_exists(
+        task_id, wsi_id, store_artifact, fold_key=fold_key, strict=True
+    )
+
+
 def _collect_missing_ai_result_artifacts(
     task_id: str,
     task_type: str,
@@ -260,15 +437,25 @@ def _collect_missing_ai_result_artifacts(
     wsi_id: str,
     extra_metadata: Optional[Dict[str, Any]],
     sample_limit: int = 10,
+    artifact_presence: Optional[Dict[str, set[tuple[str, Optional[str]]]]] = None,
 ) -> Tuple[int, List[Dict[str, Any]]]:
     metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+    fold_value = metadata.get("fold_key")
+    fold_key = str(fold_value) if fold_value is not None else None
     missing_artifacts: List[Dict[str, Any]] = []
     missing_count = 0
 
     for artifact_name, artifact_path in _required_ai_result_artifacts(
         task_id, task_type, data_type, wsi_id, metadata
     ):
-        if artifact_path.exists():
+        if _artifact_exists_via_store(
+            task_id,
+            wsi_id,
+            artifact_name,
+            artifact_path,
+            artifact_presence=artifact_presence,
+            fold_key=fold_key,
+        ):
             continue
         missing_count += 1
         if len(missing_artifacts) < sample_limit:
@@ -296,12 +483,378 @@ def _collect_missing_ai_result_artifacts(
     return missing_count, missing_artifacts
 
 
+def _iter_extval_bundle_task_ids(store: AIResultStore) -> List[str]:
+    task_ids: List[str] = []
+    for bundle_path in store.bundle_dir.glob("extval_*.zarr.zip"):
+        if not bundle_path.is_file():
+            continue
+        task_id = bundle_path.name[: -len(".zarr.zip")]
+        if task_id.startswith("extval_"):
+            task_ids.append(task_id)
+    return sorted(set(task_ids))
+
+
+def _check_existing_extval_results_from_store(
+    uploads_dir: Path,
+    wsi_ids: List[str],
+    trained_model_task_id: str,
+    model_task_type: str,
+    model_data_type: str,
+) -> Tuple[int, Optional[str], List[Dict[str, Any]]]:
+    store = AIResultStore(uploads_dir)
+    existing_results_count = 0
+    existing_validation_id: Optional[str] = None
+    incomplete_existing_examples: List[Dict[str, Any]] = []
+
+    candidate_task_ids = _iter_extval_bundle_task_ids(store)
+    if not candidate_task_ids:
+        return existing_results_count, existing_validation_id, incomplete_existing_examples
+
+    for wsi_id in wsi_ids:
+        matched_for_wsi = False
+        for candidate_task_id in candidate_task_ids:
+            artifact_presence: Optional[Dict[str, set[tuple[str, Optional[str]]]]] = None
+            try:
+                artifact_presence = store.task_artifact_presence_for_items(
+                    candidate_task_id,
+                    [(wsi_id, None)],
+                    {"result", "attention", "cam", "pred_mask"},
+                )
+            except Exception:
+                artifact_presence = None
+
+            try:
+                result_data = store.read_result(candidate_task_id, wsi_id, strict=True)
+            except Exception:
+                continue
+
+            if str(result_data.get("task_id") or "") != trained_model_task_id:
+                continue
+
+            validation_task_id = str(
+                result_data.get("validation_task_id") or candidate_task_id
+            )
+
+            metadata = dict(result_data)
+            metadata["result_file"] = None
+
+            missing_count, missing_examples = _collect_missing_ai_result_artifacts(
+                task_id=candidate_task_id,
+                task_type=str(result_data.get("task_type") or model_task_type),
+                data_type=model_data_type,
+                wsi_id=wsi_id,
+                extra_metadata=metadata,
+                sample_limit=1,
+                artifact_presence=artifact_presence,
+            )
+            if missing_count > 0:
+                if len(incomplete_existing_examples) < 5 and missing_examples:
+                    incomplete_existing_examples.extend(missing_examples)
+                continue
+
+            existing_results_count += 1
+            if existing_validation_id is None:
+                existing_validation_id = validation_task_id
+            matched_for_wsi = True
+            break
+
+        if not matched_for_wsi:
+            continue
+
+    return existing_results_count, existing_validation_id, incomplete_existing_examples
+
+
 def _analysis_has_required_files(analysis_run_dir: Path) -> bool:
     if not analysis_run_dir.is_dir():
         return False
     return (analysis_run_dir / "summary.json").exists() and (
         analysis_run_dir / "results.json"
     ).exists()
+
+
+def _safe_export_member_name(value: Any) -> str:
+    name = Path(str(value or "unknown")).stem.strip()
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name)
+    return safe or "unknown"
+
+
+def _segmentation_export_rows(results_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows = results_payload.get("wsi_results") or results_payload.get("results") or []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _write_array_to_zip(zf: zipfile.ZipFile, member_name: str, array: np.ndarray) -> None:
+    buffer = BytesIO()
+    np.save(buffer, np.asarray(array), allow_pickle=False)
+    zf.writestr(member_name, buffer.getvalue())
+
+
+def _load_segmentation_export_pred_mask(task_id: str, wsi_id: str) -> Optional[np.ndarray]:
+    try:
+        return AIResultStore(Config.get_uploads_dir()).read_array(
+            task_id,
+            wsi_id,
+            PRED_MASK_ARTIFACT,
+            strict=False,
+        )
+    except Exception as err:
+        logger.debug(f"Predicted mask unavailable for {task_id}/{wsi_id}: {err}")
+        return None
+
+
+def _annotation_payload_for_wsi(record: SegmentationAnnotation, wsi_id: str) -> Optional[Dict[str, Any]]:
+    annotations = getattr(record, "annotations", None)
+    if not isinstance(annotations, dict):
+        return None
+    images = annotations.get("images") or []
+    matched_image_ids = set()
+    matched_images = []
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        file_name = str(image.get("file_name") or "")
+        if wsi_id not in {str(image.get("wsi_id") or ""), str(image.get("id") or ""), Path(file_name).stem}:
+            continue
+        image_id = image.get("id")
+        if image_id is None:
+            continue
+        matched_image_ids.add(image_id)
+        matched_images.append(dict(image))
+
+    if not matched_images:
+        return None
+
+    return {
+        "images": matched_images,
+        "annotations": [
+            dict(annotation)
+            for annotation in annotations.get("annotations") or []
+            if isinstance(annotation, dict) and annotation.get("image_id") in matched_image_ids
+        ],
+        "categories": annotations.get("categories", []),
+    }
+
+
+async def _load_segmentation_export_gt_mask(db: AsyncSession, task: TrainingTask, wsi_id: str) -> Optional[np.ndarray]:
+    wsi_map = await WSIRepository.get_by_ids(db, [wsi_id])
+    wsi = wsi_map.get(wsi_id)
+    dataset_id = getattr(wsi, "dataset_id", None) if wsi is not None else None
+    wsi_path = getattr(wsi, "wsi_path", None) if wsi is not None else None
+    if not dataset_id or not wsi_path:
+        return None
+
+    records = await SegmentationAnnotationRepository.get_all_by_dataset(
+        db,
+        str(dataset_id),
+        include_drafts=False,
+    )
+    if not records:
+        return None
+
+    payload = None
+    preferred_id = f"label_{wsi_id}"
+    for record in records:
+        if getattr(record, "annotation_id", None) == preferred_id:
+            payload = _annotation_payload_for_wsi(record, wsi_id)
+            if payload:
+                break
+    if payload is None:
+        for record in records:
+            payload = _annotation_payload_for_wsi(record, wsi_id)
+            if payload:
+                break
+    if payload is None:
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="pathlab_gt_export_") as tmp_dir:
+        from backend.ai.utils.patch_resize import resolve_patch_resize_size
+        from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
+
+        tmp_root = Path(tmp_dir)
+        image_path = Path(str(wsi_path)).resolve()
+        payload["images"][0]["file_name"] = image_path.name
+        annotations_path = tmp_root / "annotations.json"
+        with open(annotations_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+
+        model_config = getattr(task, "model_config", None) or {}
+        preprocessing_config = getattr(task, "preprocessing_config", None) or {}
+        resize_size = resolve_patch_resize_size(model_config, preprocessing_config)
+        dataset = SegmentationDataset(
+            img_dir=str(image_path.parent),
+            annotations_path=str(annotations_path),
+            transform=get_transforms("val", size=(resize_size, resize_size)),
+        )
+        if len(dataset) == 0:
+            return None
+        _, mask = dataset[0]
+        return np.asarray(mask)
+
+
+def _build_segmentation_export_zip_sync(
+    zip_path: Path,
+    source_task_id: str,
+    analysis_id: str,
+    summary: Dict[str, Any],
+    results_payload: Dict[str, Any],
+    masks: Dict[str, Dict[str, Optional[np.ndarray]]],
+) -> Dict[str, Any]:
+    rows = _segmentation_export_rows(results_payload)
+    counts = {"pred": 0, "gt": 0, "missing_pred": 0, "missing_gt": 0}
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = zip_path.with_suffix(".zip.tmp")
+
+    with zipfile.ZipFile(tmp_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("summary.json", json.dumps(summary, indent=2))
+        zf.writestr("results.json", json.dumps(results_payload, indent=2))
+
+        for row in rows:
+            wsi_id = str(row.get("wsi_id") or "")
+            if not wsi_id:
+                continue
+            safe_id = _safe_export_member_name(wsi_id)
+            pred_mask = masks.get(wsi_id, {}).get("pred")
+            gt_mask = masks.get(wsi_id, {}).get("gt")
+            if pred_mask is not None:
+                _write_array_to_zip(zf, f"pred_masks/{safe_id}.npy", pred_mask)
+                counts["pred"] += 1
+            else:
+                counts["missing_pred"] += 1
+            if gt_mask is not None:
+                _write_array_to_zip(zf, f"gt_masks/{safe_id}.npy", gt_mask)
+                counts["gt"] += 1
+            else:
+                counts["missing_gt"] += 1
+
+        manifest = {
+            "export_type": "segmentation_analysis_full",
+            "source_task_id": source_task_id,
+            "analysis_id": analysis_id,
+            "task_type": results_payload.get("task_type") or summary.get("task_type"),
+            "num_samples": len(rows),
+            "mask_counts": counts,
+            "files": {
+                "summary": "summary.json",
+                "results": "results.json",
+                "pred_masks": "pred_masks/*.npy",
+                "gt_masks": "gt_masks/*.npy",
+            },
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+    tmp_path.replace(zip_path)
+    return manifest
+
+
+async def process_segmentation_analysis_full_export(
+    export_task_id: str,
+    source_task_id: str,
+    analysis_id: str,
+    user_id: str,
+    db_session_maker,
+):
+    async def _is_cancelled() -> bool:
+        current = await ExportTaskRepository.get_by_id(db, export_task_id)
+        status = getattr(current, "status", None) if current is not None else None
+        return isinstance(status, str) and status == "cancelled"
+
+    async with db_session_maker() as db:
+        try:
+            if await _is_cancelled():
+                return
+            await ExportTaskRepository.update_status(
+                db,
+                task_id=export_task_id,
+                status="processing",
+                progress=5,
+            )
+            await db.commit()
+
+            if await _is_cancelled():
+                return
+
+            task = await TrainingTaskRepository.get_by_id(db, source_task_id)
+            if task is not None:
+                await _require_task_access(
+                    type_cast(User, type("ExportUser", (), {"id": user_id, "role": "admin", "is_admin": lambda self: True})()),
+                    task,
+                    db,
+                    forbidden_detail="You don't have permission to export this analysis",
+                )
+
+            analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / source_task_id / analysis_id
+            if not _analysis_has_required_files(analysis_dir):
+                raise FileNotFoundError(f"Analysis not found: {analysis_id}")
+
+            with open(analysis_dir / "summary.json", "r", encoding="utf-8") as f:
+                summary = json.load(f)
+            with open(analysis_dir / "results.json", "r", encoding="utf-8") as f:
+                results_payload = json.load(f)
+
+            task_type = results_payload.get("task_type") or summary.get("task_type")
+            if task_type != "patch_segmentation":
+                raise ValueError("Full mask export is only available for segmentation analyses")
+
+            rows = _segmentation_export_rows(results_payload)
+            masks: Dict[str, Dict[str, Optional[np.ndarray]]] = {}
+            for idx, row in enumerate(rows):
+                if await _is_cancelled():
+                    return
+                wsi_id = str(row.get("wsi_id") or "")
+                if not wsi_id:
+                    continue
+                masks[wsi_id] = {
+                    "pred": _load_segmentation_export_pred_mask(source_task_id, wsi_id),
+                    "gt": await _load_segmentation_export_gt_mask(db, task, wsi_id) if task is not None else None,
+                }
+                progress = 10 + int(((idx + 1) / max(len(rows), 1)) * 75)
+                await ExportTaskRepository.update_status(
+                    db,
+                    task_id=export_task_id,
+                    status="processing",
+                    progress=min(progress, 85),
+                )
+                await db.commit()
+
+            if await _is_cancelled():
+                return
+            export_dir = Config.get_uploads_dir() / "exports" / "analysis"
+            zip_path = export_dir / f"{export_task_id}.zip"
+            manifest = await asyncio.to_thread(
+                _build_segmentation_export_zip_sync,
+                zip_path,
+                source_task_id,
+                analysis_id,
+                summary,
+                results_payload,
+                masks,
+            )
+
+            if await _is_cancelled():
+                if zip_path.exists():
+                    zip_path.unlink()
+                return
+            await ExportTaskRepository.update_status(
+                db,
+                task_id=export_task_id,
+                status="completed",
+                progress=100,
+                file_path=str(zip_path),
+                total_records=manifest["num_samples"],
+            )
+            await db.commit()
+        except Exception as err:
+            if await _is_cancelled():
+                return
+            logger.error(f"Segmentation analysis export {export_task_id} failed: {err}")
+            await ExportTaskRepository.update_status(
+                db,
+                task_id=export_task_id,
+                status="failed",
+                progress=100,
+                error_message=str(err),
+            )
+            await db.commit()
 
 
 def _iter_complete_analysis_runs(analysis_dir: Path):
@@ -329,7 +882,7 @@ def _analysis_requires_training_metrics(
 
     requested_charts = set(charts or [])
     required_charts = {"loss_curve"}
-    if task_type in ("segmentation", "patch_segmentation"):
+    if task_type == "patch_segmentation":
         required_charts.update({"iou_curve", "dice_curve"})
     return bool(requested_charts & required_charts)
 
@@ -394,6 +947,8 @@ async def _enrich_single_task_resources(
             "model_path": trained_model_rows[0][1],
             "config_path": trained_model_rows[0][2],
         }
+        resources["model_path"] = trained_model["model_path"]
+        resources["config_path"] = trained_model["config_path"]
 
     metrics_candidates = _candidate_metrics_paths(task_id, trained_model)
     metrics_file = next((path for path in metrics_candidates if path.exists()), None)
@@ -421,6 +976,36 @@ async def _enrich_single_task_resources(
 
     missing_artifacts: List[Dict[str, Any]] = []
     missing_count = 0
+    requested_items: list[tuple[str, Optional[str]]] = []
+    required_artifacts: set[str] = set()
+    artifact_name_map = {
+        "result_file": "result",
+        "attention_file": "attention",
+        "cam_file": "cam",
+        "pred_mask_file": "pred_mask",
+    }
+    for wsi_id, extra_metadata in ai_result_rows:
+        metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+        fold_value = metadata.get("fold_key")
+        requested_items.append((str(wsi_id), str(fold_value) if fold_value is not None else None))
+        for artifact_name, _artifact_path in _required_ai_result_artifacts(
+            task_id, task_type, data_type, wsi_id, metadata
+        ):
+            store_artifact = artifact_name_map.get(artifact_name)
+            if store_artifact:
+                required_artifacts.add(store_artifact)
+    try:
+        artifact_presence = AIResultStore(
+            Config.get_uploads_dir()
+        ).task_artifact_presence_for_items(
+            task_id,
+            items=requested_items,
+            artifacts=required_artifacts,
+        )
+    except (FileNotFoundError, IncompleteAIResultBundleError):
+        artifact_presence: Dict[str, set[tuple[str, Optional[str]]]] = {
+            artifact: set() for artifact in required_artifacts
+        }
     for wsi_id, extra_metadata in ai_result_rows:
         row_missing_count, row_missing_artifacts = _collect_missing_ai_result_artifacts(
             task_id=task_id,
@@ -429,6 +1014,7 @@ async def _enrich_single_task_resources(
             wsi_id=wsi_id,
             extra_metadata=extra_metadata,
             sample_limit=max(0, 10 - len(missing_artifacts)),
+            artifact_presence=artifact_presence,
         )
         missing_count += row_missing_count
         if row_missing_artifacts:
@@ -437,8 +1023,6 @@ async def _enrich_single_task_resources(
     resources["missing_ai_result_artifact_count"] = missing_count
     resources["missing_ai_result_artifacts"] = missing_artifacts
     resources["has_complete_ai_results"] = missing_count == 0
-    if missing_count > 0:
-        resources["has_ai_results"] = False
 
     return resources
 
@@ -457,6 +1041,13 @@ async def _get_elevated_dataset_ids(
     return [
         _coerce_str(p.dataset_id) for p in permissions if p.is_valid() and p.can_use_gpu
     ]
+
+
+async def _get_all_granted_dataset_ids(user: User, db: AsyncSession) -> set[str]:
+    if user.is_admin():
+        return set()
+    permissions = await DatasetGrantRepository.get_valid_by_user(db, str(user.id))
+    return {_coerce_str(p.dataset_id) for p in permissions if p.is_valid()}
 
 
 def _build_owned_ai_result_filter(user: User):
@@ -882,7 +1473,12 @@ async def _check_task_resources_batch(
 
     # Step 4: Query TrainedModel table for all tasks (covers all task types including segmentation)
     trained_model_query = (
-        select(TrainedModel.task_id, TrainedModel.model_id, TrainedModel.model_path)
+        select(
+            TrainedModel.task_id,
+            TrainedModel.model_id,
+            TrainedModel.model_path,
+            TrainedModel.config_path,
+        )
         .where(TrainedModel.task_id.in_(task_ids))
         .where(TrainedModel.is_active == True)
     )
@@ -891,7 +1487,11 @@ async def _check_task_resources_batch(
     for row in trained_model_result.all():
         # Keep the first (most recent) model per task
         if row[0] not in trained_models_by_task:
-            trained_models_by_task[row[0]] = {"model_id": row[1], "model_path": row[2]}
+            trained_models_by_task[row[0]] = {
+                "model_id": row[1],
+                "model_path": row[2],
+                "config_path": row[3],
+            }
 
     # Step 4b: Check features and models for each task (file system, but minimal operations)
     models_dir = uploads_dir / "models"
@@ -973,6 +1573,8 @@ async def _check_task_resources_batch(
             "has_features": has_features,
             "has_model": has_model,
             "model_id": model_id,
+            "model_path": trained_models_by_task.get(task_id, {}).get("model_path"),
+            "config_path": trained_models_by_task.get(task_id, {}).get("config_path"),
             "has_ai_results": has_ai_results,
             "ai_results_count": ai_results_count,
             "total_wsi_count": total_wsi_count,
@@ -1072,7 +1674,7 @@ async def get_analysis_tasks(
         # Get data_type and task_type from DataGroup relationship
         data_group = task.data_group
         data_type = data_group.data_type if data_group else "wsi"
-        task_type = data_group.task_type if data_group else "classification"
+        task_type = data_group.task_type if data_group else "wsi_classification"
 
         # For WSI-level tasks: require both features and model
         # For patch-level tasks: only require model (features extracted on-the-fly during training)
@@ -1093,15 +1695,19 @@ async def get_analysis_tasks(
 
         # Extract feature_extractor and split_strategy from preprocessing_config
         feature_extractor = None
-        is_segmentation_task = task_type in ("segmentation", "patch_segmentation")
         is_kfold = False
+        split_summary = None
         if isinstance(task.preprocessing_config, dict):
             feature_extractor = task.preprocessing_config.get("feature_extractor")
-            # Check split strategy to determine if K-Fold training
             split_config = task.preprocessing_config.get("split_config", {})
-            is_kfold = (
-                not is_segmentation_task and split_config.get("strategy") == "k_fold"
-            )
+            if isinstance(split_config, dict):
+                split_summary = {
+                    "strategy": split_config.get("strategy"),
+                    "n_splits": split_config.get("n_splits"),
+                    "ratios": split_config.get("ratios"),
+                    "stratified": split_config.get("stratified"),
+                }
+                is_kfold = split_config.get("strategy") == "k_fold"
 
         # Determine display count based on aggregation_level
         aggregation_level = resources.get("aggregation_level", "file")
@@ -1139,6 +1745,7 @@ async def get_analysis_tasks(
                 "wsi_ids": [],
                 "classes": task.classes,
                 "model_config": task.model_config,
+                "split_config": split_summary,
                 "source_dataset_id": source_dataset_ids.get(task_id),
                 "is_kfold": is_kfold,
                 "source": "database",
@@ -1177,7 +1784,7 @@ async def _run_inference_if_needed(
     task_id = task.task_id
     # Get data_type and task_type from DataGroup relationship
     data_group = task.data_group
-    task_type = data_group.task_type if data_group else "classification"
+    task_type = data_group.task_type if data_group else "wsi_classification"
     data_type = data_group.data_type if data_group else "wsi"
 
     # Check resources
@@ -1213,7 +1820,7 @@ async def _run_inference_if_needed(
 
     # Route to appropriate inference handler based on data_type and task_type
     if data_type == "patch":
-        if task_type in ("segmentation", "patch_segmentation"):
+        if task_type == "patch_segmentation":
             await _run_inference_patch_segmentation(
                 task,
                 wsi_ids,
@@ -1231,7 +1838,7 @@ async def _run_inference_if_needed(
                 progress_callback,
                 assigned_device=assigned_device,
             )
-    elif task_type in ("wsi_survival", "survival"):
+    elif task_type == "wsi_survival":
         await _run_inference_wsi_survival(
             task,
             wsi_ids,
@@ -1271,9 +1878,14 @@ async def get_datasets_for_validation(
     missing features are extracted automatically when validation starts.
     """
     datasets = await DatasetRepository.get_all(db)
-    elevated_dataset_ids = set()
+    elevated_dataset_ids: set[str] = set()
+    all_granted_dataset_ids: set[str] = set()
     if not user.is_admin():
         elevated_dataset_ids = set(await _get_elevated_dataset_ids(user, db) or [])
+        all_granted_dataset_ids = await _get_all_granted_dataset_ids(user, db)
+
+    dataset_ids_for_refs = [_coerce_str(ds.dataset_id) for ds in datasets if getattr(ds, "dataset_id", None)]
+    refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, dataset_ids_for_refs)
 
     result = []
     for ds in datasets:
@@ -1281,16 +1893,18 @@ async def get_datasets_for_validation(
         if not dg:
             continue
 
-        # Skip external_validation datasets - only show real datasets
-        if dg.task_type == "external_validation":
-            continue
-
         dataset_id = _coerce_str(ds.dataset_id)
 
         if not user.is_admin():
             owns_dataset = _coerce_str(ds.user_id) == str(user.id)
-            has_temp_access = dataset_id in elevated_dataset_ids
-            if not owns_dataset and not has_temp_access:
+            is_public = bool(getattr(ds, "is_public", False))
+            has_dataset_access = (
+                owns_dataset or is_public or dataset_id in all_granted_dataset_ids
+            )
+            has_gpu_permission = (
+                user.can_use_gpu() or dataset_id in elevated_dataset_ids
+            )
+            if not has_dataset_access or not has_gpu_permission:
                 continue
 
         # Get WSI IDs
@@ -1330,7 +1944,7 @@ async def get_datasets_for_validation(
             total_case_count if dg.aggregation_level == "case" else total_wsi_count
         )
         segmentation_labels: List[str] = []
-        if dg.task_type in ("segmentation", "patch_segmentation"):
+        if dg.task_type == "patch_segmentation":
             coco_categories = await WSIRepository._get_coco_categories_for_dataset(
                 db, dataset_id
             )
@@ -1357,6 +1971,857 @@ async def get_datasets_for_validation(
     return {"items": result, "total": len(result)}
 
 
+async def _is_dataset_unlabeled_for_batch_inference(
+    db: AsyncSession,
+    dataset_id: str,
+    task_type: str,
+) -> bool:
+    normalized_task_type = (task_type or "").lower()
+    if normalized_task_type == "patch_segmentation":
+        # For segmentation, only imported / dataset-backed finalized GT annotations
+        # count as labels. Viewer-drawn annotations are user edits and should not
+        # block batch inference. A dataset becomes labeled as soon as any such GT
+        # annotation or paired GT mask exists anywhere in the dataset; images with
+        # no annotation can still be valid negative samples inside that labeled set.
+        gt_check = await db.execute(
+            select(func.count())
+            .select_from(SegmentationAnnotation)
+            .where(SegmentationAnnotation.source_dataset_id == dataset_id)
+            .where(SegmentationAnnotation.source != "viewer")
+            .where(SegmentationAnnotation.status == "finalized")
+        )
+        return (gt_check.scalar() or 0) == 0
+
+    if normalized_task_type == "wsi_survival":
+        survival_check = await db.execute(
+            select(func.count(WSISlide.id))
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.event_time.isnot(None))
+            .where(WSISlide.event_status.isnot(None))
+        )
+        return (survival_check.scalar() or 0) == 0
+
+    distinct_label_count = await DatasetRepository.get_distinct_label_count(db, dataset_id)
+    return distinct_label_count == 0
+
+
+async def _is_wsi_unlabeled_for_independent_inference(
+    db: AsyncSession, wsi: WSISlide, task_type: Optional[str]
+) -> bool:
+    normalized_task_type = (task_type or "").strip().lower()
+    if normalized_task_type == "wsi_survival":
+        return wsi.event_time is None and wsi.event_status is None
+    if normalized_task_type == "patch_segmentation":
+        query_result = await db.execute(
+            select(func.count())
+            .select_from(SegmentationAnnotation)
+            .where(SegmentationAnnotation.annotation_id == f"label_{wsi.wsi_id}")
+            .where(SegmentationAnnotation.source_dataset_id == wsi.dataset_id)
+            .where(SegmentationAnnotation.source != "viewer")
+            .where(SegmentationAnnotation.status == "finalized")
+        )
+        return (query_result.scalar() or 0) == 0
+    return not str(wsi.label or "").strip()
+
+
+def _independent_wsi_item(wsi: WSISlide) -> Dict[str, Any]:
+    dataset = wsi.dataset
+    data_group = dataset.data_group if dataset else None
+    wsi_id = _coerce_str(wsi.wsi_id)
+    item = {
+        "wsi_id": wsi_id,
+        "original_filename": wsi.original_filename,
+        "dataset_id": _coerce_str(wsi.dataset_id),
+        "dataset_name": dataset.name if dataset else None,
+        "case_id": wsi.case_id,
+        "data_type": data_group.data_type if data_group else wsi.data_type,
+        "task_type": data_group.task_type if data_group else None,
+        "aggregation_level": data_group.aggregation_level if data_group else None,
+        "created_at": (
+            wsi.created_at.isoformat() + "Z" if isinstance(wsi.created_at, datetime) else None
+        ),
+    }
+    if external_availability.is_external_path(getattr(wsi, "wsi_path", None)):
+        item["availability"] = external_availability.get_wsi_availability(wsi_id)
+    return item
+
+
+@router.get("/independent-inference/wsi")
+async def get_wsi_for_independent_inference(
+    task_type: Optional[str] = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    active_models = await TrainedModelRepository.get_active_models(db)
+    elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+    wsi_rows = await WSIRepository.get_all_with_dataset(
+        db,
+        user_id=None if user.is_admin() else str(user.id),
+        elevated_dataset_ids=elevated_dataset_ids,
+    )
+
+    items: List[Dict[str, Any]] = []
+    for wsi in wsi_rows:
+        dataset = wsi.dataset
+        data_group = dataset.data_group if dataset else None
+        row_task_type = data_group.task_type if data_group else None
+        if task_type and row_task_type != task_type:
+            continue
+        if await _is_wsi_unlabeled_for_independent_inference(db, wsi, row_task_type):
+            items.append(_independent_wsi_item(wsi))
+
+    return {
+        "items": items,
+        "total": len(items),
+        "models_available": any(bool(getattr(model, "is_active", False)) for model in active_models),
+    }
+
+
+@router.get("/datasets-for-inference")
+async def get_datasets_for_inference(
+    unlabeled_only: bool = True,
+    task_type: Optional[str] = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List datasets available for batch inference on unlabeled slides.
+
+    When unlabeled_only=True (default), only datasets with no existing labels are returned:
+    - Classification: distinct_label_count == 0
+    - Survival: no WSI has both event_time and event_status set
+    - Segmentation: no imported/finalized GT annotation or paired GT mask exists;
+      viewer annotations do not count as dataset labels
+
+    Excludes non-training workflow datasets; external validation reuses canonical target datasets.
+    """
+    datasets = await DatasetRepository.get_all(db)
+    elevated_dataset_ids: set[str] = set()
+    all_granted_dataset_ids: set[str] = set()
+    if not user.is_admin():
+        elevated_dataset_ids = set(await _get_elevated_dataset_ids(user, db) or [])
+        all_granted_dataset_ids = await _get_all_granted_dataset_ids(user, db)
+
+    result = []
+    for ds in datasets:
+        dg = ds.data_group
+        if not dg:
+            continue
+
+        dataset_id = _coerce_str(ds.dataset_id)
+
+        if not user.is_admin():
+            owns_dataset = _coerce_str(ds.user_id) == str(user.id)
+            is_public = bool(getattr(ds, "is_public", False))
+            has_dataset_access = (
+                owns_dataset or is_public or dataset_id in all_granted_dataset_ids
+            )
+            has_gpu_permission = (
+                user.can_use_gpu() or dataset_id in elevated_dataset_ids
+            )
+            if not has_dataset_access or not has_gpu_permission:
+                continue
+
+        if task_type and dg.task_type != task_type:
+            continue
+
+        wsi_ids = await DatasetRepository.get_wsi_ids(db, dataset_id)
+        slide_count = len(wsi_ids)
+
+        if slide_count == 0:
+            continue
+
+        if unlabeled_only and not await _is_dataset_unlabeled_for_batch_inference(
+            db, dataset_id, dg.task_type
+        ):
+            continue
+
+        refs_by_dataset = await DatasetRepository.get_wsi_path_refs_batch(db, [dataset_id])
+
+        item = {
+            "dataset_id": dataset_id,
+            "name": ds.name,
+            "data_type": dg.data_type,
+            "task_type": dg.task_type,
+            "aggregation_level": dg.aggregation_level,
+            "slide_count": slide_count,
+        }
+        external_wsi_ids = [
+            _coerce_str(ref["wsi_id"])
+            for ref in refs_by_dataset.get(dataset_id, [])
+            if external_availability.is_external_path(ref.get("wsi_path"))
+        ]
+        if external_wsi_ids:
+            item["availability"] = external_availability.roll_up_dataset_availability(
+                external_wsi_ids
+            )
+            item["availability"]["external_count"] = len(external_wsi_ids)
+        result.append(item)
+
+    return {"items": result, "total": len(result)}
+
+
+@router.post("/batch-inference")
+async def start_batch_inference(
+    req: BatchInferenceRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import uuid as uuid_module
+
+    effective_user_id = str(user.id)
+
+    if user.is_admin() and req.rerun_from_task_id:
+        source_task = await TrainingTaskRepository.get_by_id(db, req.rerun_from_task_id)
+        if source_task and _coerce_str(source_task.user_id):
+            effective_user_id = _coerce_str(source_task.user_id)
+
+    model_task = await TrainingTaskRepository.get_by_id(db, req.model_task_id)
+    if not model_task:
+        raise HTTPException(
+            status_code=404, detail=f"Model task not found: {req.model_task_id}"
+        )
+
+    trained_models = await TrainedModelRepository.get_by_task_id(db, req.model_task_id)
+    trained_model = None
+    if req.model_id:
+        trained_model = next(
+            (m for m in trained_models if m.model_id == req.model_id), None
+        )
+        if not trained_model:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model not found for task: {req.model_id}",
+            )
+    else:
+        trained_model = next((m for m in trained_models if m.is_active), None)
+    if not trained_model:
+        raise HTTPException(status_code=400, detail="Model is not active")
+    if not trained_model.is_active:
+        raise HTTPException(status_code=400, detail="Model is not active")
+
+    await _require_task_access(
+        user,
+        model_task,
+        db,
+        owner_user_id=_coerce_str(trained_model.user_id),
+        forbidden_detail="You don't have permission to use this model",
+    )
+
+    target_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
+    if not target_dataset:
+        raise HTTPException(
+            status_code=404, detail=f"Dataset not found: {req.dataset_id}"
+        )
+
+    has_dataset_access = await _has_external_validation_dataset_access(
+        user, target_dataset, db
+    )
+    if not has_dataset_access:
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to use this dataset"
+        )
+
+    has_gpu_permission = await check_dataset_gpu_permission(user, req.dataset_id, db)
+    if not has_gpu_permission and not user.can_use_gpu():
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have GPU permission for this dataset. Contact admin for temporary access.",
+        )
+
+    model_dg = model_task.data_group
+    dataset_dg = target_dataset.data_group
+    model_task_type = model_dg.task_type if model_dg else ""
+    model_data_type = model_dg.data_type if model_dg else "wsi"
+    dataset_task_type = dataset_dg.task_type if dataset_dg else ""
+    dataset_data_type = dataset_dg.data_type if dataset_dg else "wsi"
+    dataset_aggregation_level = dataset_dg.aggregation_level if dataset_dg else "file"
+
+    if model_task_type != dataset_task_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model task type '{model_task_type}' is incompatible with dataset task type '{dataset_task_type}'",
+        )
+    if model_data_type != dataset_data_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model data level '{model_data_type}' mismatches dataset data level '{dataset_data_type}'",
+        )
+
+    if not await _is_dataset_unlabeled_for_batch_inference(
+        db, req.dataset_id, dataset_task_type
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Batch inference only supports unlabeled datasets. Please use external validation for labeled datasets.",
+        )
+
+    await _raise_if_dataset_cached_unavailable(db, req.dataset_id)
+
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
+    batch_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
+    batch_task = TrainingTask(
+        task_id=batch_id,
+        task_name=f"{model_task.task_name} → {target_dataset.name or req.dataset_id}"[
+            :200
+        ],
+        group_id=dataset_dg.group_id,
+        user_id=effective_user_id,
+        status=TaskStatus.PENDING,
+        progress=0,
+        classes=trained_model.classes,
+        preprocessing_config=model_task.preprocessing_config
+        or {
+            "feature_extractor": trained_model.feature_extractor,
+        },
+        model_config={
+            "model_task_id": req.model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": req.dataset_id,
+            "model_task_type": model_task_type,
+            "model_data_type": model_data_type,
+        },
+    )
+    db.add(batch_task)
+    await db.flush()
+    await db.commit()
+
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": batch_id,
+            "model_task_id": req.model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": req.dataset_id,
+        },
+    )
+    await _enqueue_descriptor_or_503(
+        job_id=batch_id,
+        job_kind="inference",
+        handler="inference.batch",
+        payload=descriptor_payload,
+        on_enqueue_failure=lambda detail: _fail_training_task_enqueue(batch_id, detail),
+    )
+
+    return {
+        "task_id": batch_id,
+        "status": "pending",
+        "message": "Batch inference job submitted",
+    }
+
+
+async def _resolve_independent_inference_wsi_ids(
+    db: AsyncSession,
+    user: User,
+    wsi_ids: List[str],
+    model_task_type: str,
+    model_data_type: str,
+    elevated_dataset_ids: Optional[List[str]] = None,
+) -> tuple[List[str], List[Dict[str, Any]], Optional[DataGroup], Optional[str], Optional[str]]:
+    wsi_map = await WSIRepository.get_by_ids_with_dataset(db, wsi_ids)
+    valid_ids: List[str] = []
+    skipped: List[Dict[str, Any]] = []
+    target_data_group: Optional[DataGroup] = None
+    target_dataset_id: Optional[str] = None
+    validation_error: Optional[str] = None
+    elevated_dataset_id_set = set(elevated_dataset_ids or [])
+
+    for requested_id in wsi_ids:
+        wsi = wsi_map.get(requested_id)
+        if not wsi:
+            skipped.append({"wsi_id": requested_id, "reason": "unavailable"})
+            continue
+
+        dataset_id = _coerce_str(wsi.dataset_id)
+        if (
+            not user.is_admin()
+            and _coerce_str(wsi.user_id) != str(user.id)
+            and dataset_id not in elevated_dataset_id_set
+        ):
+            skipped.append({"wsi_id": requested_id, "reason": "unavailable"})
+            continue
+
+        dataset = wsi.dataset
+        data_group = dataset.data_group if dataset else None
+        wsi_task_type = data_group.task_type if data_group else None
+        wsi_data_type = data_group.data_type if data_group else wsi.data_type
+        if wsi_task_type != model_task_type or wsi_data_type != model_data_type:
+            skipped.append({"wsi_id": requested_id, "reason": "incompatible_type"})
+            continue
+
+        if not await _is_wsi_unlabeled_for_independent_inference(db, wsi, wsi_task_type):
+            skipped.append({"wsi_id": requested_id, "reason": "labeled"})
+            continue
+
+        if target_data_group is None:
+            target_data_group = data_group
+            target_dataset_id = dataset_id
+        elif dataset_id != target_dataset_id:
+            validation_error = "mixed_dataset"
+            skipped.append({"wsi_id": requested_id, "reason": "mixed_dataset"})
+            continue
+        valid_ids.append(requested_id)
+
+    return valid_ids, skipped, target_data_group, target_dataset_id, validation_error
+
+
+@router.post("/independent-inference")
+async def start_independent_inference(
+    req: IndependentInferenceRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import uuid as uuid_module
+
+    trained_model = await TrainedModelRepository.get_by_id(db, req.model_id)
+    if not trained_model:
+        raise HTTPException(status_code=404, detail=f"Model not found: {req.model_id}")
+    if not trained_model.is_active:
+        raise HTTPException(status_code=400, detail="Model is not active")
+
+    model_task_id = _coerce_str(trained_model.task_id)
+    model_task = await TrainingTaskRepository.get_by_id(db, model_task_id)
+    if not model_task:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model's training task not found: {model_task_id}",
+        )
+
+    await _require_task_access(
+        user,
+        model_task,
+        db,
+        owner_user_id=_coerce_str(trained_model.user_id),
+        forbidden_detail="You don't have permission to use this model",
+    )
+
+    model_dg = model_task.data_group
+    model_task_type = model_dg.task_type if model_dg else ""
+    model_data_type = model_dg.data_type if model_dg else "wsi"
+    elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+    valid_ids, skipped, target_data_group, target_dataset_id, validation_error = await _resolve_independent_inference_wsi_ids(
+        db, user, req.wsi_ids, model_task_type, model_data_type, elevated_dataset_ids
+    )
+    if validation_error == "mixed_dataset":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Select images from a single dataset",
+                "skipped": skipped,
+            },
+        )
+    if not valid_ids:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "No eligible unlabeled images found for this model",
+                "skipped": skipped,
+            },
+        )
+    if target_data_group is None:
+        raise HTTPException(status_code=400, detail="No compatible data group found")
+
+    valid_wsi_map = await WSIRepository.get_by_ids_with_dataset(db, valid_ids)
+    _raise_if_wsi_cached_unavailable(
+        [valid_wsi_map[wsi_id] for wsi_id in valid_ids if wsi_id in valid_wsi_map]
+    )
+
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
+    task_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
+    task_name = f"{model_task.task_name} independent inference"[:200]
+    independent_task = TrainingTask(
+        task_id=task_id,
+        task_name=task_name,
+        group_id=target_data_group.group_id,
+        user_id=str(user.id),
+        status=TaskStatus.PENDING,
+        progress=0,
+        classes=trained_model.classes,
+        preprocessing_config=model_task.preprocessing_config
+        or {"feature_extractor": trained_model.feature_extractor},
+        model_config={
+            "model_task_id": model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": target_dataset_id,
+            "wsi_ids": valid_ids,
+            "skipped": skipped,
+            "model_task_type": model_task_type,
+            "model_data_type": model_data_type,
+            "source": "selected_wsi",
+            "execution_mode": "batch_inference",
+            "total_wsi": len(valid_ids),
+            "processed_wsi": 0,
+            "results_count": 0,
+        },
+    )
+    db.add(independent_task)
+    await db.flush()
+    await db.commit()
+
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": task_id,
+            "model_task_id": model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": target_dataset_id or "",
+            "wsi_ids": valid_ids,
+            "execution_mode": "batch_inference",
+        },
+    )
+    await _enqueue_descriptor_or_503(
+        job_id=task_id,
+        job_kind="inference",
+        handler="inference.batch",
+        payload=descriptor_payload,
+        on_enqueue_failure=lambda detail: _fail_training_task_enqueue(task_id, detail),
+    )
+
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "message": "Independent inference job submitted",
+        "total_wsi": len(valid_ids),
+        "model_id": str(trained_model.model_id),
+        "model_task_id": model_task_id,
+        "wsi_ids": valid_ids,
+        "skipped": skipped,
+    }
+
+
+async def _require_batch_inference_task(
+    task_id: str,
+    user: User,
+    db: AsyncSession,
+) -> TrainingTask:
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404, detail=f"Batch inference task not found: {task_id}"
+        )
+    dg = task.data_group
+    if not _is_batch_inference_task_id(getattr(task, "task_id", None)) or not dg:
+        raise HTTPException(
+            status_code=404, detail=f"Task {task_id} is not a batch inference task"
+        )
+    if not user.is_admin() and _coerce_str(task.user_id) != str(user.id):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to access this task"
+        )
+    return task
+
+
+async def _require_independent_inference_task(
+    task_id: str,
+    user: User,
+    db: AsyncSession,
+) -> TrainingTask:
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404, detail=f"Independent inference task not found: {task_id}"
+        )
+    task_id_value = getattr(task, "task_id", None)
+    if not (
+        _is_independent_inference_task_id(task_id_value)
+        or (_is_batch_inference_task_id(task_id_value) and _has_selected_wsi_inference_config(task))
+    ):
+        raise HTTPException(
+            status_code=404, detail=f"Task {task_id} is not an independent inference task"
+        )
+    if not user.is_admin() and _coerce_str(task.user_id) != str(user.id):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to access this task"
+        )
+    return task
+
+
+def _inference_task_item(t: TrainingTask) -> Dict[str, Any]:
+    mc = t.model_config if isinstance(t.model_config, dict) else {}
+    dg = t.data_group
+    return {
+        "task_id": _coerce_str(t.task_id),
+        "task_name": t.task_name,
+        "status": t.status,
+        "progress": t.progress or 0,
+        "model_task_id": mc.get("model_task_id"),
+        "model_id": mc.get("model_id"),
+        "dataset_id": mc.get("dataset_id"),
+        "wsi_ids": mc.get("wsi_ids", []),
+        "skipped": mc.get("skipped", []),
+        "model_task_type": mc.get("model_task_type"),
+        "model_data_type": mc.get("model_data_type"),
+        "data_type": dg.data_type if dg else None,
+        "task_type": dg.task_type if dg else None,
+        "total_wsi": mc.get("total_wsi", 0),
+        "results_count": mc.get("results_count", 0),
+        "error": t.error_message,
+        "created_at": (
+            t.created_at.isoformat() + "Z" if isinstance(t.created_at, datetime) else None
+        ),
+        "finished_at": (
+            t.finished_at.isoformat() + "Z" if isinstance(t.finished_at, datetime) else None
+        ),
+    }
+
+
+@router.get("/batch-inference/tasks")
+async def list_batch_inference_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id_filter = None if user.is_admin() else str(user.id)
+    tasks = await TrainingTaskRepository.get_batch_inference_tasks(
+        db, user_id=user_id_filter, skip=skip, limit=limit
+    )
+    total = await TrainingTaskRepository.count_batch_inference_tasks(
+        db, user_id=user_id_filter
+    )
+    items = []
+    for t in tasks:
+        file_prog = await get_progress(_coerce_str(t.task_id))
+        item = _inference_task_item(t)
+        item["progress"] = file_prog if file_prog is not None else item["progress"]
+        items.append(item)
+    return {"items": items, "total": total}
+
+
+@router.get("/independent-inference/tasks")
+async def list_independent_inference_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id_filter = None if user.is_admin() else str(user.id)
+    total_batch_tasks = await TrainingTaskRepository.count_batch_inference_tasks(
+        db, user_id=user_id_filter, task_id_prefix="binfer_"
+    )
+    items = []
+    selected_total = 0
+    page_size = max(1, limit)
+    scan_offset = 0
+    while scan_offset < total_batch_tasks:
+        tasks = await TrainingTaskRepository.get_batch_inference_tasks(
+            db,
+            user_id=user_id_filter,
+            skip=scan_offset,
+            limit=page_size,
+            task_id_prefix="binfer_",
+        )
+        if not tasks:
+            break
+        for t in tasks:
+            if not _has_selected_wsi_inference_config(t):
+                continue
+            if selected_total >= skip and len(items) < limit:
+                file_prog = await get_progress(_coerce_str(t.task_id))
+                item = _inference_task_item(t)
+                item["progress"] = file_prog if file_prog is not None else item["progress"]
+                items.append(item)
+            selected_total += 1
+        scan_offset += len(tasks)
+    return {"items": items, "total": selected_total}
+
+
+@router.get("/independent-inference/{task_id}/results")
+async def get_independent_inference_results(
+    task_id: str,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_independent_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=skip, limit=limit
+    )
+    total = await AIResultRepository.count_by_task(db, task_id)
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    return {
+        "task_type": mc.get("model_task_type", ""),
+        "data_type": dg.data_type if dg else None,
+        "wsi_ids": mc.get("wsi_ids", []),
+        "skipped": mc.get("skipped", []),
+        "items": [r.to_dict() for r in results],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
+
+
+@router.get("/batch-inference/{task_id}/results")
+async def get_batch_inference_results(
+    task_id: str,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=skip, limit=limit
+    )
+    total = await AIResultRepository.count_by_task(db, task_id)
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    return {
+        "task_type": mc.get("model_task_type", ""),
+        "data_type": dg.data_type if dg else None,
+        "items": [r.to_dict() for r in results],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
+
+
+@router.get("/batch-inference/{task_id}/summary")
+async def get_batch_inference_summary(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=0, limit=None
+    )
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    task_type = mc.get("model_task_type", "")
+    total = len(results)
+    summary: dict = {
+        "task_id": task_id,
+        "task_name": task.task_name,
+        "status": task.status,
+        "task_type": task_type,
+        "data_type": dg.data_type if dg else None,
+        "model_task_id": mc.get("model_task_id"),
+        "model_id": mc.get("model_id"),
+        "dataset_id": mc.get("dataset_id"),
+        "total_slides": total,
+        "processed_slides": total,
+        "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
+        "completed_at": (
+            task.finished_at.isoformat() + "Z"
+            if task.status == "completed" and task.finished_at
+            else None
+        ),
+    }
+    if task_type in ("wsi_classification", "patch_classification"):
+        from collections import Counter
+
+        dist = Counter(r.pred for r in results if r.pred)
+        summary["class_distribution"] = dict(dist)
+    elif task_type == "wsi_survival":
+        risk_scores = [
+            r.extra_metadata.get("risk_score")
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("risk_score") is not None
+        ]
+        risk_groups = [
+            str(r.extra_metadata.get("risk_group", "")).strip().lower()
+            for r in results
+            if r.extra_metadata
+        ]
+        summary["risk_high_count"] = sum(
+            1 for group in risk_groups if group in ("high", "high risk")
+        )
+        summary["risk_low_count"] = sum(
+            1 for group in risk_groups if group in ("low", "low risk")
+        )
+        summary["mean_risk_score"] = (
+            sum(risk_scores) / len(risk_scores) if risk_scores else None
+        )
+    elif task_type == "patch_segmentation":
+        summary["masks_generated"] = sum(
+            1
+            for r in results
+            if r.extra_metadata
+            and (r.extra_metadata.get("pred_mask_path") or r.extra_metadata.get("pred_mask_file"))
+        )
+    return summary
+
+
+@router.get("/batch-inference/{task_id}/export-csv")
+async def export_batch_inference_csv(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=0, limit=None
+    )
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    task_type = mc.get("model_task_type", "")
+
+    output = io.StringIO()
+    if task_type in ("wsi_classification", "patch_classification"):
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "pred",
+            "probs",
+            "created_at",
+        ]
+    elif task_type == "wsi_survival":
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "risk_score",
+            "risk_group",
+            "created_at",
+        ]
+    else:
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "pred_mask_path",
+            "created_at",
+        ]
+
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for r in results:
+        wsi = r.wsi_slide
+        meta = r.extra_metadata or {}
+        row = {
+            "wsi_id": r.wsi_id,
+            "original_filename": wsi.original_filename if wsi else "",
+            "case_id": wsi.case_id if wsi else "",
+            "pred": r.pred or "",
+            "probs": str(r.probs) if r.probs else "",
+            "risk_score": meta.get("risk_score", ""),
+            "risk_group": meta.get("risk_group", ""),
+            "pred_mask_path": meta.get("pred_mask_path") or meta.get("pred_mask_file", ""),
+            "created_at": r.created_at.isoformat() + "Z" if r.created_at else "",
+        }
+        writer.writerow(row)
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="batch_inference_{task_id}.csv"'
+        },
+    )
+
+
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
@@ -1368,13 +2833,12 @@ async def start_external_validation(
     Requires pathologist/admin role OR temporary elevated permission for the dataset.
     Users can only validate with models/data they own.
 
-    Creates a TrainingTask record with task_type="external_validation" and submits to the
-    GPU task queue for execution. Progress is tracked via SSE like training tasks.
+    Creates an extval_* workflow TrainingTask on the target dataset's canonical task type
+    and submits it to the GPU task queue. Progress is tracked via SSE like training tasks.
 
     Returns the task_id that can be used to track progress.
     """
     import uuid as uuid_module
-    from ..task_queue import get_task_queue, TaskType
 
     effective_task_owner_user_id = str(user.id)
 
@@ -1448,10 +2912,10 @@ async def start_external_validation(
     model_data_type = model_data_group.data_type if model_data_group else "wsi"
     target_data_type = target_data_group.data_type if target_data_group else "wsi"
     model_task_type = (
-        model_data_group.task_type if model_data_group else "classification"
+        model_data_group.task_type if model_data_group else "wsi_classification"
     )
     target_task_type = (
-        target_data_group.task_type if target_data_group else "classification"
+        target_data_group.task_type if target_data_group else "wsi_classification"
     )
     target_aggregation_level = (
         target_data_group.aggregation_level if target_data_group else "file"
@@ -1544,84 +3008,20 @@ async def start_external_validation(
         raise HTTPException(status_code=400, detail=compat_error)
 
     # Check if inference results already exist for this model + data combination
-    # Look for existing extval_*_result.json files in the WSI ai_results directories
+    # by scanning extval task-level Zarr bundles.
     uploads_dir = Config.get_uploads_dir()
-    existing_results_count = 0
-    existing_validation_id = None
-    incomplete_existing_examples: List[Dict[str, Any]] = []
-
-    def _check_existing_results():
-        """Check for existing external validation results."""
-        nonlocal \
-            existing_results_count, \
-            existing_validation_id, \
-            incomplete_existing_examples
-        for wsi_id in wsi_ids:
-            ai_results_dir = uploads_dir / "ai_results" / wsi_id
-            if ai_results_dir.exists():
-                # Look for extval_*_result.json files
-                for result_file in ai_results_dir.glob("extval_*_result.json"):
-                    try:
-                        with open(result_file, "r") as f:
-                            result_data = json.load(f)
-                        # Check if this result is from the same model
-                        if result_data.get("task_id") == trained_model.task_id:
-                            validation_task_id = result_data.get("validation_task_id")
-                            if not validation_task_id and result_file.name.endswith(
-                                "_result.json"
-                            ):
-                                validation_task_id = result_file.name[
-                                    : -len("_result.json")
-                                ]
-
-                            result_metadata = dict(result_data)
-                            result_metadata["result_file"] = str(result_file)
-                            derived_attention_file = _derive_companion_artifact_path(
-                                result_file, "_attention.npy"
-                            )
-                            if (
-                                model_data_type != "patch"
-                                and not result_metadata.get("attention_file")
-                                and derived_attention_file.exists()
-                            ):
-                                result_metadata["attention_file"] = str(
-                                    derived_attention_file
-                                )
-                                result_metadata.setdefault("attention_type", "derived")
-
-                            missing_count, missing_examples = (
-                                _collect_missing_ai_result_artifacts(
-                                    task_id=validation_task_id
-                                    or result_file.name[: -len("_result.json")],
-                                    task_type=str(
-                                        result_data.get("task_type") or model_task_type
-                                    ),
-                                    data_type=model_data_type,
-                                    wsi_id=wsi_id,
-                                    extra_metadata=result_metadata,
-                                    sample_limit=1,
-                                )
-                            )
-                            if missing_count > 0:
-                                if (
-                                    len(incomplete_existing_examples) < 5
-                                    and missing_examples
-                                ):
-                                    incomplete_existing_examples.extend(
-                                        missing_examples
-                                    )
-                                continue
-
-                            existing_results_count += 1
-                            # Extract validation_task_id from the result
-                            if existing_validation_id is None:
-                                existing_validation_id = validation_task_id
-                            break  # Found result for this WSI, move to next
-                    except Exception:
-                        continue
-        return existing_results_count, existing_validation_id
-
-    await asyncio.to_thread(_check_existing_results)
+    (
+        existing_results_count,
+        existing_validation_id,
+        incomplete_existing_examples,
+    ) = await asyncio.to_thread(
+        _check_existing_extval_results_from_store,
+        uploads_dir,
+        wsi_ids,
+        trained_model_task_id,
+        model_task_type,
+        model_data_type,
+    )
     if incomplete_existing_examples:
         logger.info(
             f"Ignoring incomplete external validation cache entries for model {trained_model.task_id}: "
@@ -1693,16 +3093,59 @@ async def start_external_validation(
                 f"  - Running analysis directly with bootstrap_ci={req.compute_bootstrap_ci}"
             )
 
-            # Run analysis directly on existing results
-            await _auto_trigger_external_validation_analysis(
-                task_id=existing_validation_id,
-                model_task_id=trained_model_task_id,
-                model_id=req.model_id,
-                dataset_id=req.dataset_id,
-                metrics=analysis_metrics,
-                charts=analysis_charts,
-                bootstrap_ci_metrics=bootstrap_ci_metrics,
-                submitted_by=str(user.id),
+            if not await is_worker_healthy():
+                raise HTTPException(status_code=503, detail="Task worker unavailable")
+
+            source_name = req.model_id
+            target_name = req.dataset_id
+            try:
+                model = await TrainedModelRepository.get_by_id(db, req.model_id)
+                if model:
+                    source_name = model.model_name or req.model_id
+                target_ds = await DatasetRepository.get_by_id(db, req.dataset_id)
+                if target_ds:
+                    target_name = target_ds.name or req.dataset_id
+            except Exception:
+                pass
+
+            analysis_id = (
+                datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_auto"
+            )
+            state = get_analysis_state()
+            await state.create(
+                analysis_id,
+                existing_validation_id,
+                str(user.id),
+                title=f"{source_name} → {target_name}",
+                analysis_type="external",
+                task_category=None,
+            )
+
+            analysis_payload = type_cast(
+                JsonPayload,
+                {
+                    "task_id": analysis_id,
+                    "runner_module": "gateway.routes.results",
+                    "runner_name": "run_analysis_pipeline",
+                    "runner_kwargs": {
+                        "task_id": analysis_id,
+                        "analysis_id": analysis_id,
+                        "training_task_id": existing_validation_id,
+                        "task_type_str": "external_validation",
+                        "metrics": analysis_metrics,
+                        "charts": analysis_charts,
+                        "description": "Auto-triggered after external validation inference",
+                        "bootstrap_ci_metrics": bootstrap_ci_metrics,
+                        "submitted_by": str(user.id),
+                    },
+                },
+            )
+            await _enqueue_descriptor_or_503(
+                job_id=analysis_id,
+                job_kind="analysis",
+                handler="analysis.task",
+                payload=analysis_payload,
+                on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
             )
 
             return {
@@ -1716,18 +3159,13 @@ async def start_external_validation(
     # Create validation task ID
     validation_id = f"extval_{uuid_module.uuid4().hex[:16]}"
 
-    # Get or create DataGroup for external validation
-    # Use the same data_type as the target dataset, with "external_validation" task_type
-    # and the target dataset's aggregation level
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
     target_aggregation_level = (
         target_data_group.aggregation_level if target_data_group else "file"
     )
-    validation_data_group = await DataGroupRepository.get_or_create(
-        db,
-        data_type=target_data_type,
-        aggregation_level=target_aggregation_level,
-        task_type="external_validation",
-    )
+    validation_data_group = target_data_group
 
     # Create task record in database (reuse TrainingTask table)
     from backend.database.models import TrainingTask
@@ -1754,8 +3192,11 @@ async def start_external_validation(
             "dataset_name": target_dataset.name,  # Store dataset name for display
             "total_wsi": len(wsi_ids),
             "aggregator": trained_model.aggregator,  # Store aggregator name for task list display
+            "classifier": (model_task.model_config or {}).get(
+                "classifier"
+            ),  # Store classifier for patch task list display
             # Store pipeline params needed to re-submit after system restart (resume_interrupted_tasks)
-            "model_task_type": model_task_type,  # e.g. "classification", "survival", "wsi_survival"
+            "model_task_type": model_task_type,  # e.g. "wsi_classification", "wsi_survival", "patch_segmentation"
             "model_data_type": model_data_type,  # "wsi" or "patch"
             # Store analysis options for auto-triggered analysis
             "analysis_metrics": analysis_metrics,
@@ -1773,22 +3214,29 @@ async def start_external_validation(
     logger.info(f"  - WSI count: {len(wsi_ids)}")
     logger.info(f"  - Bootstrap CI: {req.compute_bootstrap_ci}")
 
-    # Submit to task queue for execution
-    task_queue = get_task_queue()
     pipeline_kwargs = {
-        "model_task_id": trained_model.task_id,
+        "model_task_id": trained_model_task_id,
         "model_id": req.model_id,
-        "model_classes": trained_model.classes,
+        "model_classes": _coerce_str_list(trained_model.classes),
         "model_task_type": model_task_type,  # Pass model's task type for survival vs classification handling
         "model_data_type": model_data_type,  # "wsi" or "patch"
         "dataset_id": req.dataset_id,
         "wsi_ids": wsi_ids,
+        "preprocessing_config": model_task.preprocessing_config or {},
     }
-    await task_queue.submit(
-        task_id=validation_id,
-        task_type=TaskType.EXTERNAL_VALIDATION,
-        coro_func=_run_external_validation,
-        **pipeline_kwargs,
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": validation_id,
+            **pipeline_kwargs,
+        },
+    )
+    await _enqueue_descriptor_or_503(
+        job_id=validation_id,
+        job_kind="external_validation",
+        handler="external_validation.run",
+        payload=descriptor_payload,
+        on_enqueue_failure=lambda detail: _fail_training_task_enqueue(validation_id, detail),
     )
 
     return {
@@ -1811,13 +3259,11 @@ async def get_completed_external_validations(
     Returns a list of completed extval tasks with model_id, dataset_id,
     and whether analysis results exist.
     """
-    # Query completed external validation tasks
     query = (
         select(TrainingTask)
-        .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
         .where(
             and_(
-                DataGroup.task_type == "external_validation",
+                TrainingTask.task_id.like("extval_%"),
                 TrainingTask.status == TaskStatus.COMPLETED,
             )
         )
@@ -1876,10 +3322,7 @@ async def get_validation_progress(
         forbidden_detail="You don't have permission to view this task",
     )
 
-    # Check if this is an external validation task via DataGroup
-    task_data_group = task.data_group
-    task_type = task_data_group.task_type if task_data_group else None
-    if task_type != "external_validation":
+    if not _is_external_validation_task_id(task_id):
         raise HTTPException(
             status_code=400, detail=f"Task {task_id} is not an external validation task"
         )
@@ -1888,8 +3331,6 @@ async def get_validation_progress(
 
     # Overlay file-based progress if available (more up-to-date than DB during inference).
     # This mirrors the pattern used in the training SSE endpoint (training.py lines 306-308).
-    from backend.common.progress_store import get_progress
-
     file_prog = await get_progress(task_id)
     progress = file_prog if file_prog is not None else task.progress
 
@@ -1994,8 +3435,8 @@ async def get_task_analysis(
                 user_obj = row[0]
                 uid_str = str(user_obj.id)
                 user_map[uid_str] = (
-                    user_obj.nickname or user_obj.email
-                )  # nickname or email
+                    user_obj.nickname or user_obj.username
+                )  # nickname or username
 
         # Resolve submitted_by from user_id to display name
         for analysis in analyses:
@@ -2038,8 +3479,6 @@ async def run_task_analysis(
     Returns:
         Submission confirmation with analysis_id and status
     """
-    from gateway.task_queue import get_task_queue, TaskType
-
     task, task_dataset_id = await _get_task_with_access(
         task_id,
         user,
@@ -2098,10 +3537,10 @@ async def run_task_analysis(
 
     # Get task_type from DataGroup relationship
     task_data_group = task.data_group
-    task_type_str = task_data_group.task_type if task_data_group else "classification"
+    task_type_str = task_data_group.task_type if task_data_group else "wsi_classification"
 
-    # Build meaningful title based on task type
-    is_external = task_type_str == "external_validation"
+    # Build meaningful title based on workflow id.
+    is_external = _is_external_validation_task_id(task.task_id)
     if is_external:
         model_config = task.model_config or {}
         model_id = model_config.get("model_id", "")
@@ -2126,9 +3565,9 @@ async def run_task_analysis(
         task_category = None
     else:
         # Internal analysis: use task name only (category sent as separate field for i18n)
-        if task_type_str in ("wsi_survival", "survival"):
+        if task_type_str == "wsi_survival":
             task_category = "survival"
-        elif task_type_str in ("segmentation", "patch_segmentation"):
+        elif task_type_str == "patch_segmentation":
             task_category = "segmentation"
         else:
             task_category = "classification"
@@ -2160,6 +3599,10 @@ async def run_task_analysis(
         except Exception as _ar_err:
             logger.warning(f"Failed to persist AnalysisRun record: {_ar_err}")
 
+    if not await is_worker_healthy():
+        await _fail_analysis_enqueue(analysis_id, "Task worker unavailable")
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
     # Check if GPU inference is needed (AI results missing)
     # External validation does not need GPU check here as it handles its own inference flow
     needs_gpu = False
@@ -2171,7 +3614,7 @@ async def run_task_analysis(
             else {}
         )
         is_kfold = (
-            task_type_str not in ("segmentation", "patch_segmentation")
+            task_type_str != "patch_segmentation"
             and split_config.get("strategy", "random") == "k_fold"
         )
         if _analysis_requires_training_metrics(
@@ -2185,46 +3628,52 @@ async def run_task_analysis(
             )
         needs_gpu = not resources["has_ai_results"]
 
-    task_queue = get_task_queue()
+    runner_kwargs = type_cast(
+        JsonPayload,
+        {
+            "task_id": analysis_id,
+            "analysis_id": analysis_id,
+            "training_task_id": task_id,
+            "task_type_str": task_type_str,
+            "metrics": request.metrics,
+            "charts": request.charts,
+            "description": request.description,
+            "bootstrap_ci_metrics": request.bootstrap_ci_metrics or [],
+            "submitted_by": str(user.id),
+        },
+    )
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": analysis_id,
+            "runner_module": "gateway.routes.results",
+            "runner_name": "run_analysis_pipeline",
+            "runner_kwargs": runner_kwargs,
+        },
+    )
 
     if needs_gpu:
-        # GPU inference needed - submit to GPU queue for queuing
         await state.set_queued(analysis_id)
-        await task_queue.submit(
-            task_id=analysis_id,
-            task_type=TaskType.ANALYSIS,
-            coro_func=run_analysis_pipeline,
-            analysis_id=analysis_id,
-            training_task_id=task_id,
-            task_type_str=task_type_str,
-            metrics=request.metrics,
-            charts=request.charts,
-            description=request.description,
-            bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
-            submitted_by=str(user.id),
+        await _enqueue_descriptor_or_503(
+            job_id=analysis_id,
+            job_kind="analysis",
+            handler="analysis.task",
+            payload=descriptor_payload,
+            on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
         )
         logger.info(
             f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}"
         )
     else:
-        # No GPU needed - run directly without queuing
-        analysis_task = asyncio.create_task(
-            run_analysis_pipeline(
-                task_id=analysis_id,
-                analysis_id=analysis_id,
-                training_task_id=task_id,
-                task_type_str=task_type_str,
-                metrics=request.metrics,
-                charts=request.charts,
-                description=request.description,
-                bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
-                submitted_by=str(user.id),
-            )
+        await _enqueue_descriptor_or_503(
+            job_id=analysis_id,
+            job_kind="analysis",
+            handler="analysis.task",
+            payload=descriptor_payload,
+            on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
         )
-        # Register task for potential cancellation
-        state.register_task(analysis_id, analysis_task)
         logger.info(
-            f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}"
+            f"Analysis task enqueued (CPU-only): task_id={task_id}, analysis_id={analysis_id}"
         )
 
     # Return immediately with pending/queued status
@@ -2334,8 +3783,6 @@ async def get_quick_analysis(
 
     # If no analysis exists and run_if_missing is True, submit analysis task to queue
     if latest_summary is None and run_if_missing:
-        from gateway.task_queue import get_task_queue, TaskType
-
         await _require_task_gpu_permission(
             user,
             task,
@@ -2371,11 +3818,11 @@ async def get_quick_analysis(
         quick_task_type_str = (
             quick_task_data_group.task_type
             if quick_task_data_group
-            else "classification"
+            else "wsi_classification"
         )
 
-        # Build meaningful title and metadata for background task display
-        is_external = quick_task_type_str == "external_validation"
+        # Build meaningful title and metadata for background task display.
+        is_external = _is_external_validation_task_id(task.task_id)
         if is_external:
             model_config = task.model_config or {}
             model_id = model_config.get("model_id", "")
@@ -2398,9 +3845,9 @@ async def get_quick_analysis(
             analysis_type = "external"
             task_category = None
         else:
-            if quick_task_type_str in ("wsi_survival", "survival"):
+            if quick_task_type_str == "wsi_survival":
                 task_category = "survival"
-            elif quick_task_type_str in ("segmentation", "patch_segmentation"):
+            elif quick_task_type_str == "patch_segmentation":
                 task_category = "segmentation"
             else:
                 task_category = "classification"
@@ -2417,9 +3864,13 @@ async def get_quick_analysis(
             task_category=task_category,
         )
 
+        if not await is_worker_healthy():
+            await _fail_analysis_enqueue(analysis_id, "Task worker unavailable")
+            raise HTTPException(status_code=503, detail="Task worker unavailable")
+
         # Default metrics and charts based on task type
-        is_survival_task = quick_task_type_str in ("wsi_survival", "survival")
-        is_seg_task = quick_task_type_str in ("segmentation", "patch_segmentation")
+        is_survival_task = quick_task_type_str == "wsi_survival"
+        is_seg_task = quick_task_type_str == "patch_segmentation"
         if is_survival_task:
             default_metrics = ["c_index", "integrated_brier_score"]
             default_charts = ["km_curve", "loss_curve"]
@@ -2453,7 +3904,7 @@ async def get_quick_analysis(
             else {}
         )
         is_kfold = (
-            quick_task_type_str not in ("segmentation", "patch_segmentation")
+            quick_task_type_str != "patch_segmentation"
             and split_config.get("strategy", "random") == "k_fold"
         )
         if _analysis_requires_training_metrics(
@@ -2467,46 +3918,52 @@ async def get_quick_analysis(
             )
         needs_gpu = not resources["has_ai_results"]
 
-        task_queue = get_task_queue()
+        runner_kwargs = type_cast(
+            JsonPayload,
+            {
+                "task_id": analysis_id,
+                "analysis_id": analysis_id,
+                "training_task_id": task_id,
+                "task_type_str": quick_task_type_str,
+                "metrics": default_metrics,
+                "charts": default_charts,
+                "description": None,
+                "bootstrap_ci_metrics": ci_metrics_list,
+                "submitted_by": str(user.id),
+            },
+        )
+        descriptor_payload = type_cast(
+            JsonPayload,
+            {
+                "task_id": analysis_id,
+                "runner_module": "gateway.routes.results",
+                "runner_name": "run_analysis_pipeline",
+                "runner_kwargs": runner_kwargs,
+            },
+        )
 
         if needs_gpu:
-            # GPU inference needed - submit to GPU queue for queuing
             await state.set_queued(analysis_id)
-            await task_queue.submit(
-                task_id=analysis_id,
-                task_type=TaskType.ANALYSIS,
-                coro_func=run_analysis_pipeline,
-                analysis_id=analysis_id,
-                training_task_id=task_id,
-                task_type_str=quick_task_type_str,
-                metrics=default_metrics,
-                charts=default_charts,
-                description=None,
-                bootstrap_ci_metrics=ci_metrics_list,
-                submitted_by=str(user.id),
+            await _enqueue_descriptor_or_503(
+                job_id=analysis_id,
+                job_kind="analysis",
+                handler="analysis.task",
+                payload=descriptor_payload,
+                on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
             )
             logger.info(
                 f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}"
             )
         else:
-            # No GPU needed - run directly without queuing
-            analysis_task = asyncio.create_task(
-                run_analysis_pipeline(
-                    task_id=analysis_id,
-                    analysis_id=analysis_id,
-                    training_task_id=task_id,
-                    task_type_str=quick_task_type_str,
-                    metrics=default_metrics,
-                    charts=default_charts,
-                    description=None,
-                    bootstrap_ci_metrics=ci_metrics_list,
-                    submitted_by=str(user.id),
-                )
+            await _enqueue_descriptor_or_503(
+                job_id=analysis_id,
+                job_kind="analysis",
+                handler="analysis.task",
+                payload=descriptor_payload,
+                on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
             )
-            # Register task for potential cancellation
-            state.register_task(analysis_id, analysis_task)
             logger.info(
-                f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}"
+                f"Analysis task enqueued (CPU-only): task_id={task_id}, analysis_id={analysis_id}"
             )
 
         # Return immediately with pending/queued status
@@ -2580,7 +4037,7 @@ async def get_quick_analysis(
         "analysis_id": analysis_id,
         "has_analysis": True,
         "timestamp": latest_summary.get("timestamp"),
-        "task_type": latest_summary.get("task_type", "classification"),
+        "task_type": latest_summary.get("task_type", "wsi_classification"),
         "num_samples": latest_summary.get("num_samples"),
         "classes": latest_summary.get("classes", []),
         "is_binary": latest_summary.get("is_binary", False),
@@ -2597,8 +4054,8 @@ async def get_quick_analysis(
 
     # Include K-Fold training details if available
     kfold_training = latest_summary.get("kfold_training")
-    task_type = latest_summary.get("task_type", "classification")
-    if task_type not in ("segmentation", "patch_segmentation") and kfold_training:
+    task_type = latest_summary.get("task_type", "wsi_classification")
+    if task_type != "patch_segmentation" and kfold_training:
         response["kfold_training"] = kfold_training
 
     return response
@@ -2642,6 +4099,120 @@ async def get_analysis_file(
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     return FileResponse(file_path)
+
+
+@router.post("/tasks/{task_id}/analysis/{analysis_id}/full-export")
+async def start_segmentation_analysis_full_export(
+    task_id: str,
+    analysis_id: str,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task:
+        await _require_task_access(
+            user,
+            task,
+            db,
+            forbidden_detail="You don't have permission to export this analysis",
+        )
+        data_group = getattr(task, "data_group", None)
+        if getattr(data_group, "task_type", None) != "patch_segmentation":
+            raise HTTPException(
+                status_code=400,
+                detail="Full mask export is only available for segmentation analyses",
+            )
+
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id
+    if not _analysis_has_required_files(analysis_dir):
+        raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
+
+    export_task_id = str(uuid.uuid4())
+    await ExportTaskRepository.create(
+        db=db,
+        task_id=export_task_id,
+        user_id=str(user.id),
+        export_type="segmentation_analysis_full",
+        file_format="zip",
+        filter_params={"task_id": task_id, "analysis_id": analysis_id},
+    )
+    await db.commit()
+
+    background_tasks.add_task(
+        process_segmentation_analysis_full_export,
+        export_task_id,
+        task_id,
+        analysis_id,
+        str(user.id),
+        async_session_maker,
+    )
+
+    return {"task_id": export_task_id, "status": "pending"}
+
+
+@router.get("/analysis/full-export/{export_task_id}")
+async def get_segmentation_analysis_full_export_status(
+    export_task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await ExportTaskRepository.get_by_id(db, export_task_id)
+    if not task or getattr(task, "export_type", None) != "segmentation_analysis_full":
+        raise HTTPException(status_code=404, detail="Export task not found")
+    if str(getattr(task, "user_id", "")) != str(user.id) and not user.is_admin():
+        raise HTTPException(status_code=403, detail="You don't have permission to view this export")
+    return task.to_dict()
+
+
+@router.delete("/analysis/full-export/{export_task_id}")
+async def cancel_segmentation_analysis_full_export(
+    export_task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await ExportTaskRepository.get_by_id(db, export_task_id)
+    if not task or getattr(task, "export_type", None) != "segmentation_analysis_full":
+        raise HTTPException(status_code=404, detail="Export task not found")
+    if str(getattr(task, "user_id", "")) != str(user.id) and not user.is_admin():
+        raise HTTPException(status_code=403, detail="You don't have permission to cancel this export")
+    if str(getattr(task, "status", "")) in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=400, detail=f"Export cannot be cancelled. Status: {task.status}")
+
+    await ExportTaskRepository.update_status(
+        db,
+        export_task_id,
+        status="cancelled",
+        progress=0,
+        error_message="Cancelled by user",
+    )
+    await db.commit()
+    return {"cancelled": True, "status": "cancelled"}
+
+
+@router.get("/analysis/full-export/{export_task_id}/download")
+async def download_segmentation_analysis_full_export(
+    export_task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await ExportTaskRepository.get_by_id(db, export_task_id)
+    if not task or getattr(task, "export_type", None) != "segmentation_analysis_full":
+        raise HTTPException(status_code=404, detail="Export task not found")
+    if str(getattr(task, "user_id", "")) != str(user.id) and not user.is_admin():
+        raise HTTPException(status_code=403, detail="You don't have permission to download this export")
+    if str(getattr(task, "status", "")) != "completed":
+        raise HTTPException(status_code=400, detail=f"Export not ready. Status: {task.status}")
+
+    file_path = getattr(task, "file_path", None)
+    if not file_path or not os.path.exists(str(file_path)):
+        raise HTTPException(status_code=404, detail="Export file not found")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=f"segmentation_analysis_{export_task_id}.zip",
+        media_type="application/zip",
+    )
 
 
 @router.delete("/tasks/{task_id}/analysis/{analysis_id}")
@@ -2689,6 +4260,17 @@ async def delete_task_analysis(
                 raise
             except Exception:
                 pass
+
+    state = get_analysis_state()
+    analysis_task = await state.get(analysis_id)
+    if analysis_task and analysis_task.get("status") not in [
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    ]:
+        await publish_task_cancellation(analysis_id)
+        await state.cancel_running_task(analysis_id)
+        await state.set_cancelled(analysis_id)
 
     try:
         await asyncio.to_thread(shutil.rmtree, analysis_dir)
@@ -3012,21 +4594,18 @@ async def run_analysis_pipeline(
                 else {}
             )
             split_strategy = split_config.get("strategy", "random")
-            is_segmentation_task = task_type_str in (
-                "segmentation",
-                "patch_segmentation",
-            )
+            is_segmentation_task = task_type_str == "patch_segmentation"
             is_kfold = not is_segmentation_task and split_strategy == "k_fold"
             if (
                 is_kfold
                 and has_ci_calculation
-                and task_type_str != "external_validation"
+                and not _is_external_validation_task_id(task_id)
             ):
                 has_ci_calculation = (
                     False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
                 )
 
-            if task_type_str != "external_validation":
+            if not _is_external_validation_task_id(task_id):
                 # Check if AI results exist
                 task_id_str = _coerce_str(task.task_id)
                 resources = await _check_task_resources(task_id_str, db)
@@ -3115,7 +4694,7 @@ async def run_analysis_pipeline(
             }
 
             match task_type_str:
-                case "wsi_survival" | "survival":
+                case "wsi_survival":
                     result = await _run_survival_analysis(
                         task,
                         request,
@@ -3133,7 +4712,7 @@ async def run_analysis_pipeline(
                         progress_config=progress_config,
                         submitted_by=submitted_by,
                     )
-                case "segmentation" | "patch_segmentation":
+                case "patch_segmentation":
                     result = await _run_segmentation_analysis(
                         task,
                         request,

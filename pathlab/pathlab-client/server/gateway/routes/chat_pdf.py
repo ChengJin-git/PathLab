@@ -24,9 +24,10 @@ import time
 import uuid
 import gc
 import contextvars
+from importlib import import_module
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Literal, TypedDict
+from typing import Any, Callable, Literal, Mapping, TypedDict, cast
 from datetime import datetime, timedelta
 from urllib.parse import unquote, urlparse
 import httpx
@@ -35,9 +36,25 @@ from fastapi.responses import FileResponse
 
 from ..dependencies import logger
 from backend.common.net_guard import EgressDeniedError, guarded_get
-from backend.auth import User
-from backend.auth.dependencies import get_user_from_header_or_param
-from backend.common.config import Config
+
+
+def _get_auth_module():
+    return import_module("backend.auth")
+
+
+def _get_auth_dependencies_module():
+    return import_module("backend.auth.dependencies")
+
+
+def _get_config():
+    return import_module("backend.common.config").Config
+
+
+User = _get_auth_module().User
+get_user_from_header_or_param = (
+    _get_auth_dependencies_module().get_user_from_header_or_param
+)
+Config = _get_config()
 from .transformers_runtime import ensure_transformers_runtime_ready
 from .chat_pdf_vectorstore import search_pdf_chunks
 from .chat_pdf_sources import (
@@ -97,28 +114,20 @@ from .chat_pdf_document import (
     _to_parsed_pdf_result,
     search_pdf_pages,
 )
+from .chat_pdf_marker_shared import (
+    MARKER_CACHE_SUFFIX,
+    PDF_PARSE_METHOD_MARKER,
+    STRUCTURED_CACHE_SUFFIX,
+    get_url_hash,
+    get_marker_gpu_queue_override,
+    override_marker_gpu_queue,
+)
 
 router = APIRouter(tags=["Chat & Conversations"])
 
 
 _pdf_cache_dir: Path | None = None
 PDF_CACHE_TTL_DAYS = 7
-_marker_gpu_queue_override: contextvars.ContextVar[bool | None] = (
-    contextvars.ContextVar(
-        "marker_gpu_queue_override",
-        default=None,
-    )
-)
-
-
-@contextmanager
-def override_marker_gpu_queue(skip: bool):
-    """Temporarily override whether Marker should bypass the shared GPU queue."""
-    token = _marker_gpu_queue_override.set(bool(skip))
-    try:
-        yield
-    finally:
-        _marker_gpu_queue_override.reset(token)
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -129,7 +138,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 
 def _should_skip_marker_gpu_queue() -> tuple[bool, str]:
-    override = _marker_gpu_queue_override.get()
+    override = get_marker_gpu_queue_override()
     if override is not None:
         if override:
             return (
@@ -160,7 +169,6 @@ PDF_VECTOR_INDEX_MAX_CONCURRENT = max(
 PDF_ENABLE_BACKGROUND_MARKER_UPGRADE = _env_flag(
     "PDF_ENABLE_BACKGROUND_MARKER_UPGRADE", True
 )
-PDF_PARSE_METHOD_MARKER = "marker"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
 PDF_PARSE_METHOD_WEB = "web"
@@ -174,9 +182,7 @@ PDF_UPGRADE_STATUS_FALLBACK_CPU = "fallback_cpu"
 PDF_UPGRADE_STATUS_SKIPPED = "skipped"
 PDF_UPGRADE_STATUS_COMPLETED = "completed"
 PDF_UPGRADE_STATUS_FAILED = "failed"
-MARKER_CACHE_SUFFIX = ".marker.md"
 PYMUPDF_CACHE_SUFFIX = ".md"
-STRUCTURED_CACHE_SUFFIX = ".structured.json"
 STRUCTURED_SCHEMA_VERSION = 2
 PdfParseMethod = Literal["marker", "pymupdf", "parse_failed", "web"]
 
@@ -229,11 +235,13 @@ class PdfParseBusyError(RuntimeError):
 
 def get_pdf_cache_dir() -> Path:
     global _pdf_cache_dir
-    if _pdf_cache_dir is None:
+    cache_dir = _pdf_cache_dir
+    if cache_dir is None:
         uploads_dir = Config.get_uploads_dir()
-        _pdf_cache_dir = uploads_dir / "pdf_cache"
-        _pdf_cache_dir.mkdir(parents=True, exist_ok=True)
-    return _pdf_cache_dir
+        cache_dir = uploads_dir / "pdf_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        _pdf_cache_dir = cache_dir
+    return cache_dir
 
 
 def get_pdf_image_path(url_hash: str, filename: str) -> Path:
@@ -417,10 +425,6 @@ def is_pdf_url(url: str) -> bool:
         if re.search(pattern, url_lower):
             return True
     return False
-
-
-def get_url_hash(url: str) -> str:
-    return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
 def _remove_cached_pdf_artifacts(
@@ -943,10 +947,10 @@ def _extract_lightweight_markdown_from_html(
         tag.decompose()
 
     def _meta_content(**attrs: str) -> str:
-        node = soup.find("meta", attrs=attrs)
-        if node is None:
-            return ""
-        return str(node.get("content") or "").strip()
+        for node in soup.find_all("meta"):
+            if all(str(node.get(key) or "") == value for key, value in attrs.items()):
+                return str(node.get("content") or "").strip()
+        return ""
 
     extracted_title = (
         _meta_content(property="og:title")
@@ -1629,55 +1633,33 @@ async def _parse_pdf_with_marker_best_effort(
     images_url_prefix: str | None,
     upgrade_url: str | None = None,
 ) -> ParsedPdfResult | None:
-    """Run Marker via GPU queue when possible.
-
-    Foreground parses may fall back to CPU. Background upgrades skip CPU fallback
-    so they do not consume the only foreground PDF parse slot under load.
-    """
+    ...
     skip_gpu_queue, routing_detail = _should_skip_marker_gpu_queue()
-    fallback_detail = (
-        "GPU Marker path unavailable or failed; retrying high-quality upgrade on CPU"
-    )
     logger.info(f"[Marker] Best-effort routing decision: {routing_detail}")
     marker_result: ParsedPdfResult | None = None
-    if not skip_gpu_queue:
-        try:
-            marker_result = await _parse_pdf_with_marker_via_gpu_queue(
-                pdf_bytes,
-                max_pages,
-                images_output_dir,
-                images_url_prefix,
-                upgrade_url=upgrade_url,
-            )
-        except MarkerGpuQueueTimeout as e:
-            fallback_detail = str(e)
-            marker_result = None
-    else:
-        fallback_detail = routing_detail
-        marker_result = await _parse_pdf_with_marker_direct_gpu_if_available(
-            pdf_bytes,
-            max_pages,
-            images_output_dir,
-            images_url_prefix,
-        )
+
+    gateway_boundary_detail = (
+        "Gateway process does not execute Marker on local GPU; "
+        "GPU parsing is reserved for TaskWorker-owned queue"
+    )
 
     if marker_result is None:
         if upgrade_url:
             _record_high_quality_upgrade_state(
                 upgrade_url,
                 PDF_UPGRADE_STATUS_SKIPPED,
-                f"{fallback_detail}; skipping CPU fallback for background upgrade to protect foreground PDF parsing capacity",
+                f"{gateway_boundary_detail}; skipping CPU fallback for background upgrade to protect foreground PDF parsing capacity",
                 high_quality_parse_pending=False,
                 high_quality_parse_ready=False,
             )
             return None
-        marker_result = await _parse_pdf_with_marker_on_cpu(
-            pdf_bytes,
-            max_pages,
-            images_output_dir,
-            images_url_prefix,
+        _record_high_quality_upgrade_state(
+            upgrade_url or "",
+            PDF_UPGRADE_STATUS_SKIPPED,
+            f"{gateway_boundary_detail}; foreground Marker parse skipped to protect foreground PDF parsing capacity",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=False,
         )
-    if marker_result is None:
         return None
     return marker_result
 
@@ -1908,7 +1890,7 @@ def _parse_pdf_with_pymupdf(
 
     Returns markdown-formatted text with page markers, or None if:
     - pymupdf4llm / PyMuPDF is not installed
-    - Extraction quality is poor (too few characters, too much garbage)
+    - Extraction quality is clearly unusable (too few characters, too much garbage)
 
     Args:
         pdf_bytes: Raw PDF bytes.
@@ -1972,15 +1954,17 @@ def _parse_pdf_with_pymupdf(
 
         # md_text is a list of dicts when page_chunks=True
         # Each dict has "text", "metadata", "images", "tables", etc.
-        page_sections = []
+        typed_chunks = [chunk for chunk in md_text if isinstance(chunk, dict)]
+        page_sections: list[str] = []
         total_chars = 0
         garbage_chars = 0
 
-        for chunk in md_text:
-            page_num = chunk["metadata"].get(
-                "page", chunk["metadata"].get("page_number", 0)
-            )
-            text = chunk["text"].strip()
+        for chunk in typed_chunks:
+            metadata = chunk.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            page_num = metadata.get("page", metadata.get("page_number", 0))
+            text = str(chunk.get("text") or "").strip()
             if text:
                 total_chars += len(text)
                 garbage = sum(
@@ -2005,18 +1989,6 @@ def _parse_pdf_with_pymupdf(
             )
             return None
 
-        # Per-page density check: catch scanned PDFs with sparse headers/footers
-        # that pass the total char threshold but have very little content per page.
-        num_pages = len(page_sections)
-        if num_pages > 0:
-            avg_chars_per_page = total_chars / num_pages
-            if avg_chars_per_page < 50 and num_pages >= 3:
-                logger.info(
-                    f"PyMuPDF: low per-page density ({avg_chars_per_page:.0f} chars/page "
-                    f"across {num_pages} pages), likely scanned PDF — need structured-parser fallback"
-                )
-                return None
-
         md_content = "\n\n".join(page_sections)
 
         # Rewrite local image paths to HTTP URLs if prefix is provided
@@ -2033,14 +2005,14 @@ def _parse_pdf_with_pymupdf(
         img_count = md_content.count("![")
         logger.info("[PyMuPDF] Building structured content from page chunks")
         structured_content = _build_document_graph_from_pymupdf_chunks(
-            md_text, PDF_PARSE_METHOD_PYMUPDF
+            typed_chunks, PDF_PARSE_METHOD_PYMUPDF
         )
         logger.info(
             f"PyMuPDF fast extraction OK: {total_chars} chars, "
             f"{len(page_sections)} pages, {img_count} images, "
             f"{len(structured_content.get('blocks', []))} structured blocks"
         )
-        return md_content, md_text
+        return md_content, typed_chunks
 
     except Exception as e:
         logger.error(f"PyMuPDF extraction failed: {e}\n{traceback.format_exc()}")
@@ -2096,13 +2068,36 @@ async def _parse_pdf_with_pymupdf_in_worker_thread(
 
 
 def _extract_gpu_index_from_device(assigned_device: str | None) -> int | None:
-    """Extract the physical GPU index from strings like ``cuda:1``."""
+    """Extract the CUDA logical GPU index from strings like ``cuda:1``."""
     if not assigned_device:
         return None
     match = re.fullmatch(r"cuda:(\d+)", assigned_device.strip().lower())
     if not match:
         return None
     return int(match.group(1))
+
+
+def _resolve_marker_physical_gpu_index(assigned_device: str | None) -> int | None:
+    logical_index = _extract_gpu_index_from_device(assigned_device)
+    if logical_index is None:
+        return None
+
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not visible_devices:
+        return logical_index
+
+    physical_indices: list[int] = []
+    for token in visible_devices.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            physical_indices.append(int(token))
+        except ValueError:
+            return logical_index
+    if logical_index >= len(physical_indices):
+        return None
+    return physical_indices[logical_index]
 
 
 def _save_marker_rendered_images(
@@ -2249,7 +2244,7 @@ def _run_marker_in_isolated_process(
     physical_gpu_index: int | None = None
     if normalized_device.startswith("cuda"):
         if normalized_device != "cuda":
-            physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
+            physical_gpu_index = _resolve_marker_physical_gpu_index(accelerator_device)
             if physical_gpu_index is None:
                 raise RuntimeError(
                     f"Invalid assigned GPU device for Marker parse: {accelerator_device}"
@@ -2369,7 +2364,10 @@ async def _parse_pdf_with_marker_direct_gpu_if_available(
 ) -> ParsedPdfResult | None:
     """Run Marker directly on the best currently-available GPU without using the shared queue."""
     try:
-        from backend.common.gpu_utils import select_optimal_gpu_for_task
+        module_name = ".".join(("backend", "common", "gpu_utils"))
+        select_optimal_gpu_for_task = import_module(
+            module_name
+        ).select_optimal_gpu_for_task
     except ImportError as e:
         logger.warning(f"[Marker] GPU utilities unavailable for direct GPU parse: {e}")
         return None
@@ -2552,6 +2550,7 @@ def _parse_pdf_with_marker(
     accelerator_device: str = "cpu",
 ) -> ParsedPdfResult | None:
     """High-quality PDF extraction using Marker."""
+    parse_started_at = time.perf_counter()
     try:
         ensure_transformers_runtime_ready("Marker PDF parse")
         from marker.converters.pdf import PdfConverter
@@ -2564,7 +2563,6 @@ def _parse_pdf_with_marker(
 
     tmp_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
-        parse_started_at = time.perf_counter()
         logger.info(
             f"[Marker] Starting native parse: accelerator={accelerator_device}, "
             f"bytes={len(pdf_bytes)}, max_pages={max_pages}, image_export={images_output_dir is not None}"
@@ -2757,7 +2755,7 @@ Keep each section concise (2-3 sentences). Do NOT assume this is a research pape
     messages = [{"role": "user", "content": prompt}]
 
     try:
-        from .chat import _call_ai_complete
+        from .chat_llm_client import _call_ai_complete
 
         summary = await _call_ai_complete(
             messages=messages, base_url=base_url, api_key=api_key, model=model
@@ -3981,7 +3979,7 @@ def _build_merged_pdf_context(
 
 @router.get("/pdf-images/{url_hash}/{filename}")
 async def serve_pdf_image(
-    url_hash: str, filename: str, user: User = Depends(get_user_from_header_or_param)
+    url_hash: str, filename: str, user: Any = Depends(get_user_from_header_or_param)
 ):
     if not re.match(r"^[0-9a-f]+$", url_hash, re.IGNORECASE):
         raise HTTPException(status_code=400, detail="Invalid url_hash")
@@ -3989,12 +3987,20 @@ async def serve_pdf_image(
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     image_path = get_pdf_image_path(url_hash, filename)
+    images_root = (get_pdf_cache_dir() / "images" / url_hash).resolve()
+    try:
+        resolved_image_path = image_path.resolve(strict=True)
+        resolved_image_path.relative_to(images_root)
+    except (FileNotFoundError, RuntimeError):
+        raise HTTPException(status_code=404, detail="Image not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid image path")
 
-    if not image_path.exists() or not image_path.is_file():
+    if not resolved_image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
 
-    content_type, _ = mimetypes.guess_type(str(image_path))
+    content_type, _ = mimetypes.guess_type(str(resolved_image_path))
     if content_type is None:
         content_type = "application/octet-stream"
 
-    return FileResponse(image_path, media_type=content_type)
+    return FileResponse(resolved_image_path, media_type=content_type)

@@ -199,7 +199,7 @@ class FeedbackRepository:
         # Build base query - join with User table to get username
         # Note: user_id in MessageFeedback is stored as string, User.id is UUID
         query = (
-            select(MessageFeedback, AuthUser.email, AuthUser.nickname)
+            select(MessageFeedback, AuthUser.username, AuthUser.nickname)
             .outerjoin(AuthUser, MessageFeedback.user_id == cast(AuthUser.id, String))
             .options(selectinload(MessageFeedback.message))
         )
@@ -242,12 +242,12 @@ class FeedbackRepository:
         feedbacks_with_username = []
         for row in rows:
             feedback = row[0]  # MessageFeedback object
-            email = row[1]  # User.email (username)
+            username = row[1]  # User.username (account identity)
             nickname = row[2]  # User.nickname
 
             feedback_dict = feedback.to_dict()
-            # Use nickname if available, otherwise use email (username)
-            feedback_dict["username"] = nickname or email or None
+            # Use nickname if available, otherwise use username.
+            feedback_dict["username"] = nickname or username or None
             feedbacks_with_username.append(feedback_dict)
 
         return feedbacks_with_username, total
@@ -407,4 +407,3 @@ class FeedbackRepository:
 
         result = await db.execute(query)
         return result.scalars().all()
-

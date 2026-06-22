@@ -95,8 +95,9 @@ def _validate_patch_segmentation_loss_names(loss_names: List[str]) -> None:
         )
 
 
-# Paths
-UPLOADS_DIR = Config.get_uploads_dir()
+def _uploads_dir() -> Path:
+    return Config.get_uploads_dir()
+
 
 # =============================================================================
 # Cancellation Mechanism (imported from separate module to avoid circular imports)
@@ -457,7 +458,7 @@ async def extract_features(req: FeatureExtractionRequest):
         # Use WSI Classification Trainer with session_maker
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
-            uploads_root=UPLOADS_DIR,
+            uploads_root=_uploads_dir(),
             device=req.device,
         )
 
@@ -635,7 +636,7 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
         # Phase 2: Training - pass session_maker, not long-lived session
         trainer = WSIClassificationTrainer(
             task_id=req.task_id,
-            uploads_root=UPLOADS_DIR,
+            uploads_root=_uploads_dir(),
             device=req.device,
         )
 
@@ -762,6 +763,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
                 "aggregator": req.aggregator,
                 "epochs": req.epochs,
                 "lr": req.lr,
+                "weight_decay": req.weight_decay,
                 "num_bins": req.num_bins,
             },
         )
@@ -778,7 +780,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
         # Phase 2: Training - pass session_maker, not long-lived session
         trainer = WSISurvivalTrainer(
             task_id=req.task_id,
-            uploads_root=UPLOADS_DIR,
+            uploads_root=_uploads_dir(),
             device=req.device,
         )
 
@@ -788,6 +790,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
             num_classes=req.num_bins,
             epochs=req.epochs,
             lr=req.lr,
+            weight_decay=req.weight_decay,
             logger=scoped_logger,
             session_maker=scoped_session.get_session_maker(),
             optimizer=req.optimizer,
@@ -933,7 +936,7 @@ async def train_patch_classification(
         # Phase 2: Training - pass session_maker, not long-lived session
         trainer = PatchClassificationTrainer(
             task_id=req.task_id,
-            uploads_root=UPLOADS_DIR,
+            uploads_root=_uploads_dir(),
             device=req.device,
             batch_size=req.batch_size,
             hf_token=req.huggingface_token,
@@ -1072,12 +1075,14 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         # resume_checkpoint.pth written in a previous run can be found
         # when the task is restarted after a crash/disconnect.
         model_id = f"seg_{req.task_id}"
-        model_dir = UPLOADS_DIR / "models" / model_id
+        model_dir = _uploads_dir() / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
         save_dir = str(model_dir)
+        _decoder_type = req.decoder_type or req.architecture.replace("_decoder", "")
         config = {
             "architecture": req.architecture,
             "backbone": req.backbone,
+            "decoder_type": _decoder_type,
             "loss": {"names": req.loss_names, "weights": req.loss_weights},
             "training": {
                 "epochs": req.epochs,
@@ -1150,7 +1155,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
 
         trainer = SegmentationTrainer(
             task_id=req.task_id,
-            uploads_root=UPLOADS_DIR,
+            uploads_root=_uploads_dir(),
             device=device_str,
             batch_size=req.batch_size,
             config=config,

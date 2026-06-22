@@ -15,13 +15,14 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.config import Config
+from backend.ai.result_store import AIResultStore, CAM_ARTIFACT
 from backend.database.repositories import WSIRepository
 
 from .analysis_utils import (
     _coerce_str,
     _coerce_str_list,
 )
-from .inference_base import resolve_device, report_progress
+from .inference_base import resolve_checkpoint_paths, resolve_device, report_progress
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +66,9 @@ async def _run_inference_patch_classification(
     uploads_dir = Config.get_uploads_dir()
 
     # Load model
-    model_dir = uploads_dir / "models" / resources["model_id"]
-    ckpt_path = model_dir / "linear_probe.pth"
-    config_path = model_dir / "config.json"
+    ckpt_path, config_path = resolve_checkpoint_paths(
+        resources, uploads_dir, "linear_probe.pth"
+    )
 
     if not ckpt_path.exists():
         raise HTTPException(
@@ -165,7 +166,7 @@ async def _run_inference_patch_classification(
         logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
 
     # Run inference
-    ai_results_root = uploads_dir / "ai_results"
+    result_store = AIResultStore(uploads_dir)
     results_saved = 0
     total_items = len(image_paths)
 
@@ -202,13 +203,6 @@ async def _run_inference_patch_classification(
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
                 gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
 
-                wsi_result_dir = ai_results_root / wsi_id
-                wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-                # Save CAM
-                cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
-                np.save(cam_file, cam_map)
-
                 # Save result JSON
                 result_data = {
                     "wsi_id": wsi_id,
@@ -218,13 +212,18 @@ async def _run_inference_patch_classification(
                     "ground_truth": gt_label,
                     "correct": pred_label == gt_label,
                     "classes": classes,
-                    "cam_file": str(cam_file),
+                    "cam_file": None,
                     "cam_size": list(cam_size),
                 }
 
-                result_file = wsi_result_dir / f"train_{task_id}_result.json"
-                with open(result_file, "w", encoding="utf-8") as f:
-                    json.dump(result_data, f, ensure_ascii=False, indent=2)
+                result_store.write_wsi_result(
+                    task_id=task_id,
+                    wsi_id=wsi_id,
+                    result=result_data,
+                    arrays={CAM_ARTIFACT: cam_map},
+                    finalize=False,
+                    update_index=False,
+                )
 
                 # Save to database
                 db_result_data = {
@@ -237,9 +236,9 @@ async def _run_inference_patch_classification(
                         "correct": pred_label == gt_label,
                         "classes": classes,
                         "task_type": "patch_classification",
-                        "cam_file": str(cam_file),
+                        "cam_file": None,
                         "cam_size": list(cam_size),
-                        "result_file": str(result_file),
+                        "result_file": None,
                     },
                 }
                 await AIResultRepository.create(db, db_result_data)
@@ -248,6 +247,9 @@ async def _run_inference_patch_classification(
             except Exception as e:
                 logger.warning(f"Failed to process {wsi_id}: {e}")
                 continue
+
+    if results_saved:
+        result_store.write_task_bundle(task_id=task_id)
 
     await db.commit()
     logger.info(

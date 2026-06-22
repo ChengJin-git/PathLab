@@ -1,5 +1,6 @@
 import { API_BASE } from '../config'
 import { apiFetch } from './client'
+import { invalidateWSIListCache } from './wsi'
 
 
 export interface DatasetGrant {
@@ -143,7 +144,7 @@ export async function updateDatasetVisibility(
   datasetId: string,
   isPublic: boolean
 ): Promise<{ dataset_id: string; is_public: boolean }> {
-  return apiFetch(
+  const result = await apiFetch<{ dataset_id: string; is_public: boolean }>(
     `${API_BASE}/wsi/datasets/${datasetId}/visibility`,
     {
       method: 'PATCH',
@@ -152,4 +153,6 @@ export async function updateDatasetVisibility(
     },
     'Failed to update dataset visibility'
   )
+  invalidateWSIListCache()
+  return result
 }

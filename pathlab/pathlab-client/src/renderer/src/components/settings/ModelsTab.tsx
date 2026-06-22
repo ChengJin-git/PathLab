@@ -117,7 +117,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
       ? model.classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
       : []
 
-    if (model.task_type === 'segmentation' && taskClasses.length > 0) {
+    if (isSegmentationTask(model.task_type ?? undefined) && taskClasses.length > 0) {
       return taskClasses
     }
 

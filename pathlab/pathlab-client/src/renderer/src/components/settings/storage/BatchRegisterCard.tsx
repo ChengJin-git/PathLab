@@ -1,6 +1,6 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { FolderSearch, Search, RefreshCw, AlertCircle } from 'lucide-react'
+import { FolderSearch, Search, RefreshCw, AlertCircle, X } from 'lucide-react'
 import { Card } from '../../ui/card'
 import { Button } from '../../ui/button'
 import { Input } from '../../ui/input'
@@ -8,6 +8,7 @@ import {
   ScanDirectoryResponse, DatasetSummary,
   ExternalDatasetInfo
 } from '../../../api'
+import type { TaskType } from '../../../constants/training'
 import { BatchScanResults } from './BatchScanResults'
 import { ExternalDatasetsTable } from './ExternalDatasetsTable'
 
@@ -16,6 +17,7 @@ interface BatchRegisterCardProps {
   setBatchScanPath: (path: string) => void
   batchScanResult: ScanDirectoryResponse | null
   batchScanning: boolean
+  batchScanStage: 'idle' | 'initial' | 'refresh' | 'segmentationRefresh'
   batchScanError: string | null
   batchSelectedCount: number
   batchDatasetMode: 'existing' | 'new'
@@ -26,14 +28,16 @@ interface BatchRegisterCardProps {
   batchRegistering: boolean
   batchImportTaskId: string | null
   batchDatasets: DatasetSummary[]
-  batchTaskType: 'classification' | 'survival' | 'segmentation'
-  setBatchTaskType: (type: 'classification' | 'survival' | 'segmentation') => void
+  batchTaskType: TaskType
+  setBatchTaskType: (type: TaskType) => void
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
   batchIsPublic: boolean
   setBatchIsPublic: (value: boolean) => void
   handleSelectBatchScanDir: () => Promise<void>
   handleBatchScan: () => void
+  handleCancelBatchScan?: () => void
+  canCancelBatchScan?: boolean
   handleBatchScanPageChange: (page: number) => void
   isBatchFileSelected: (path: string, valid: boolean) => boolean
   handleBatchFileToggle: (path: string, valid: boolean) => void
@@ -51,8 +55,8 @@ interface BatchRegisterCardProps {
   refreshExternalDatasets: () => void | Promise<void>
   handleExternalDatasetToggle: (datasetId: string | null) => void
   handleExternalDatasetSelectAll: () => void
-  handleUnbindDataset: (datasetId: string, datasetName: string) => void
-  handleUnbindSelectedDatasets: () => void
+  handleUnbindDataset: (datasetId: string, datasetName: string) => void | Promise<void>
+  handleUnbindSelectedDatasets: () => void | Promise<void>
   navigate: (path: string) => void
 }
 
@@ -61,6 +65,7 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   setBatchScanPath,
   batchScanResult,
   batchScanning,
+  batchScanStage,
   batchScanError,
   batchSelectedCount,
   batchDatasetMode,
@@ -79,6 +84,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   setBatchIsPublic,
   handleSelectBatchScanDir,
   handleBatchScan,
+  handleCancelBatchScan,
+  canCancelBatchScan = false,
   handleBatchScanPageChange,
   isBatchFileSelected,
   handleBatchFileToggle,
@@ -147,6 +154,34 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
         </Button>
       </div>
 
+      {batchScanning && batchScanStage === 'initial' && (
+        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-blue-900">{t('settings.storage.scanInProgressTitle')}</p>
+              <p className="mt-1 text-xs text-blue-700">{t('settings.storage.scanInProgressDescription')}</p>
+            </div>
+            {handleCancelBatchScan && (
+              <button
+                type="button"
+                onClick={handleCancelBatchScan}
+                disabled={!canCancelBatchScan}
+                className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 shadow-sm hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+              >
+                <X className="w-3.5 h-3.5" />
+                {t('common.cancel')}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {batchScanning && batchScanStage !== 'initial' && batchScanResult && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="text-sm font-medium text-slate-900">{t('settings.storage.refreshingScanResults')}</p>
+        </div>
+      )}
+
       {batchScanError && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
           <AlertCircle className="w-4 h-4" />
@@ -157,6 +192,7 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
       {batchScanResult && (
         <BatchScanResults
           batchScanResult={batchScanResult}
+          batchScanStage={batchScanStage}
           batchSelectedCount={batchSelectedCount}
           batchDatasetMode={batchDatasetMode}
           setBatchDatasetMode={setBatchDatasetMode}

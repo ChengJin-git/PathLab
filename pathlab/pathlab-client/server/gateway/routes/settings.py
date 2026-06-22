@@ -6,13 +6,11 @@ These settings are shared across all users.
 """
 
 import httpx
-from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
+import importlib
+from fastapi import APIRouter, HTTPException, Depends, Request
 
-from backend.common.config import Config
-from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_admin
-from gateway.models import (
+from .access_control import User
+from ..models import (
     PublicSettingsResponse,
     GlobalSettingsResponse,
     GlobalSettingsUpdateRequest,
@@ -22,23 +20,45 @@ from gateway.models import (
     AsrCheckResponse,
 )
 
+_backend_common_config = importlib.import_module("backend.common.config")
+_backend_auth_dependencies = importlib.import_module("backend.auth.dependencies")
+_geo_ip = importlib.import_module("backend.common.geo_ip")
+
+Config = _backend_common_config.Config
+require_admin = _backend_auth_dependencies.require_admin
+get_client_ip = _geo_ip.get_client_ip
+is_mainland_china_ip = _geo_ip.is_mainland_china_ip
+
 router = APIRouter(prefix="/settings", tags=["Global Settings"])
 
 
 @router.get("/public")
-async def get_public_settings() -> PublicSettingsResponse:
-    """
-    Get public settings that don't require authentication.
-    This includes Cloudflare Turnstile site key for login page.
-
-    Returns:
-        Public settings (Turnstile configuration)
-    """
+async def get_public_settings(request: Request) -> PublicSettingsResponse:
     settings = Config.get_global_settings()
-    return PublicSettingsResponse(
-        turnstile_enabled=settings.get("turnstile_enabled", False),
-        turnstile_site_key=settings.get("turnstile_site_key", ""),
-    )
+    
+    client_ip = get_client_ip(request)
+    is_china = await is_mainland_china_ip(client_ip)
+    
+    tencent_enabled = settings.get("tencent_captcha_enabled", False)
+    tencent_app_id = settings.get("tencent_captcha_app_id", "")
+    turnstile_enabled = settings.get("turnstile_enabled", False)
+    turnstile_site_key = settings.get("turnstile_site_key", "")
+    
+    if is_china and tencent_enabled and tencent_app_id:
+        return PublicSettingsResponse(
+            captcha_provider="tencent",
+            captcha_site_key=tencent_app_id,
+        )
+    elif turnstile_enabled and turnstile_site_key:
+        return PublicSettingsResponse(
+            captcha_provider="turnstile",
+            captcha_site_key=turnstile_site_key,
+        )
+    else:
+        return PublicSettingsResponse(
+            captcha_provider=None,
+            captcha_site_key="",
+        )
 
 
 @router.get("")

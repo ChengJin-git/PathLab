@@ -12,17 +12,17 @@ from typing import Any, Dict, List
 from ..dependencies import logger
 from ..knowledge.chat import (
     BUNDLED_TRAINING_PDF_SOURCES,
-    TRAINING_RAG_CACHE_DIR,
-    TRAINING_RAG_VECTORSTORE_DIR,
+    get_training_rag_cache_dir,
+    get_training_rag_vectorstore_dir,
     get_bundled_training_pdf_source_by_url,
 )
-from .chat_pdf import (
+from .chat_pdf import _parse_pdf_with_marker_best_effort
+from .chat_pdf_marker_shared import (
     MARKER_CACHE_SUFFIX,
     PDF_PARSE_METHOD_MARKER,
     PDF_PARSE_METHOD_PYMUPDF,
     STRUCTURED_CACHE_SUFFIX,
     get_url_hash,
-    _parse_pdf_with_marker_best_effort,
     override_marker_gpu_queue,
 )
 from .chat_pdf_document import _build_document_graph_from_markdown
@@ -1169,6 +1169,47 @@ def detect_no_web_search_mode(messages: List[Dict[str, Any]]) -> str | None:
     return None
 
 
+def _looks_like_model_availability_query(normalized: str) -> bool:
+    """
+    Detect if query is a yes/no confirmation or availability check,
+    rather than a training recommendation request.
+
+    Patterns to detect:
+    - Chinese: "有吗" (has it?), "这不是...吗" (isn't this...?), "是不是有" (is there?),
+              "有没有" (is there?), "是否有" (is there?), "有没有这个" (do we have this?),
+              "这个有吗" (does this exist?)
+    - English: "is there", "do you have", "isn't there", "doesn't exist", "does it exist"
+    """
+    # Chinese availability patterns
+    availability_patterns = (
+        "有吗",  # has it? / do we have?
+        "这不是",  # isn't this...? (combined with 有吗 = "isn't this available?")
+        "是不是有",  # is there? / do we have?
+        "有没有",  # is there? / do we have?
+        "是否有",  # is there? / do we have?
+        "有没有这个",  # do we have this?
+        "这个有吗",  # does this exist?
+        # Chinese ownership/listing patterns
+        "我有什么",  # "what do I have" — ownership listing
+        "我有哪些",  # "which ones do I have" — ownership listing
+        "有什么模型",  # "what models are there" (owned)
+        "有哪些模型",  # "which models are there" (owned)
+        "训练好的模型",  # "already-trained models" — referring to completed models
+        "已训练",  # "already trained"
+        "训练过的",  # "have trained"
+        # English patterns
+        "is there",
+        "do you have",
+        "isn't there",
+        "doesn't exist",
+        "does it exist",
+        "what models do i have",  # English ownership listing
+        "what trained models",  # English ownership listing
+    )
+
+    return any(pattern in normalized for pattern in availability_patterns)
+
+
 def looks_like_training_recommendation_query(text: str) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
@@ -1176,6 +1217,8 @@ def looks_like_training_recommendation_query(text: str) -> bool:
     if looks_like_heatmap_visualization_query(normalized):
         return False
     if looks_like_image_visualization_query(normalized):
+        return False
+    if _looks_like_model_availability_query(normalized):
         return False
     has_training_status = any(
         keyword in normalized for keyword in _TRAINING_STATUS_KEYWORDS
@@ -1261,7 +1304,9 @@ def get_bundled_training_knowledge_status() -> Dict[str, bool]:
         structured_ready = _get_bundled_structured_content(url) is not None
         vector_ready = bool(
             url_hash in _LOCAL_INDEX_READY
-            or is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR)
+            or is_pdf_indexed(
+                url_hash, vectorstore_dir=get_training_rag_vectorstore_dir()
+            )
         )
         status[str(source["id"])] = bool(
             marker_ready and structured_ready and vector_ready
@@ -1337,7 +1382,9 @@ async def _ensure_local_source_ready(url: str, *, force_upgrade: bool = False) -
         ready = bool(
             _get_bundled_markdown(url)
             and _get_bundled_structured_content(url)
-            and is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR)
+            and is_pdf_indexed(
+                url_hash, vectorstore_dir=get_training_rag_vectorstore_dir()
+            )
         )
         if ready and not force_upgrade:
             _LOCAL_INDEX_READY.add(url_hash)
@@ -1461,7 +1508,7 @@ async def _ensure_vector_index(
     if not force and url_hash in _LOCAL_INDEX_READY:
         return
     if not force and is_pdf_indexed(
-        url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR
+        url_hash, vectorstore_dir=get_training_rag_vectorstore_dir()
     ):
         _LOCAL_INDEX_READY.add(url_hash)
         return
@@ -1471,7 +1518,7 @@ async def _ensure_vector_index(
         markdown,
         paper_title,
         structured_content,
-        vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR,
+        vectorstore_dir=get_training_rag_vectorstore_dir(),
     )
     _LOCAL_INDEX_READY.add(url_hash)
 
@@ -1487,8 +1534,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
         if profile == "general_cytology":
             return [
                 "## 任务相关证据约束",
-                "- 非宫颈 / 非妇科或通用细胞学任务，SmartCyto（视觉-语言预训练）和 CytoFM（纯视觉自监督，DINOv2 ViT-L/14）均为优先细胞学 encoder 候选。",
-                "- 如果公开搜索没有直接命中 SmartCyto 或 CytoFM，不要把它当成反证；改用同任务公开证据来校准 encoder、MIL 或 segmentation 方案。",
+                "- 非宫颈 / 非妇科或通用细胞学任务，SmartCyto（视觉-语言预训练）为优先细胞学 encoder 候选。",
+                "- 如果公开搜索没有直接命中 SmartCyto，不要把它当成反证；改用同任务公开证据来校准 encoder、MIL 或 segmentation 方案。",
             ]
         if profile == "segmentation":
             return [
@@ -1512,8 +1559,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
         if profile == "general_cytology":
             return [
                 "## 任務相關證據約束",
-                "- 非宮頸 / 非婦科或通用細胞學任務，SmartCyto（視覺-語言預訓練）和 CytoFM（純視覺自監督，DINOv2 ViT-L/14）均為優先細胞學 encoder 候選。",
-                "- 如果公開搜索沒有直接命中 SmartCyto 或 CytoFM，不要把它當成反證；改用同任務公開證據來校準 encoder、MIL 或 segmentation 方案。",
+                "- 非宮頸 / 非婦科或通用細胞學任務，SmartCyto（視覺-語言預訓練）為優先細胞學 encoder 候選。",
+                "- 如果公開搜索沒有直接命中 SmartCyto，不要把它當成反證；改用同任務公開證據來校準 encoder、MIL 或 segmentation 方案。",
             ]
         if profile == "segmentation":
             return [
@@ -1536,8 +1583,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
     if profile == "general_cytology":
         return [
             "## Task-specific Evidence Constraints",
-            "- For non-cervical, non-gynecologic, or general cytology tasks, both SmartCyto (vision-language pretrained) and CytoFM (pure vision self-supervised, DINOv2 ViT-L/14) are preferred cytology encoder candidates.",
-            "- If public search does not directly surface SmartCyto or CytoFM, do not treat that as counter-evidence; use task-matched public evidence to calibrate encoder, MIL, or segmentation choices.",
+            "- For non-cervical, non-gynecologic, or general cytology tasks, SmartCyto (vision-language pretrained) is a preferred cytology encoder candidate.",
+            "- If public search does not directly surface SmartCyto, do not treat that as counter-evidence; use task-matched public evidence to calibrate encoder, MIL, or segmentation choices.",
         ]
     if profile == "segmentation":
         return [
@@ -1586,7 +1633,7 @@ def _build_bundled_evidence_lines(
             query,
             url_hashes=[url_hash],
             top_k=6,
-            vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR,
+            vectorstore_dir=get_training_rag_vectorstore_dir(),
         )
         if not results:
             continue
@@ -1690,8 +1737,7 @@ def _save_bundled_marker_cache(
 
 
 def _get_bundled_cache_dir() -> Path:
-    TRAINING_RAG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return TRAINING_RAG_CACHE_DIR
+    return get_training_rag_cache_dir()
 
 
 def _clean_excerpt(text: str, max_chars: int = 380) -> str:

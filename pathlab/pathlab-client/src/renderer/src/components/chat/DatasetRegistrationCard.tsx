@@ -5,12 +5,13 @@ import {
   Loader2, Database, AlertTriangle, Download,
   ThumbsUp, ThumbsDown
 } from 'lucide-react'
-import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
+import { fetchAllDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
 import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTaskContext'
-import { isSupportedName, isTmapDataFile, getBaseName } from '../../constants/fileTypes'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 import { Select } from '../ui/select'
 import { organSources, organSourceKeyMap } from '../../constants/wsi'
+import { getTaskFamily, isCanonicalTaskType, resolveUploadTaskType, type UploadTaskMode, type TaskType } from '../../constants/training'
+import { collectItemsFromDataTransfer, type CollectionProgressSnapshot, type LocalItem } from '../upload'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
   const match = content.match(/\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/)
@@ -26,22 +27,11 @@ export function removeDatasetRegistrationBlock(content: string): string {
   return content.replace(/\[DATASET_REGISTRATION\][\s\S]*?\[\/DATASET_REGISTRATION\]/g, '').trim()
 }
 
-interface LocalItem {
-  key: string
-  name: string
-  file?: File
-  path?: string
-  type: 'mrxs' | 'tmap' | 'standard'
-  associatedFiles?: File[]
-  associatedPaths?: string[]
-  missingAssociated?: boolean
-}
-
 interface DatasetRegistrationConfig {
   dataset_id?: string
   dataset_name?: string
   source_organ?: string
-  upload_mode?: 'classification' | 'survival' | 'segmentation'
+  upload_mode?: UploadTaskMode
   aggregation_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
   submitted_task_id?: string
@@ -87,7 +77,8 @@ export function DatasetRegistrationCard({
   const [datasetSourceSelection, setDatasetSourceSelection] = useState<string>(config?.source_organ || '')
   const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
   const [isPublic, setIsPublic] = useState<boolean>(Boolean(config?.is_public))
-  const isSegmentation = config?.upload_mode === 'segmentation'
+  const canonicalUploadMode = resolveUploadTaskType(config?.upload_mode ?? 'classification')
+  const isSegmentation = getTaskFamily(canonicalUploadMode) === 'segmentation'
   const [dataLevel, setDataLevel] = useState<'file' | 'case'>(isSegmentation ? 'file' : (config?.aggregation_level || 'file'))
   
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
@@ -95,6 +86,7 @@ export function DatasetRegistrationCard({
 
   const [localItems, setLocalItems] = useState<LocalItem[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [collectionProgress, setCollectionProgress] = useState<CollectionProgressSnapshot | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>(
     config?.submitted_task_id ? 'success' : 'idle'
@@ -104,18 +96,19 @@ export function DatasetRegistrationCard({
   const [segMissingMasks, setSegMissingMasks] = useState(false)
   const [segmentationJsonFiles, setSegmentationJsonFiles] = useState<Map<string, File>>(new Map())
   const [segmentationDuplicateJsonStems, setSegmentationDuplicateJsonStems] = useState<Set<string>>(new Set())
+  const isCollecting = collectionProgress !== null && !collectionProgress.completed
   const segmentationJsonOnlyAppend = isSegmentation && mode === 'existing' && localItems.length === 0 && segmentationJsonFiles.size > 0
   const readyUploadCount = segmentationJsonOnlyAppend ? segmentationJsonFiles.size : localItems.length
 
   const filteredDatasets = useMemo(() => {
     return datasets.filter(dataset => {
       if (isSegmentation) {
-        return dataset.task_type === 'segmentation' && dataset.data_type === 'patch' && dataset.aggregation_level === 'file'
+        return getTaskFamily(dataset.task_type) === 'segmentation' && dataset.data_type === 'patch' && dataset.aggregation_level === 'file'
       }
       if (!config?.upload_mode) return true
-      return dataset.task_type === config.upload_mode
+      return getTaskFamily(dataset.task_type) === getTaskFamily(canonicalUploadMode)
     })
-  }, [datasets, isSegmentation, config?.upload_mode])
+  }, [datasets, isSegmentation, config?.upload_mode, canonicalUploadMode])
 
   const selectedDataset = useMemo(
     () => datasets.find(dataset => dataset.dataset_id === selectedDatasetId),
@@ -194,7 +187,7 @@ export function DatasetRegistrationCard({
   const loadDatasets = async () => {
     try {
       setLoadingDatasets(true)
-      const data = await fetchDatasets()
+      const data = await fetchAllDatasets()
       setDatasets(data.items)
     } catch (err) {
       console.error('Failed to load datasets', err)
@@ -205,15 +198,27 @@ export function DatasetRegistrationCard({
 
   const handleDownloadTemplate = async () => {
     try {
-      let uploadMode: 'classification' | 'survival' | 'segmentation' = 'classification'
+      let uploadMode: TaskType
 
       if (mode === 'existing' && selectedDatasetId) {
         const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
         if (dataset && dataset.task_type) {
-          uploadMode = dataset.task_type as 'classification' | 'survival' | 'segmentation'
+          if (!isCanonicalTaskType(dataset.task_type)) {
+            throw new Error(t('chatComponents.datasetRegistration.downloadTemplateFailed'))
+          }
+          uploadMode = dataset.task_type
+        } else {
+          uploadMode = canonicalUploadMode
         }
       } else {
-        uploadMode = config?.upload_mode || 'classification'
+        const explicitMode = config?.upload_mode
+        if (explicitMode === undefined) {
+          uploadMode = 'wsi_classification'
+        } else if (isCanonicalTaskType(explicitMode)) {
+          uploadMode = explicitMode
+        } else {
+          throw new Error(t('chatComponents.datasetRegistration.downloadTemplateFailed'))
+        }
       }
 
       await downloadCSVTemplate(uploadMode)
@@ -223,34 +228,6 @@ export function DatasetRegistrationCard({
     }
   }
 
-  const readAllEntries = async (directoryEntry: any): Promise<any[]> => {
-    const reader = directoryEntry.createReader()
-    const entries: any[] = []
-    while (true) {
-      const batch: any[] = await new Promise(resolve => reader.readEntries(resolve, () => resolve([])))
-      if (!batch.length) break
-      entries.push(...batch)
-    }
-    return entries
-  }
-
-  const collectAllFilesFromDirectory = async (directoryEntry: any): Promise<File[]> => {
-    const entries = await readAllEntries(directoryEntry)
-    const files: File[] = []
-    for (const entry of entries) {
-      if (entry.isFile) {
-        const file = await new Promise<File | null>(resolve => {
-          entry.file((f: File) => resolve(f), () => resolve(null))
-        })
-        if (file) files.push(file)
-      } else if (entry.isDirectory) {
-        const subFiles = await collectAllFilesFromDirectory(entry)
-        files.push(...subFiles)
-      }
-    }
-    return files
-  }
-
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -258,130 +235,41 @@ export function DatasetRegistrationCard({
     setValidationErrors([])
 
     try {
-      const items = Array.from(e.dataTransfer.items)
-      const hasEntries = items.some(item => (item as any).webkitGetAsEntry)
-      
-      if (!hasEntries) {
+      const dataItems = Array.from(e.dataTransfer.items || [])
+      const hasEntries = dataItems.some(item => (item as any).webkitGetAsEntry)
+
+      if (!hasEntries && dataItems.length > 0 && (e.dataTransfer.files?.length ?? 0) === 0) {
         setValidationErrors([t('chatComponents.datasetRegistration.browserNotSupported')])
         return
       }
 
-      const entries = items.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
+      setCollectionProgress({
+        phase: 'preparing',
+        totalTopLevelEntries: 0,
+        processedItems: 0,
+        discoveredFiles: 0,
+        discoveredDirectories: 0,
+        completed: false,
+      })
 
-      // Collect top-level file entries and directory entries separately
-      // so we can later match .mrxs data directories and .tmap .DT* siblings
-      const topLevelFileEntries: { entry: any; file: File }[] = []
-      const topLevelDirEntries: { entry: any; name: string }[] = []
+      const result = await collectItemsFromDataTransfer(e.dataTransfer, {
+        onProgress: setCollectionProgress,
+      })
 
-      for (const entry of entries) {
-        if (entry.isFile) {
-          const file = await new Promise<File | null>(resolve => {
-            entry.file((f: File) => resolve(f), () => resolve(null))
-          })
-          if (file) topLevelFileEntries.push({ entry, file })
-        } else if (entry.isDirectory) {
-          topLevelDirEntries.push({ entry, name: entry.name as string })
-        }
-      }
-
-      // Build a map: lower-case directory name → entry (for mrxs data dir lookup)
-      const dirByName = new Map<string, any>()
-      for (const { entry, name } of topLevelDirEntries) {
-        dirByName.set(name.toLowerCase(), entry)
-      }
-
-      // Build new LocalItems for WSI files, detecting mrxs/tmap types
-      const newItems: LocalItem[] = []
-      const consumedFileKeys = new Set<string>()  // track tmap DT files so we skip them as main files
-
-      // First pass: identify mrxs / tmap main files and collect their associated data
-      for (const { file } of topLevelFileEntries) {
-        const lowerName = file.name.toLowerCase()
-        if (lowerName.endsWith('.mrxs')) {
-          const stem = getBaseName(file.name)
-          const stemLower = stem.toLowerCase()
-          // Look for a dropped directory with the same stem
-          const dataDirEntry = dirByName.get(stemLower)
-          let associatedFiles: File[] | undefined
-          if (dataDirEntry) {
-            associatedFiles = await collectAllFilesFromDirectory(dataDirEntry)
-          }
-          newItems.push({
-            key: `${file.name}-${file.size}`,
-            name: file.name,
-            file,
-            type: 'mrxs',
-            associatedFiles
-          })
-        } else if (lowerName.endsWith('.tmap')) {
-          const stem = getBaseName(file.name)
-          // DT files are collected from the same set of top-level file entries
-          const dtFiles: File[] = []
-          for (const { file: sibling } of topLevelFileEntries) {
-            if (sibling === file) continue
-            if (isTmapDataFile(sibling.name) && getBaseName(sibling.name).toLowerCase() === stem.toLowerCase()) {
-              dtFiles.push(sibling)
-              consumedFileKeys.add(`${sibling.name}-${sibling.size}`)
-            }
-          }
-          newItems.push({
-            key: `${file.name}-${file.size}`,
-            name: file.name,
-            file,
-            type: 'tmap',
-            associatedFiles: dtFiles.length > 0 ? dtFiles : undefined
-          })
-        }
-      }
-
-      // Second pass: collect remaining supported files (standard WSI / patch / tif)
-      // Skip tmap DT files that were already consumed as associated data
-      for (const { file } of topLevelFileEntries) {
-        const key = `${file.name}-${file.size}`
-        if (consumedFileKeys.has(key)) continue  // already used as tmap DT data
-        const lowerName = file.name.toLowerCase()
-        if (lowerName.endsWith('.mrxs') || lowerName.endsWith('.tmap')) continue  // already handled above
-        if (!isSupportedName(file.name)) continue
-        newItems.push({
-          key,
-          name: file.name,
-          file,
-          type: 'standard'
-        })
-      }
-
-      // Also flatten directories for non-mrxs directory drops (e.g. user drops a folder of patches)
-      // Only include directories that were NOT consumed as mrxs data dirs
-      for (const { entry, name } of topLevelDirEntries) {
-        // Skip if this directory name matches an mrxs stem we already handled
-        const matchedAsMrxsData = newItems.some(
-          item => item.type === 'mrxs' && item.associatedFiles && item.associatedFiles.length > 0
-            && getBaseName(item.name).toLowerCase() === name.toLowerCase()
-        )
-        if (matchedAsMrxsData) continue
-        const dirFiles = await collectAllFilesFromDirectory(entry)
-        for (const file of dirFiles) {
-          if (!isSupportedName(file.name)) continue
-          newItems.push({
-            key: `${file.name}-${file.size}`,
-            name: file.name,
-            file,
-            type: 'standard'
-          })
-        }
-      }
-
-      // Separate JSON files for segmentation mask matching (from all collected standard files)
-      const allCollectedFiles = newItems.filter(i => i.type === 'standard').map(i => i.file!)
-      const jsonFiles = isSegmentation ? allCollectedFiles.filter(f => f.name.toLowerCase().endsWith('.json')) : []
-      const validItems = newItems.filter(item => isSupportedName(item.name))
+      const validItems = result.items
+      const jsonFiles = isSegmentation ? result.jsonFiles : []
 
       if (validItems.length === 0 && !(isSegmentation && mode === 'existing' && jsonFiles.length > 0)) {
+        setCollectionProgress(null)
         setValidationErrors([t('chatComponents.datasetRegistration.noValidImages')])
         return
       }
 
-      setLocalItems(prev => [...prev, ...validItems])
+      setLocalItems(prev => {
+        const merged = new Map(prev.map(item => [item.key, item]))
+        validItems.forEach(item => merged.set(item.key, item))
+        return Array.from(merged.values())
+      })
 
       if (isSegmentation) {
         let duplicateJsonStems: string[] = []
@@ -395,7 +283,10 @@ export function DatasetRegistrationCard({
         }
       }
 
+      setCollectionProgress(null)
+
     } catch (error) {
+      setCollectionProgress(null)
       console.error('File processing error:', error)
       setValidationErrors([t('chatComponents.datasetRegistration.fileProcessingError')])
     }
@@ -403,6 +294,7 @@ export function DatasetRegistrationCard({
 
   const clearSelection = () => {
     setLocalItems([])
+    setCollectionProgress(null)
     setSegmentationJsonFiles(new Map())
     setSegmentationDuplicateJsonStems(new Set())
     setValidationErrors([])
@@ -445,7 +337,7 @@ export function DatasetRegistrationCard({
           file,
           metadata: {
             dataset_id: selectedDatasetId,
-            task_type: config?.upload_mode || 'classification',
+            task_type: resolveUploadTaskType(canonicalUploadMode, { fileName: file.name, fileSize: file.size, dataType: 'patch' }),
           }
         }))
         : localItems.map(item => {
@@ -453,21 +345,29 @@ export function DatasetRegistrationCard({
           const matchedSegmentationJson = isSegmentation
             ? segmentationJsonFiles.get(getSegmentationStem(item.name))
             : undefined
+          const selectedDataType = mode === 'existing'
+            ? datasets.find(d => d.dataset_id === selectedDatasetId)?.data_type
+            : undefined
+          const taskType = resolveUploadTaskType(canonicalUploadMode, {
+            fileName: item.name,
+            fileSize: item.file?.size ?? null,
+            dataType: selectedDataType,
+          })
 
           return {
             key: item.key,
             name: item.name,
             file: item.file,
             path: item.path,
-              metadata: {
-                dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
-                dataset_name: mode === 'new' ? newDatasetName : undefined,
-                source_organ: mode === 'new' ? (resolvedDatasetSource || undefined) : undefined,
-                aggregation_level: dataLevel,
-                is_public: mode === 'new' ? isPublic : undefined,
-                task_type: config?.upload_mode || 'classification',
-                label: isSegmentation ? undefined : '',
-                case_id: '',
+            metadata: {
+              dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
+              dataset_name: mode === 'new' ? newDatasetName : undefined,
+              source_organ: mode === 'new' ? (resolvedDatasetSource || undefined) : undefined,
+              aggregation_level: dataLevel,
+              is_public: mode === 'new' ? isPublic : undefined,
+              task_type: taskType,
+              label: isSegmentation ? undefined : '',
+              case_id: '',
               age: undefined,
               gender: '',
               event_time: undefined,
@@ -794,7 +694,28 @@ export function DatasetRegistrationCard({
               onDragLeave={() => setIsDragging(false)}
               onDrop={handleDrop}
             >
-              {readyUploadCount > 0 ? (
+              {isCollecting ? (
+                <div className="space-y-3">
+                  <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center mx-auto">
+                    <Loader2 className="w-5 h-5 text-primary-600 animate-spin" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{t('chatComponents.datasetRegistration.collectionProgressTitle')}</p>
+                    <p className="text-xs text-gray-500 mt-1">{t('chatComponents.datasetRegistration.collectionProgressDescription')}</p>
+                  </div>
+                  <div className="text-xs text-gray-500 space-y-1">
+                    <p>
+                      {t('chatComponents.datasetRegistration.collectionProgressStats', {
+                        files: collectionProgress?.discoveredFiles ?? 0,
+                        directories: collectionProgress?.discoveredDirectories ?? 0,
+                      })}
+                    </p>
+                    {collectionProgress?.currentDirectoryName && (
+                      <p>{t('chatComponents.datasetRegistration.collectionProgressCurrentDirectory', { name: collectionProgress.currentDirectoryName })}</p>
+                    )}
+                  </div>
+                </div>
+              ) : readyUploadCount > 0 ? (
                 <div className="space-y-3">
                   <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center mx-auto">
                     <CheckCircle className="w-5 h-5 text-blue-600" />
@@ -837,8 +758,9 @@ export function DatasetRegistrationCard({
                   const resolvedMode = mode === 'existing' && selectedDatasetId
                     ? datasets.find(d => d.dataset_id === selectedDatasetId)?.task_type
                     : config?.upload_mode
-                  if (resolvedMode === 'survival') modeLabel = t('chatComponents.datasetRegistration.survival')
-                  else if (resolvedMode === 'segmentation') modeLabel = t('chatComponents.datasetRegistration.segmentation')
+                  const resolvedFamily = getTaskFamily(resolvedMode)
+                  if (resolvedFamily === 'survival') modeLabel = t('chatComponents.datasetRegistration.survival')
+                  else if (resolvedFamily === 'segmentation') modeLabel = t('chatComponents.datasetRegistration.segmentation')
                   return t('chatComponents.datasetRegistration.downloadTemplate', { mode: modeLabel })
                 })()}
               </button>
@@ -856,11 +778,11 @@ export function DatasetRegistrationCard({
               </div>
             )}
 
-            <button
-               onClick={handleStartUpload}
-               disabled={isUploading || readyUploadCount === 0}
+             <button
+                onClick={handleStartUpload}
+               disabled={isUploading || isCollecting || readyUploadCount === 0}
                className="w-full py-2 bg-primary-600 text-white rounded-lg text-sm font-medium hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
+             >
               {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
               {t('chatComponents.datasetRegistration.startRegistration')}
             </button>

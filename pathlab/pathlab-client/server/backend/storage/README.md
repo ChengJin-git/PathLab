@@ -1,6 +1,6 @@
 # PathLab Storage Management
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 `server/backend/storage/` 负责文件系统层面的统计、迁移、配置与清理工作，是数据库状态与 `uploads/` 目录之间的一层维护工具。
 
@@ -26,15 +26,22 @@
 
 ## 当前 uploads 目录现状
 
+**存储根目录解析优先级**（`Config.get_uploads_dir()`）：
+
+1. 环境变量 `PATHLAB_UPLOADS_DIR` — 最高优先级，适用于固定外置存储路径的部署场景
+2. `storage.json` 中保存的 `uploads_dir` 字段（通过 `/storage/config POST` 接口写入）
+3. 系统 app data 目录下的 `uploads/` 子目录（`{appDataDir}/uploads/`，Electron 桌面模式的默认落地路径）
+
 根据 `backend/common/config.py`，当前启动时会确保这些目录存在：
 
 - `uploads/avatars/`
 - `uploads/coordinates/`
 - `uploads/masks/`
 - `uploads/features/`
-- `uploads/ai_results/`
+- `uploads/ai_results_bundles/`
 - `uploads/training/`
 - `uploads/models/`
+- `uploads/extractor_checkpoints/`
 - `uploads/logs/`
 - `uploads/wsi_files/`
 - `uploads/metadata/`
@@ -45,7 +52,7 @@
 - `uploads/annotations/`：Preprocessing 为数据集写出 `*_coco.json` 缓存时创建
 - `uploads/pdf_cache/`：聊天 / PDF 相关逻辑按需使用
 
-另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同。
+另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同；AI 结果以 `{task_id}.zarr.zip` bundle 形式存放在 `uploads/ai_results_bundles/`，临时 staging 目录位于 `uploads/ai_results_bundles/.staging/`。
 
 这已经超出“只存切片文件”的阶段，当前实现同时管理模型、训练结果、日志、缓存和用户上传衍生物。
 
@@ -57,7 +64,7 @@
 
 - `coordinates`
 - `masks`
-- `ai_results`
+- `ai_result_bundles`
 - `features_cache`
 - `training`
 - `models`
@@ -72,14 +79,14 @@
 - `coordinates`
 - `masks`
 - `features_cache`
-- `ai_results`
+- `ai_result_bundles`
 - `training`
 - `models`
 - `logs`
 
 并将它们与数据库中已有的 WSI、任务、模型记录对照，以发现多余文件或失配记录。
 
-因此要注意：`metadata`、`progress`、`avatars`、`annotations`、`pdf_cache` 虽然是当前运行时会使用的目录，但并不是都被纳入同一套统计 / 孤立扫描逻辑。
+因此要注意：`metadata`、`progress`、`avatars`、`annotations`、`pdf_cache`、`extractor_checkpoints` 虽然是当前运行时会使用的目录，但并不是都被纳入同一套统计 / 孤立扫描逻辑。
 
 ## Gateway 暴露方式
 

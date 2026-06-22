@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, BarChart3, FileText, ThumbsUp, ThumbsDown, ArrowRight, FlaskConical } from 'lucide-react'
-import { runTaskAnalysis, getTrainingTasks, startExternalValidation, getTrainedModels, fetchDatasetsForValidation, ApiError } from '../../api'
+import { runTaskAnalysis, startExternalValidation, getTrainedModel, getTrainingTask, fetchDatasetsForValidation, ApiError } from '../../api'
 import { getDatasetCompatibilityError, isDatasetCompatible } from '../../lib/externalValidationUtils'
 import { useToast } from '../../contexts/ToastContext'
 
@@ -114,19 +114,14 @@ export function AnalysisConfigCard({
 
   const isExternal = config.analysis_type === 'external'
 
-  // Validate task/model exists on mount
+  // Validate task/model exists on mount.
+  // Uses direct ID lookups (getTrainedModel, getTrainingTask) instead of paginated
+  // list APIs so that older models/tasks (beyond default page_size=10) are found correctly.
   useEffect(() => {
     const checkTask = async () => {
       setIsLoadingTask(true)
       setValidationError('')
       try {
-        const response = await getTrainingTasks()
-        const tasks = Array.isArray(response)
-          ? response
-          : Array.isArray(response?.items)
-            ? response.items
-            : []
-
         if (isExternal) {
           // For external: validate model and dataset compatibility using same logic as ResultsViewerPage
           if (!config.model_id || !config.data_task_id) {
@@ -135,25 +130,12 @@ export function AnalysisConfigCard({
             return
           }
 
-          // Fetch model and dataset details
-          const [models, datasets] = await Promise.all([
-            getTrainedModels(),
-            fetchDatasetsForValidation()
+          const [model, datasets] = await Promise.all([
+            getTrainedModel(config.model_id),
+            fetchDatasetsForValidation(),
           ])
 
-          const model = models.items.find(m => m.model_id === config.model_id)
-          if (!model) {
-            setTaskExists(false)
-            setValidationError(`Model not found: ${config.model_id}`)
-            return
-          }
-
-          const modelTask = tasks.find(task => task.task_id === model.task_id)
-          if (!modelTask) {
-            setTaskExists(false)
-            setValidationError(`Training task not found for model: ${model.model_name}`)
-            return
-          }
+          const modelTask = await getTrainingTask(model.task_id)
 
           const dataset = datasets.items.find(ds => ds.dataset_id === config.data_task_id)
           if (!dataset) {
@@ -176,8 +158,8 @@ export function AnalysisConfigCard({
 
           setTaskExists(true)
         } else {
-          // For internal: check if task exists and is completed
-          const found = tasks.some(task => task.task_id === config.task_id && task.status === 'completed')
+          const task = await getTrainingTask(config.task_id)
+          const found = task.status === 'completed'
           setTaskExists(found)
           if (!found) {
             setValidationError(`Task not found or not completed: ${config.task_id}`)
@@ -186,7 +168,15 @@ export function AnalysisConfigCard({
       } catch (error) {
         console.error('Failed to check task:', error)
         setTaskExists(false)
-        setValidationError(error instanceof Error ? error.message : 'Failed to validate configuration')
+        if (error instanceof ApiError && error.isNotFound()) {
+          setValidationError(
+            isExternal
+              ? `Model or training task not found: ${config.model_id}`
+              : `Task not found or not completed: ${config.task_id}`
+          )
+        } else {
+          setValidationError(error instanceof Error ? error.message : 'Failed to validate configuration')
+        }
       } finally {
         setIsLoadingTask(false)
       }

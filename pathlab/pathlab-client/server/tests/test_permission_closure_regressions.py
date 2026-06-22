@@ -101,7 +101,7 @@ def test_build_batch_import_task_params_keeps_visibility_flags():
         dataset_name=None,
         source_organ="lung",
         aggregation_level="file",
-        task_type="classification",
+        task_type="wsi_classification",
         default_label="tumor",
         default_event_time=None,
         default_event_status=None,
@@ -131,7 +131,7 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
             group_id="group-1",
             data_type=kwargs.get("data_type", "wsi"),
             aggregation_level=kwargs.get("aggregation_level", "file"),
-            task_type=kwargs.get("task_type", "classification"),
+            task_type=kwargs.get("task_type", "wsi_classification"),
         )
 
     async def _fake_get_or_create_dataset(db, dataset_name, **kwargs):
@@ -143,8 +143,8 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
     async def _fake_align_dataset_data_type_for_file(db, dataset, **kwargs):
         return dataset
 
-    async def _fake_create_wsi(db, wsi_data):
-        return types.SimpleNamespace(label=wsi_data.get("label"))
+    async def _fake_create_wsi(db, **kwargs):
+        return types.SimpleNamespace(label=kwargs.get("label"))
 
     async def _fake_recompute_dataset_stats(db, dataset_id):
         return None
@@ -204,6 +204,14 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
         "gateway.routes.wsi_upload.WSIRepository.create",
         staticmethod(_fake_create_wsi),
     )
+
+    async def _fake_get_by_filename_in_dataset(db, dataset_id, filename):
+        return None
+
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.WSIRepository.get_by_filename_in_dataset",
+        staticmethod(_fake_get_by_filename_in_dataset),
+    )
     monkeypatch.setattr(
         "gateway.routes.wsi_upload.uuid.uuid4",
         lambda: "generated-uuid",
@@ -215,7 +223,7 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
         dataset_name="new-dataset",
         source_organ="lung",
         aggregation_level="file",
-        task_type="classification",
+        task_type="wsi_classification",
         is_public=True,
         wsi_id="wsi-1",
         case_id="case-1",

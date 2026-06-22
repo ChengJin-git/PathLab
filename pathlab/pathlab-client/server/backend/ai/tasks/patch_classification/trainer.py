@@ -68,11 +68,14 @@ from backend.ai.tasks.training_utils import (
     is_kfold_splits,
     get_num_folds,
     calculate_kfold_classification_metrics,
+    classification_metrics_from_fold_results,
     calculate_progress_update_interval,
     interpolate_progress,
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
     check_training_interruption,
+    save_ai_result_artifacts,
+    finalize_ai_result_artifacts,
 )
 
 
@@ -880,8 +883,8 @@ class PatchClassificationTrainer(BaseTrainer):
                 _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
                 if _ckpt.get("type") == "kfold":
                     fold_results = _ckpt.get("completed_fold_results", {})
-                    all_val_metrics = _ckpt.get(
-                        "completed_val_metrics", all_val_metrics
+                    all_val_metrics = classification_metrics_from_fold_results(
+                        fold_results
                     )
                     _resume_start_fold = _ckpt.get("fold_idx", 0)
                     _resume_start_epoch = _ckpt.get("epoch", 0) + 1
@@ -970,11 +973,6 @@ class PatchClassificationTrainer(BaseTrainer):
                     metadata={"fold": fold_idx + 1},
                 )
                 completed_metrics = fold_results[val_fold_key]["val_metrics"]
-                all_val_metrics["accuracy"].append(
-                    completed_metrics.get("accuracy", 0.0)
-                )
-                if completed_metrics.get("auc") is not None:
-                    all_val_metrics["auc"].append(completed_metrics["auc"])
                 continue
 
             await logger.info(
@@ -1728,9 +1726,8 @@ class PatchClassificationTrainer(BaseTrainer):
         - Ground truth
         - CAM heatmap (attention-like visualization)
 
-        Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
-        - uploads/ai_results/{wsi_id}/train_{task_id}_cam.npy (CAM heatmap)
+        Results are saved to the task-level AI result bundle, including result
+        metadata and CAM arrays when available.
 
         Args:
             fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
@@ -1738,7 +1735,6 @@ class PatchClassificationTrainer(BaseTrainer):
             progress_range: Total progress range for saving (default 10 for regular training)
         """
         import concurrent.futures
-        from functools import partial
 
         fold_suffix = f"_{fold_key}" if fold_key else ""
         fold_desc = f" ({fold_key})" if fold_key else ""
@@ -1780,7 +1776,6 @@ class PatchClassificationTrainer(BaseTrainer):
         )
 
         model.eval()
-        ai_results_root = self.uploads_root / "ai_results"
         num_classes = len(classes)
 
         # Get transforms for inference using actual extractor resize rules
@@ -1811,28 +1806,28 @@ class PatchClassificationTrainer(BaseTrainer):
 
         use_gradients = is_cnn_extractor(extractor_name)
 
-        # Phase 1: Run inference and collect results in thread pool.
-        # GPU inference and image loading are blocking - run in thread to avoid blocking event loop.
+        # Phase 1: Run inference in bounded batches.
+        # GPU inference and image loading are blocking, and CAM arrays are large;
+        # keep only one save batch in memory before handing it to the throttled
+        # file-I/O phase below.
         from PIL import Image
 
-        running_loop = asyncio.get_running_loop()
         inference_update_interval = calculate_progress_update_interval(
             total_images,
             target_updates=25,
             max_interval=200,
         )
 
-        def _run_inference():
-            """Synchronous inference loop - runs in thread pool to avoid blocking event loop."""
+        def _run_inference_batch(batch_wsi_ids: List[str]):
+            """Synchronous inference loop for one bounded save batch."""
             _all_probs = []
             _all_preds = []
             _all_labels_list = []
             _file_save_items = []
             _db_records = []
-            processed_images = 0
 
             with torch.set_grad_enabled(use_gradients):
-                for idx, wsi_id in enumerate(wsi_ids):
+                for wsi_id in batch_wsi_ids:
                     # Load and transform image
                     img_path = image_paths[wsi_id]
                     img = Image.open(img_path).convert("RGB")
@@ -1872,12 +1867,6 @@ class PatchClassificationTrainer(BaseTrainer):
                     probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
                     gt_label = classes[labels[wsi_id]]
 
-                    wsi_result_dir = ai_results_root / wsi_id
-                    cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
-                    result_file = (
-                        wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                    )
-
                     result_data = {
                         "wsi_id": wsi_id,
                         "task_id": task_id,
@@ -1886,15 +1875,13 @@ class PatchClassificationTrainer(BaseTrainer):
                         "ground_truth": gt_label,
                         "correct": pred_label == gt_label,
                         "classes": classes,
-                        "cam_file": str(cam_file),
+                        "cam_file": None,
                         "cam_size": list(cam_size),
                     }
                     if fold_key:
                         result_data["fold_key"] = fold_key
 
-                    _file_save_items.append(
-                        (wsi_result_dir, result_data, cam_map, fold_suffix, task_id)
-                    )
+                    _file_save_items.append((result_data, cam_map, fold_suffix, task_id))
 
                     # Prepare database record
                     _db_records.append(
@@ -1908,34 +1895,13 @@ class PatchClassificationTrainer(BaseTrainer):
                                 "correct": pred_label == gt_label,
                                 "classes": classes,
                                 "task_type": "patch_classification",
-                                "cam_file": str(cam_file),
+                                "cam_file": None,
                                 "cam_size": list(cam_size),
                                 "fold_key": fold_key,
-                                "result_file": str(result_file),
+                                "result_file": None,
                             },
                         }
                     )
-
-                    processed_images += 1
-                    if (
-                        processed_images % inference_update_interval == 0
-                        or processed_images >= total_images
-                    ):
-                        inference_progress = interpolate_progress(
-                            progress_inference,
-                            progress_file_io_start,
-                            processed_images,
-                            total_images,
-                        )
-                        asyncio.run_coroutine_threadsafe(
-                            _safe_update_progress(
-                                session_maker,
-                                self.task_id,
-                                TaskStatus.TRAINING,
-                                inference_progress,
-                            ),
-                            running_loop,
-                        )
 
             return (
                 _all_probs,
@@ -1945,20 +1911,14 @@ class PatchClassificationTrainer(BaseTrainer):
                 _db_records,
             )
 
-        (
-            all_probs,
-            all_preds,
-            all_labels_list,
-            file_save_items,
-            db_records,
-        ) = await asyncio.to_thread(_run_inference)
+        all_probs = []
+        all_preds = []
+        all_labels_list = []
+        db_records = []
 
         # Phase 2: Parallel file I/O using thread pool with progress updates
-        await _safe_update_progress(
-            session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start
-        )
         await logger.info(
-            f"[Saving] Writing {total_images} result files to disk...",
+            f"[Saving] Generating CAMs and writing {total_images} result files to disk...",
             {"phase": "writing_files", "num_files": total_images},
         )
         await logger.info(
@@ -1972,6 +1932,9 @@ class PatchClassificationTrainer(BaseTrainer):
 
         # Track completed files for progress updates
         completed_count = [0]
+        processed_count = 0
+        next_inference_progress_update = inference_update_interval
+        last_progress = [progress_inference]
         progress_lock = asyncio.Lock()
         file_update_interval = calculate_progress_update_interval(
             total_images,
@@ -1981,23 +1944,35 @@ class PatchClassificationTrainer(BaseTrainer):
 
         def save_single_image_files(item):
             """Synchronous function to save files for a single image."""
-            wsi_result_dir, result_data, cam_map, fold_suffix, task_id = item
-            wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save CAM heatmap
-            cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
-            np.save(cam_file, cam_map)
-
-            # Save result JSON
-            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-            with open(result_file, "w", encoding="utf-8") as f:
-                json.dump(result_data, f, ensure_ascii=False)
+            result_data, cam_map, fold_suffix, task_id = item
+            save_ai_result_artifacts(
+                Config.get_uploads_dir(),
+                task_id,
+                result_data["wsi_id"],
+                result_data,
+                arrays={"cam": cam_map},
+                fold_suffix=fold_suffix,
+                finalize=False,
+                update_index=False,
+            )
 
             return result_data["wsi_id"]
 
         # Capture session_maker reference for use in nested function
         session_maker_ref = session_maker
         task_id_for_update = self.task_id
+
+        async def update_progress_monotonic(progress: int):
+            async with progress_lock:
+                if progress <= last_progress[0]:
+                    return
+                last_progress[0] = progress
+                await _safe_update_progress(
+                    session_maker_ref,
+                    task_id_for_update,
+                    TaskStatus.TRAINING,
+                    progress,
+                )
 
         async def save_with_progress(
             executor, item, total, file_io_start, file_io_range
@@ -2007,16 +1982,20 @@ class PatchClassificationTrainer(BaseTrainer):
             result = await loop.run_in_executor(executor, save_single_image_files, item)
             async with progress_lock:
                 completed_count[0] += 1
-                if (
+                should_update = (
                     completed_count[0] % file_update_interval == 0
                     or completed_count[0] == total
-                ):
-                    file_progress = interpolate_progress(
-                        file_io_start,
-                        file_io_start + file_io_range,
-                        completed_count[0],
-                        total,
-                    )
+                )
+                if not should_update:
+                    return result
+                file_progress = interpolate_progress(
+                    file_io_start,
+                    file_io_start + file_io_range,
+                    completed_count[0],
+                    total,
+                )
+                if file_progress > last_progress[0]:
+                    last_progress[0] = file_progress
                     await _safe_update_progress(
                         session_maker_ref,
                         task_id_for_update,
@@ -2029,9 +2008,35 @@ class PatchClassificationTrainer(BaseTrainer):
             max_workers=SAVE_FILE_IO_MAX_WORKERS
         ) as executor:
             for batch_start in range(0, total_images, SAVE_FILE_IO_BATCH_SIZE):
-                batch_items = file_save_items[
-                    batch_start : batch_start + SAVE_FILE_IO_BATCH_SIZE
-                ]
+                batch_wsi_ids = wsi_ids[batch_start : batch_start + SAVE_FILE_IO_BATCH_SIZE]
+                (
+                    batch_probs,
+                    batch_preds,
+                    batch_labels,
+                    batch_items,
+                    batch_db_records,
+                ) = await asyncio.to_thread(_run_inference_batch, batch_wsi_ids)
+
+                all_probs.extend(batch_probs)
+                all_preds.extend(batch_preds)
+                all_labels_list.extend(batch_labels)
+                db_records.extend(batch_db_records)
+
+                processed_count += len(batch_wsi_ids)
+                if (
+                    processed_count >= next_inference_progress_update
+                    or processed_count >= total_images
+                ):
+                    inference_progress = interpolate_progress(
+                        progress_inference,
+                        progress_file_io_start,
+                        processed_count,
+                        total_images,
+                    )
+                    await update_progress_monotonic(inference_progress)
+                    while next_inference_progress_update <= processed_count:
+                        next_inference_progress_update += inference_update_interval
+
                 tasks = [
                     save_with_progress(
                         executor,
@@ -2043,7 +2048,10 @@ class PatchClassificationTrainer(BaseTrainer):
                     for item in batch_items
                 ]
                 await asyncio.gather(*tasks)
+                batch_items.clear()
                 await asyncio.sleep(0)
+
+        finalize_ai_result_artifacts(Config.get_uploads_dir(), self.task_id)
 
         # Phase 3: Batch database insert
         await _safe_update_progress(

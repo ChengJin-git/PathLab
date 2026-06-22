@@ -10,22 +10,39 @@ import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from importlib import import_module
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PIL import Image
+from fastapi import HTTPException
 
-from backend.common.config import Config
-from backend.database import safe_session
-from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
-from backend.ai.utils.patch_resize import (
-    DEFAULT_NON_FM_PATCH_RESIZE,
-    build_patch_classification_transform,
-    resolve_patch_resize_size,
+Config = import_module("backend.common.config").Config
+safe_session = import_module("backend.database").safe_session
+_repositories = import_module("backend.database.repositories")
+TrainedModelRepository = _repositories.TrainedModelRepository
+TrainingTaskRepository = _repositories.TrainingTaskRepository
+_patch_resize = import_module("backend.ai.utils.patch_resize")
+DEFAULT_NON_FM_PATCH_RESIZE = _patch_resize.DEFAULT_NON_FM_PATCH_RESIZE
+build_patch_classification_transform = (
+    _patch_resize.build_patch_classification_transform
+)
+resolve_patch_resize_size = _patch_resize.resolve_patch_resize_size
+
+from ..task_dispatch import (
+    JsonPayload,
+    build_task_descriptor,
+    enqueue_task_descriptor,
+    is_worker_healthy,
+    publish_task_cancellation,
 )
 
-from ..task_queue import TaskType, get_task_queue
+_redis_client = import_module("backend.common.redis_client")
+get_redis = _redis_client.get_redis
+make_key = _redis_client.make_key
+
+_SNAPSHOT_TTL_SECONDS = 3600
 
 
 def _utcnow_iso() -> str:
@@ -74,8 +91,23 @@ _TASK_LOCK = asyncio.Lock()
 
 
 async def get_chat_patch_task(task_id: str) -> Optional[ChatPatchTask]:
+    snapshot = await _get_task_snapshot(task_id)
     async with _TASK_LOCK:
-        return _TASKS.get(task_id)
+        local_task = _TASKS.get(task_id)
+
+    if snapshot is None:
+        return local_task
+
+    snapshot_task = _task_from_snapshot(snapshot)
+    if local_task is not None and not _is_snapshot_newer(
+        snapshot_task.updated_at, local_task.updated_at
+    ):
+        return local_task
+
+    async with _TASK_LOCK:
+        _TASKS[task_id] = snapshot_task
+        _CONVERSATION_INDEX.setdefault(snapshot_task.conversation_id, set()).add(task_id)
+    return snapshot_task
 
 
 async def create_chat_patch_task(
@@ -89,9 +121,8 @@ async def create_chat_patch_task(
     image_data_url: str,
     source: Optional[str] = None,
 ) -> Dict[str, Any]:
-    task_queue = get_task_queue()
-    if not task_queue:
-        raise RuntimeError("Task queue is not initialized")
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
 
     task_id = f"chat_patch_{uuid.uuid4().hex}"
     task_dir = (
@@ -116,19 +147,39 @@ async def create_chat_patch_task(
     async with _TASK_LOCK:
         _TASKS[task_id] = task
         _CONVERSATION_INDEX.setdefault(conversation_id, set()).add(task_id)
+    await _set_task_snapshot(task_id, _task_to_snapshot(task))
 
-    await task_queue.submit(task_id, TaskType.ANALYSIS, _run_chat_patch_task)
+    descriptor_payload = _build_chat_patch_descriptor_payload(task)
+    descriptor = build_task_descriptor(
+        job_id=task_id,
+        job_kind="chat",
+        handler="chat.patch_inference",
+        payload=descriptor_payload,
+    )
+    try:
+        await enqueue_task_descriptor(descriptor)
+    except Exception:
+        await _update_task(
+            task_id,
+            status="failed",
+            progress=100,
+            error="Failed to enqueue chat patch inference task",
+        )
+        await asyncio.to_thread(_cleanup_task_files, task)
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to enqueue chat patch inference task",
+        )
+
     return task.to_public_dict()
 
 
 async def cleanup_conversation_chat_patch_tasks(conversation_id: str) -> None:
-    task_queue = get_task_queue()
     async with _TASK_LOCK:
         task_ids = list(_CONVERSATION_INDEX.get(conversation_id, set()))
 
     for task_id in task_ids:
-        if task_queue and task_queue.is_task_in_queue(task_id):
-            await task_queue.cancel_task(task_id)
+        await publish_task_cancellation(task_id)
 
     async with _TASK_LOCK:
         for task_id in task_ids:
@@ -142,7 +193,6 @@ async def cleanup_chat_patch_tasks_from_message(
     conversation_id: str,
     message_id: int,
 ) -> None:
-    task_queue = get_task_queue()
     async with _TASK_LOCK:
         task_ids = [
             task_id
@@ -151,8 +201,7 @@ async def cleanup_chat_patch_tasks_from_message(
         ]
 
     for task_id in task_ids:
-        if task_queue and task_queue.is_task_in_queue(task_id):
-            await task_queue.cancel_task(task_id)
+        await publish_task_cancellation(task_id)
 
     async with _TASK_LOCK:
         for task_id in task_ids:
@@ -170,8 +219,6 @@ async def cancel_chat_patch_tasks_for_message(
     conversation_id: str,
     message_id: int,
 ) -> list[Dict[str, Any]]:
-    """Cancel active chat patch tasks for one assistant message and return final task snapshots."""
-    task_queue = get_task_queue()
     async with _TASK_LOCK:
         task_ids = [
             task_id
@@ -192,8 +239,7 @@ async def cancel_chat_patch_tasks_for_message(
             snapshots.append(snapshot)
 
     for task_id in task_ids:
-        if task_queue and task_queue.is_task_in_queue(task_id):
-            await task_queue.cancel_task(task_id)
+        await publish_task_cancellation(task_id)
 
     async with _TASK_LOCK:
         for task_id in task_ids:
@@ -241,6 +287,7 @@ async def _run_chat_patch_task(
 
 
 async def _update_task(task_id: str, **changes: Any) -> None:
+    snapshot: dict[str, Any]
     async with _TASK_LOCK:
         task = _TASKS.get(task_id)
         if not task:
@@ -248,6 +295,110 @@ async def _update_task(task_id: str, **changes: Any) -> None:
         for key, value in changes.items():
             setattr(task, key, value)
         task.updated_at = _utcnow_iso()
+        snapshot = _task_to_snapshot(task)
+    await _set_task_snapshot(task_id, snapshot)
+
+
+def _task_to_snapshot(task: ChatPatchTask) -> dict[str, Any]:
+    return {
+        "task_id": task.task_id,
+        "conversation_id": task.conversation_id,
+        "message_id": task.message_id,
+        "user_id": task.user_id,
+        "inference_type": task.inference_type,
+        "model_id": task.model_id,
+        "model_name": task.model_name,
+        "image_path": task.image_path,
+        "source": task.source,
+        "status": task.status,
+        "progress": task.progress,
+        "result": task.result,
+        "error": task.error,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+    }
+
+
+def _task_from_snapshot(snapshot: Dict[str, Any]) -> ChatPatchTask:
+    return ChatPatchTask(
+        task_id=str(snapshot["task_id"]),
+        conversation_id=str(snapshot["conversation_id"]),
+        message_id=int(snapshot["message_id"]),
+        user_id=str(snapshot["user_id"]),
+        inference_type=str(snapshot["inference_type"]),
+        model_id=str(snapshot["model_id"]),
+        model_name=str(snapshot["model_name"]),
+        image_path=str(snapshot["image_path"]),
+        source=snapshot.get("source"),
+        status=str(snapshot.get("status") or "queued"),
+        progress=int(snapshot.get("progress") or 0),
+        result=snapshot.get("result"),
+        error=snapshot.get("error"),
+        created_at=str(snapshot.get("created_at") or _utcnow_iso()),
+        updated_at=str(snapshot.get("updated_at") or _utcnow_iso()),
+    )
+
+
+def _is_snapshot_newer(snapshot_updated_at: str, local_updated_at: str) -> bool:
+    return _parse_task_timestamp(snapshot_updated_at) > _parse_task_timestamp(
+        local_updated_at
+    )
+
+
+def _parse_task_timestamp(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _build_chat_patch_descriptor_payload(task: ChatPatchTask) -> JsonPayload:
+    payload: dict[str, Any] = {
+        "task_id": task.task_id,
+        "conversation_id": task.conversation_id,
+        "message_id": task.message_id,
+        "user_id": task.user_id,
+        "inference_type": task.inference_type,
+        "model_id": task.model_id,
+        "model_name": task.model_name,
+        "image_path": task.image_path,
+        "source": task.source,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "runner_module": "gateway.routes.chat_patch_inference",
+        "runner_name": "_run_chat_patch_task",
+        "runner_kwargs": {"task_id": task.task_id},
+    }
+    return payload
+
+
+async def _set_task_snapshot(task_id: str, snapshot: dict[str, Any]) -> None:
+    try:
+        r = get_redis()
+        key = make_key("chat_patch_task", task_id)
+        await r.set(key, json.dumps(snapshot), ex=_SNAPSHOT_TTL_SECONDS)
+    except Exception:
+        pass
+
+
+async def _get_task_snapshot(task_id: str) -> Optional[dict[str, Any]]:
+    try:
+        r = get_redis()
+        key = make_key("chat_patch_task", task_id)
+        raw = await r.get(key)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
 
 
 def _persist_image_data_url(image_data_url: str, task_dir: Path) -> Path:
@@ -272,6 +423,11 @@ def _persist_image_data_url(image_data_url: str, task_dir: Path) -> Path:
 
 def _cleanup_task_files(task: ChatPatchTask) -> None:
     task_root = Path(task.image_path).parent
+    chat_patch_root = Config.get_uploads_dir() / "chat_patch_inference"
+    try:
+        task_root.resolve().relative_to(chat_patch_root.resolve())
+    except ValueError:
+        return
     if task_root.exists():
         shutil.rmtree(task_root, ignore_errors=True)
 
@@ -283,7 +439,8 @@ async def _run_patch_classification(
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    from backend.ai.extractors import get_extractor
+
+    get_extractor = import_module("backend.ai.extractors").get_extractor
 
     device = assigned_device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -295,7 +452,15 @@ async def _run_patch_classification(
     model_dir = Config.get_uploads_dir() / "models" / task.model_id
     config_path = model_dir / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    classes = trained_model.classes or config.get("classes", [])
+    trained_classes = (
+        trained_model.classes if isinstance(trained_model.classes, list) else []
+    )
+    config_classes = config.get("classes", [])
+    classes = (
+        list(trained_classes)
+        if trained_classes
+        else list(config_classes if isinstance(config_classes, list) else [])
+    )
     if not classes:
         raise ValueError("Could not determine model classes")
 
@@ -303,7 +468,7 @@ async def _run_patch_classification(
     num_folds = int(config.get("num_folds", 5)) if is_kfold else 1
 
     def _load_models():
-        extractor_name = (
+        extractor_name = str(
             config.get("extractor") or trained_model.feature_extractor or "resnet50"
         )
         linear_probes = []
@@ -340,9 +505,9 @@ async def _run_patch_classification(
     await _update_task(task.task_id, progress=35)
 
     def _infer_single_image() -> Dict[str, Any]:
-        image = Image.open(task.image_path).convert("RGB")
+        patch_image = Image.open(task.image_path).convert("RGB")
         image_tensor = (
-            build_patch_classification_transform(extractor, resize_size)(image)
+            build_patch_classification_transform(extractor, resize_size)(patch_image)
             .unsqueeze(0)
             .to(device)
         )
@@ -376,7 +541,8 @@ async def _run_patch_segmentation(
 ) -> Dict[str, Any]:
     import torch
     from torchvision.transforms import v2
-    from backend.ai.segmentors import Segmentor
+
+    Segmentor = import_module("backend.ai.segmentors").Segmentor
 
     device = assigned_device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -385,36 +551,47 @@ async def _run_patch_segmentation(
         if not trained_model:
             raise ValueError(f"Trained model not found: {task.model_id}")
         training_task = await TrainingTaskRepository.get_by_id(
-            db, trained_model.task_id
+            db, str(trained_model.task_id)
         )
 
-    checkpoint_path = trained_model.model_path
+    checkpoint_path = str(trained_model.model_path)
 
     def _load_model():
-        from backend.ai.segmentors.specs import is_fm_segmentation_backbone
+        is_fm_segmentation_backbone = import_module(
+            "backend.ai.segmentors.specs"
+        ).is_fm_segmentation_backbone
 
         checkpoint = torch.load(
             checkpoint_path, map_location=device, weights_only=False
         )
         checkpoint_config = checkpoint.get("config", {})
-        task_model_cfg = (training_task.model_config or {}) if training_task else {}
+        if not isinstance(checkpoint_config, dict):
+            checkpoint_config = {}
+        task_model_cfg = (
+            training_task.model_config
+            if training_task and isinstance(training_task.model_config, dict)
+            else {}
+        )
         dataset_cfg = checkpoint_config.get("dataset", {})
+        if not isinstance(dataset_cfg, dict):
+            dataset_cfg = {}
 
         architecture = (
             checkpoint_config.get("architecture")
             or task_model_cfg.get("architecture")
             or "unet"
         )
-        backbone = (
+        backbone = str(
             checkpoint_config.get("backbone")
             or task_model_cfg.get("backbone")
             or trained_model.feature_extractor
             or "resnet50"
         )
         in_channels = int(dataset_cfg.get("channels", 3))
-        num_classes = int(
-            dataset_cfg.get("classes") or len(trained_model.classes or []) or 1
+        trained_model_classes = (
+            trained_model.classes if isinstance(trained_model.classes, list) else []
         )
+        num_classes = int(dataset_cfg.get("classes") or len(trained_model_classes) or 1)
 
         segmentor = Segmentor(
             architecture=architecture,
@@ -422,12 +599,12 @@ async def _run_patch_segmentation(
             in_channels=in_channels,
             classes=num_classes,
         )
-        model = segmentor.build_model()
+        built_model = segmentor.build_model()
         if checkpoint.get("is_fm", False):
-            model.load_decoder_state_dict(checkpoint["model_state_dict"])
+            built_model.load_decoder_state_dict(checkpoint["model_state_dict"])
         else:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        model = model.to(device)
+            built_model.load_state_dict(checkpoint["model_state_dict"])
+        model = built_model.to(device)
         model.eval()
         norm_mean, norm_std = segmentor.get_normalization_params()
         resize_size = resolve_patch_resize_size(backbone, is_segmentation_backbone=True)
@@ -471,10 +648,11 @@ async def _run_patch_segmentation(
             round(float(binary_mask[idx].float().mean().item()), 4)
             for idx in range(binary_mask.shape[0])
         ]
-        positive_classes = [
-            {"label": class_names[idx], "coverage_ratio": coverage_ratios[idx]}
+        has_positive_mask = any(float(ratio) > 0.0 for ratio in coverage_ratios)
+        positive_classes: list[dict[str, object]] = [
+            {"label": class_names[idx], "coverage_ratio": float(coverage_ratios[idx])}
             for idx in range(min(len(class_names), len(coverage_ratios)))
-            if coverage_ratios[idx] > 0
+            if float(coverage_ratios[idx]) > 0.0
         ]
 
         # Build overlay image: original image resized to mask resolution, with
@@ -491,7 +669,7 @@ async def _run_patch_segmentation(
             (255, 80, 200),
         ]
         mask_h, mask_w = int(binary_mask.shape[-2]), int(binary_mask.shape[-1])
-        base_img = image.resize((mask_w, mask_h), Image.LANCZOS)
+        base_img = image.resize((mask_w, mask_h), Image.Resampling.LANCZOS)
         base_arr = np.array(base_img, dtype=np.float32)
         overlay = base_arr.copy()
 
@@ -515,12 +693,13 @@ async def _run_patch_segmentation(
             "class_names": class_names,
             "positive_classes": positive_classes,
             "coverage_by_class": [
-                {"label": class_names[idx], "coverage_ratio": coverage_ratios[idx]}
+                {
+                    "label": class_names[idx],
+                    "coverage_ratio": float(coverage_ratios[idx]),
+                }
                 for idx in range(min(len(class_names), len(coverage_ratios)))
             ],
-            "has_positive_mask": any(
-                item["coverage_ratio"] > 0 for item in positive_classes
-            ),
+            "has_positive_mask": has_positive_mask,
             "mask_shape": [mask_h, mask_w],
             "overlay_image_data_url": overlay_b64,
         }

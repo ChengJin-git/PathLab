@@ -4,6 +4,18 @@
   --animate-tooltip-in: tooltip-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-tooltip-out: tooltip-out 0.08s ease-in forwards;
 
+  /* Landing page specific colors */
+  --landing-page-bg: #f7fbfd;
+  --landing-surface: #ffffff;
+  --landing-surface-muted: #f1f7fb;
+  --landing-border: #dce8f2;
+  --landing-text-primary: #0f172a;
+  --landing-text-secondary: #5b6b7f;
+  --landing-primary: #2f6bff;
+  --landing-primary-deep: #1d4ed8;
+  --landing-accent: #14b8a6;
+  --landing-soft-glow: rgba(47, 107, 255, 0.14);
+
   /* Primary color palette */
   --color-primary-50: #f5f7ff;
   --color-primary-100: #ebf0ff;
@@ -32,6 +44,43 @@
   --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
+/* ── iOS Safe Area Inset Support ── */
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --app-bg: #f5f7fb;
+  --app-bg-accent: #eef3fb;
+  --surface-base: rgba(255, 255, 255, 0.58);
+  --surface-muted: #eef2f8;
+  --surface-work: rgba(255, 255, 255, 0.9);
+  --surface-elevated: rgba(255, 255, 255, 0.96);
+  --surface-border: rgba(148, 163, 184, 0.16);
+  --surface-border-strong: rgba(148, 163, 184, 0.26);
+  --surface-text: #0f172a;
+  --surface-text-muted: #64748b;
+  --shadow-soft: 0 16px 40px rgba(15, 23, 42, 0.06);
+  --shadow-elevated: 0 22px 60px rgba(15, 23, 42, 0.12);
+  --shell-max-width: 96rem;
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
 html {
   /* removed scrollbar-gutter to prevent ghost scrollbar tracks */
   -webkit-text-size-adjust: 100%;
@@ -39,13 +88,25 @@ html {
 }
 
 body {
-  background-color: #f9fafb;
-  color: #111827;
+  background:
+    radial-gradient(circle at top left, rgba(85, 104, 211, 0.08), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(118, 75, 162, 0.07), transparent 30%),
+    linear-gradient(180deg, var(--app-bg-accent) 0%, var(--app-bg) 32%, #f8fafc 100%);
+  color: var(--surface-text);
   font-family: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
   line-height: 1.6;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Custom scrollbar */

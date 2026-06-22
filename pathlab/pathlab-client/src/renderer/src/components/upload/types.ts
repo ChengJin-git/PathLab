@@ -1,5 +1,5 @@
-// Upload mode type is re-exported from TaskType (classification, survival, or segmentation)
-export type { TaskType as UploadMode } from '../../constants/training'
+// Upload mode is converted to a canonical backend task id before API submission.
+export type { UploadTaskMode as UploadMode } from '../../constants/training'
 // Aggregation level type: case (case-level grouping) or file (file-level, each file independent)
 export type DataLevel = 'case' | 'file'
 // Data type: wsi (whole slide images) or patch (image patches/tiles)
@@ -57,6 +57,23 @@ export interface CollectionResult {
   jsonFiles: File[]  // JSON files collected for segmentation mask matching
 }
 
+export type CollectionProgressPhase = 'preparing' | 'collecting' | 'matching' | 'complete'
+
+export interface CollectionProgressSnapshot {
+  phase: CollectionProgressPhase
+  totalTopLevelEntries: number
+  processedItems: number
+  discoveredFiles: number
+  discoveredDirectories: number
+  currentDirectoryName?: string
+  completed: boolean
+}
+
+export interface CollectItemsOptions {
+  onProgress?: (snapshot: CollectionProgressSnapshot) => void
+  yieldAfterEntries?: number
+}
+
 
 export const generateCaseId = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -66,4 +83,3 @@ export const generateCaseId = () => {
   }
   return result
 }
-

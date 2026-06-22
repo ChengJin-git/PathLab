@@ -28,6 +28,7 @@ interface PatchOverlayStackProps {
   onRegionCreated: (region: Omit<AnnotationRegion, 'id'>) => void
   onRegionTooLarge?: () => void
   isLabelDropdownOpen?: boolean
+  cancelToken?: number
 }
 
 export function PatchOverlayStack({
@@ -48,6 +49,7 @@ export function PatchOverlayStack({
   onRegionCreated,
   onRegionTooLarge,
   isLabelDropdownOpen = false,
+  cancelToken,
 }: PatchOverlayStackProps) {
   return (
     <div
@@ -88,6 +90,7 @@ export function PatchOverlayStack({
         onRegionCreated={onRegionCreated}
         onRegionTooLarge={onRegionTooLarge}
         isLabelDropdownOpen={isLabelDropdownOpen}
+        cancelToken={cancelToken}
       />
     </div>
   )

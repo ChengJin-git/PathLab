@@ -4,10 +4,10 @@ import { flushSync } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats, getQueueStatus, GpuStageDetail } from '../api'
+import { ClipboardList, BarChart3, Microscope, Brain, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight, Clock } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
-import { isSegFmEncoder } from '../constants/training'
+import { isSegFmEncoder, isSegmentationTask } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
 import { Tooltip } from '../components/ui/tooltip'
 import { Card } from '../components/ui/card'
@@ -15,6 +15,7 @@ import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
+import { EmptyStatePanel, SearchField, SegmentedControl, WorkspaceStatCard } from '../components/ui/workspace-primitives'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { formatFileSize } from '../lib/utils'
@@ -39,10 +40,34 @@ interface Task {
   model_config?: any
   user_id?: string | null  // User ID of task creator
   username?: string | null  // Username of task creator (only for admin users)
+  gpu_stage_detail?: GpuStageDetail | null
+}
+
+function getTaskGpuStageDetail(
+  taskId: string,
+  gpuStageDetails: Record<string, GpuStageDetail>,
+): GpuStageDetail | undefined {
+  const directDetail = gpuStageDetails[taskId]
+  if (directDetail) return directDetail
+
+  const matchingDetails = Object.values(gpuStageDetails).filter(detail => detail.task_id === taskId)
+  if (matchingDetails.length === 0) return undefined
+
+  matchingDetails.sort((left, right) => {
+    if (left.state === right.state) {
+      return left.stage.localeCompare(right.stage)
+    }
+    return left.state === 'running' ? -1 : 1
+  })
+  return matchingDetails[0]
+}
+
+function isExternalValidationTask(task: Pick<Task, 'task_id'>): boolean {
+  return task.task_id.startsWith('extval_')
 }
 
 function isTaskCancellable(task: Task): boolean {
-  const cancellableStatuses = task.task_type === 'external_validation'
+  const cancellableStatuses = isExternalValidationTask(task)
     ? VALIDATION_CANCELLABLE_STATUSES
     : TRAINING_CANCELLABLE_STATUSES
 
@@ -106,7 +131,27 @@ export default function TaskListPage() {
     placeholderData: (prev) => prev,
   })
 
-  const tasks: Task[] = trainingTasksQuery.data?.items ?? []
+  const queueStatusQuery = useQuery({
+    queryKey: ['queue-status'],
+    queryFn: getQueueStatus,
+    staleTime: 10 * 1000,
+    refetchInterval: 10 * 1000,
+    enabled: isAdmin,
+  })
+
+  const gpuStageDetails = queueStatusQuery.data?.gpu_stage_details ?? {}
+
+  const tasks: Task[] = React.useMemo(() => {
+    const items = trainingTasksQuery.data?.items ?? []
+    if (!isAdmin || !gpuStageDetails) return items
+    return items.map(task => {
+      const detail = getTaskGpuStageDetail(task.task_id, gpuStageDetails)
+      if (detail) {
+        return { ...task, gpu_stage_detail: detail }
+      }
+      return task
+    })
+  }, [trainingTasksQuery.data?.items, gpuStageDetails, isAdmin])
   const totalCount: number = trainingTasksQuery.data?.total ?? 0
   const stats: TrainingTaskListStats = trainingTasksQuery.data?.stats ?? { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
   const loading = trainingTasksQuery.isLoading
@@ -186,7 +231,7 @@ export default function TaskListPage() {
     .map(record => ({
       task_id: record.taskId,
       task_name: record.taskName || record.taskId,
-      task_type: 'classification',
+      task_type: 'wsi_classification',
       data_type: 'wsi',
       status: record.state === 'failed' ? 'failed' : record.state === 'cancelled' ? 'cancelled' : 'creating',
       progress: 0,
@@ -247,7 +292,7 @@ export default function TaskListPage() {
     })
 
     try {
-      const info = await getTrainingTaskStorageInfo(taskId)
+      const info = await getTrainingTaskStorageInfo(taskId, { quick: true })
       setTaskStorageInfo(info)
     } catch (err) {
       console.error('Failed to load storage info:', err)
@@ -344,7 +389,7 @@ export default function TaskListPage() {
     })
   }
 
-  const getStatusBadge = (status: Task['status'], taskType?: string, isSyntheticTask?: boolean) => {
+  const getStatusBadge = (status: Task['status'], taskType?: string, isSyntheticTask?: boolean, isExternalValidation?: boolean) => {
     const badge = TASK_LIST_STATUS_BADGES[status] ?? TASK_LIST_STATUS_BADGES.pending
 
     // Use the same taskList.progress keys that the progress section uses for active statuses,
@@ -352,7 +397,7 @@ export default function TaskListPage() {
     let label: string
     if (isSyntheticTask && status === 'creating') {
       label = t('taskList.progress.creatingTask')
-    } else if (taskType === 'external_validation') {
+    } else if (isExternalValidation) {
       // For validation tasks, 'training' status means "Running Inference"
       if (status === 'patching') label = t('taskList.progress.patching') 
       else if (status === 'extracting') label = t('taskList.progress.extracting')
@@ -439,81 +484,58 @@ export default function TaskListPage() {
       </PageHeader>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-6 mb-4 sm:mb-8">
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.totalTasks')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-gray-900">{uiStats.total}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.running')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-purple-600">{uiStats.running}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.completed')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-green-600">{uiStats.completed}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.failed')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-red-600">{uiStats.failed}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100 col-span-2 md:col-span-1">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 text-center md:text-left uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.cancelled')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-gray-500 text-center md:text-left">{uiStats.cancelled}</div>
-        </Card>
+      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-5 sm:gap-6 sm:mb-8">
+        <WorkspaceStatCard label={t('taskList.stats.totalTasks')} value={uiStats.total} accent="neutral" />
+        <WorkspaceStatCard label={t('taskList.stats.running')} value={uiStats.running} accent="pathology" />
+        <WorkspaceStatCard label={t('taskList.stats.completed')} value={uiStats.completed} accent="success" />
+        <WorkspaceStatCard label={t('taskList.stats.failed')} value={uiStats.failed} accent="danger" />
+        <WorkspaceStatCard label={t('taskList.stats.cancelled')} value={uiStats.cancelled} accent="system" className="col-span-2 md:col-span-1" />
       </div>
 
       {/* Search Bar */}
       <div className="mb-4 sm:mb-6">
-        <div className="relative w-full max-w-2xl mx-auto">
-          <Search className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value)
-              setCurrentPage(1)
-            }}
-            placeholder={t('taskList.searchPlaceholder')}
-            className="w-full pl-9 sm:pl-12 pr-4 py-2 sm:py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-sm sm:text-base transition-all"
-          />
-          {searchQuery && (
-              <Tooltip content={t('taskList.clearSearch')}>
-                <button
-                  onClick={() => {
-                    setSearchQuery('')
-                    setCurrentPage(1)
-                  }}
-                  className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  <XCircle className="w-4 h-4 sm:w-5 sm:h-5" />
-                </button>
-              </Tooltip>
-          )}
-        </div>
+        <SearchField
+          value={searchQuery}
+          onChange={(value) => {
+            setSearchQuery(value)
+            setCurrentPage(1)
+          }}
+          placeholder={t('taskList.searchPlaceholder')}
+          clearButton={searchQuery ? (
+            <Tooltip content={t('taskList.clearSearch')}>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('')
+                  setCurrentPage(1)
+                }}
+                className="rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              >
+                <XCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
+            </Tooltip>
+          ) : undefined}
+        />
       </div>
 
       {/* Filters and Sort */}
-      <div className="mb-4 sm:mb-6 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 sm:gap-4 sticky top-0 z-40 bg-gray-50/95 backdrop-blur py-2">
-        <div className="flex items-center space-x-1 sm:space-x-2 bg-white/50 p-1 rounded-xl border border-gray-100 shadow-sm overflow-x-auto no-scrollbar">
-          {(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map(f => (
-            <button
-              key={f}
-              onClick={() => {
-                setFilter(f)
-                setCurrentPage(1)
-              }}
-              className={`px-3 sm:px-4 py-1 sm:py-1.5 text-[11px] sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${filter === f
-                ? 'bg-gray-900 text-white shadow-md'
-                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                }`}
-            >
-              {t(`taskList.filters.${f}`)}
-            </button>
-          ))}
+      <div className="sticky top-0 z-40 mb-4 flex flex-col gap-3 rounded-[1.5rem] border border-[color:var(--surface-border)] bg-[color:var(--surface-work)]/95 p-3 shadow-[var(--shadow-soft)] backdrop-blur md:flex-row md:items-center md:justify-between sm:mb-6 sm:gap-4 sm:p-4">
+        <div className="overflow-x-auto no-scrollbar">
+          <SegmentedControl
+            value={filter}
+            onChange={(value) => {
+              setFilter(value as typeof filter)
+              setCurrentPage(1)
+            }}
+            options={(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map((item) => ({
+              value: item,
+              label: t(`taskList.filters.${item}`),
+            }))}
+          />
         </div>
 
-        <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-6 bg-white sm:bg-transparent px-3 py-2 sm:p-0 rounded-xl border border-gray-100 sm:border-transparent">
-          <div className="flex items-center gap-2 group cursor-pointer" onClick={() => toggleSelectAll(!allFilteredSelected)}>
+        <div className="flex items-center justify-between gap-3 rounded-[1.1rem] border border-[color:var(--surface-border)] bg-white/70 px-3 py-2 sm:gap-6 sm:border-transparent sm:bg-transparent sm:p-0 sm:justify-end">
+          <div className="flex items-center gap-2 group">
             <Checkbox
               checked={allFilteredSelected}
               onCheckedChange={toggleSelectAll}
@@ -585,31 +607,30 @@ export default function TaskListPage() {
 
       {/* Task List */}
       {loading && displayTasks.length === 0 && uiTotalCount === 0 ? (
-        <Card className="p-12 text-center">
+        <Card surface="elevated" className="p-12 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">{t('taskList.loadingTasks')}</p>
+          <p className="text-slate-500">{t('taskList.loadingTasks')}</p>
         </Card>
       ) : displayTasks.length === 0 ? (
-        <Card className="p-12 text-center">
-          <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('taskList.noTasksFound')}</h3>
-          <p className="text-gray-600 mb-6">
-            {filter === 'all'
-              ? t('taskList.createFirstTask')
-              : t('taskList.noFilteredTasks', { filter: t(`taskList.filters.${filter}`) })}
-          </p>
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
-          >
-            {t('taskList.createNewTask')}
-          </button>
-        </Card>
+        <EmptyStatePanel
+          title={t('taskList.noTasksFound')}
+          description={filter === 'all'
+            ? t('taskList.createFirstTask')
+            : t('taskList.noFilteredTasks', { filter: t(`taskList.filters.${filter}`) })}
+          tone="neutral"
+          icon={<ClipboardList className="h-8 w-8" />}
+          action={
+            <Button onClick={() => navigate('/dashboard')} variant="primary">
+              {t('taskList.createNewTask')}
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-3 pb-8">
-          {displayTasks.map(task => {
-            const isSyntheticTask = syntheticTaskIdSet.has(task.task_id)
-            return (
+            {displayTasks.map(task => {
+              const isSyntheticTask = syntheticTaskIdSet.has(task.task_id)
+              const isExternalValidation = isExternalValidationTask(task)
+              return (
             <Card
               key={task.task_id}
               className={`group p-4 sm:p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
@@ -619,7 +640,7 @@ export default function TaskListPage() {
             >
               <div className="flex flex-col xl:flex-row xl:items-center gap-4 sm:gap-6">
                 <div className="flex items-start gap-3 sm:gap-4 xl:w-1/4">
-                  <div className="flex-shrink-0 pt-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex-shrink-0 pt-1">
                     <Checkbox
                       checked={selectedTasks.includes(task.task_id)}
                       onCheckedChange={(checked) => toggleSelectTask(task.task_id, checked as boolean)}
@@ -632,7 +653,7 @@ export default function TaskListPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-sm sm:text-base font-bold text-gray-900 truncate max-w-[200px] sm:max-w-none" title={task.task_name}>{task.task_name}</h3>
                       <div className="sm:scale-90 origin-left">
-                        {getStatusBadge(task.status, task.task_type, isSyntheticTask)}
+                        {getStatusBadge(task.status, task.task_type, isSyntheticTask, isExternalValidation)}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">
@@ -642,6 +663,7 @@ export default function TaskListPage() {
                       <div className="relative">
                         <Tooltip content={t('taskList.copyId')}>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation()
                               navigator.clipboard.writeText(task.task_id).catch(() => {})
@@ -681,13 +703,36 @@ export default function TaskListPage() {
                       </div>
                     </div>
 
-                    {(() => {
-                      const segBackbone = task.task_type === 'segmentation' ? (task.model_config as Record<string, unknown>)?.backbone as string : undefined
+                    {task.task_type === 'batch_inference' ? (
+                      <>
+                        <div className="flex flex-col gap-0.5" title={t('taskList.columns.batchModel')}>
+                          <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.batchModel')}</span>
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
+                            <span className="text-sm sm:text-base font-bold truncate text-gray-900">
+                              {(task.model_config as Record<string, unknown>)?.model_id as string || t('taskList.na')}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-0.5" title={t('taskList.columns.batchDataset')}>
+                          <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.batchDataset')}</span>
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
+                            <span className="text-sm sm:text-base font-bold truncate text-gray-900">
+                              {(task.model_config as Record<string, unknown>)?.dataset_id as string || t('taskList.na')}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    ) : (() => {
+                      const isSegmentation = isSegmentationTask(task.task_type)
+                      const segBackbone = isSegmentation ? (task.model_config as Record<string, unknown>)?.backbone as string : undefined
                       const segIsFm = isSegFmEncoder(segBackbone)
-                      const col1Label = task.task_type === 'segmentation'
+                      const fmDecoderType = ((task.model_config as Record<string, unknown>)?.decoder_type as string) || 'conv'
+                      const col1Label = isSegmentation
                         ? (segIsFm ? t('taskList.columns.featureExtractorSeg') : t('taskList.columns.backbone'))
                         : t('taskList.columns.extractor')
-                      const col2Label = task.task_type === 'segmentation'
+                      const col2Label = isSegmentation
                         ? (segIsFm ? t('taskList.columns.decoder') : t('taskList.columns.architecture'))
                         : t('taskList.columns.model')
                       return (
@@ -699,7 +744,7 @@ export default function TaskListPage() {
                             <div className="flex items-center gap-1.5 sm:gap-2">
                               <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                               <span className="text-sm sm:text-base font-bold truncate text-gray-900">
-                                {task.task_type === 'segmentation'
+                                {isSegmentation
                                   ? (segBackbone || t('taskList.na'))
                                   : (task.preprocessing_config?.feature_extractor || t('taskList.na'))}
                               </span>
@@ -713,9 +758,9 @@ export default function TaskListPage() {
                             <div className="flex items-center gap-1.5 sm:gap-2">
                               <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                               <span className="text-sm sm:text-base font-bold truncate text-gray-900">
-                                {task.task_type === 'segmentation'
+                                {isSegmentation
                                   ? (segIsFm
-                                    ? t('taskDetail.configuration.convDecoder')
+                                    ? t(`training.modelConfig.decoder.${fmDecoderType}`, fmDecoderType.toUpperCase())
                                     : ((task.model_config as Record<string, unknown>)?.architecture as string || t('taskList.na')))
                                   : task.data_type === 'patch'
                                     ? t(`taskList.classifiers.${(task.model_config as Record<string, unknown>)?.classifier || 'linear'}`, t('taskList.linearProbe'))
@@ -740,7 +785,7 @@ export default function TaskListPage() {
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
                           {isSyntheticTask && task.status === 'creating'
                             ? t('taskList.progress.creatingTask')
-                            : task.task_type === 'external_validation'
+                            : isExternalValidation
                             ? (task.status === 'patching' ? t('taskList.progress.patching') :
                               task.status === 'extracting' ? t('taskList.progress.extracting') :
                               task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))
@@ -779,6 +824,7 @@ export default function TaskListPage() {
                     {!isSyntheticTask && user && (isAdmin || task.user_id === user.id) && (
                       <Tooltip content={t('taskList.editTaskNameTitle')}>
                         <button
+                          type="button"
                           onClick={(e) => handleEditTask(task, e)}
                           className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
                         >
@@ -791,6 +837,7 @@ export default function TaskListPage() {
                     {(isSyntheticTask && task.status === 'creating') && (
                       <Tooltip content={t('taskList.cancelTask')}>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation()
                             markTrainingSubmissionCancelled(task.task_id)
@@ -806,6 +853,7 @@ export default function TaskListPage() {
                     {!isSyntheticTask && isTaskCancellable(task) && (
                       <Tooltip content={t('taskList.cancelTask')}>
                         <button
+                          type="button"
                           onClick={(e) => handleCancelTask(task.task_id, e)}
                           disabled={cancellingTaskId === task.task_id}
                           className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors disabled:opacity-50"
@@ -822,6 +870,7 @@ export default function TaskListPage() {
                     {!isSyntheticTask && (
                       <Tooltip content={t('taskList.deleteTask')}>
                         <button
+                          type="button"
                           onClick={(e) => handleDeleteTask(task.task_id, e)}
                           className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
                         >
@@ -833,6 +882,7 @@ export default function TaskListPage() {
                     {isSyntheticTask && (
                       <Tooltip content={t('taskList.deleteTask')}>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation()
                             clearTrainingSubmissionRecord(task.task_id)
@@ -851,7 +901,7 @@ export default function TaskListPage() {
             )
           })}
 
-          <Card className="border-gray-100 bg-white/80 shadow-sm">
+            <Card surface="elevated" className="border-[color:var(--surface-border)] bg-white/90">
             <div className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="text-xs sm:text-sm text-gray-500 font-medium text-center sm:text-left flex items-center gap-2">
                 <span>{t('taskList.pagination.summary', {
@@ -872,9 +922,9 @@ export default function TaskListPage() {
                     </span>
                     <Input
                       value={pageInput}
-                      onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
                       onBlur={() => commitPageInput(pageInput)}
-                      onKeyDown={(e) => {
+                      onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === 'Enter') { e.preventDefault(); commitPageInput(pageInput) }
                         if (e.key === 'Escape') setPageInput(String(currentPage))
                       }}
@@ -924,14 +974,14 @@ export default function TaskListPage() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="text-center mb-4 sm:mb-6">
+            <div className="mb-4 flex flex-col items-center text-center sm:mb-6">
               <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
                 <AlertCircle className="w-7 h-7 sm:w-10 sm:h-10 text-red-600" />
               </div>
-              <h2 className="text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
+              <h2 className="w-full text-center text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
                 {isBatchDelete ? t('taskList.deleteModal.batchTitle', { count: selectedTasks.length }) : t('taskList.deleteModal.singleTitle')}
               </h2>
-              <p className="text-xs sm:text-sm text-gray-500 mt-1">{t('taskList.deleteModal.cannotBeUndone')}</p>
+              <p className="mt-1 w-full text-center text-xs sm:text-sm text-gray-500">{t('taskList.deleteModal.cannotBeUndone')}</p>
             </div>
 
             {/* Batch Delete Warning */}
@@ -952,6 +1002,43 @@ export default function TaskListPage() {
             )}
 
             {!isBatchDelete && taskStorageInfo && !loadingStorageInfo && (() => {
+              if (taskStorageInfo.quick) {
+                const quickDeleteItems = [
+                  taskStorageInfo.training_dir.exists && 'trainingDataQuick',
+                  taskStorageInfo.ai_results.exists && 'aiResultsQuick',
+                  taskStorageInfo.training_logs.exists && 'logsQuick',
+                  taskStorageInfo.analysis_logs.exists && 'analysisLogsQuick',
+                  deleteMode === 'complete' && taskStorageInfo.models.some(model => model.exists) && 'modelsQuick',
+                ].filter(Boolean) as string[]
+
+                return (
+                  <div className="bg-sky-50/70 border border-sky-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.12)]" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] sm:text-xs leading-relaxed text-sky-800/80">
+                          {t(deleteMode === 'complete' ? 'taskList.deleteModal.quickScopeCompleteDesc' : 'taskList.deleteModal.quickScopeStandardDesc')}
+                        </p>
+                        <ul className="mt-3 grid gap-1.5 text-[10px] sm:text-xs text-sky-900">
+                          {quickDeleteItems.map(itemKey => (
+                            <li key={itemKey} className="flex items-center gap-2">
+                              <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+                              <span>{t(`taskList.deleteModal.${itemKey}`)}</span>
+                            </li>
+                          ))}
+                          {deleteMode === 'standard' && taskStorageInfo.models.some(model => model.exists) && (
+                            <li className="flex items-center gap-2 text-emerald-700">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              <span>{t('taskList.deleteModal.modelsKeptQuick')}</span>
+                            </li>
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
+
               // Calculate size and file count based on delete mode
               const modelsSize = taskStorageInfo.models.reduce((sum, m) => sum + m.size, 0)
               const modelsCount = taskStorageInfo.models.reduce((sum, m) => sum + m.file_count, 0)
@@ -993,9 +1080,9 @@ export default function TaskListPage() {
 
             {/* Delete Mode Selection */}
             <div className="mb-4">
-              <label className="block text-[11px] sm:text-sm font-bold text-gray-700 mb-2">
+              <div className="block text-[11px] sm:text-sm font-bold text-gray-700 mb-2">
                 {t('taskList.deleteModal.deletionMode')}
-              </label>
+              </div>
               <div className="space-y-2">
                 <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'standard' ? 'border-blue-500 bg-blue-50/20' : 'border-gray-100'}`}>
                   <input
@@ -1038,6 +1125,7 @@ export default function TaskListPage() {
             {/* Actions */}
             <div className="flex gap-3 mt-6">
               <button
+                type="button"
                 onClick={() => {
                   setShowDeleteModal(false)
                   setTaskToDelete(null)
@@ -1052,6 +1140,7 @@ export default function TaskListPage() {
                 {t('common.cancel')}
               </button>
               <button
+                type="button"
                 onClick={confirmDelete}
                 disabled={isDeleting}
                 className="flex-1 px-4 py-2 sm:py-2.5 bg-red-600 text-white text-xs sm:text-sm font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -1089,10 +1178,11 @@ export default function TaskListPage() {
 
             {/* Input */}
             <div className="mb-4 sm:mb-6">
-              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="edit-task-name" className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
                 {t('taskList.editModal.taskName')}
               </label>
               <input
+                id="edit-task-name"
                 type="text"
                 value={editedTaskName}
                 onChange={(e) => setEditedTaskName(e.target.value)}
@@ -1103,7 +1193,6 @@ export default function TaskListPage() {
                 }}
                 className="w-full px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                 placeholder={t('taskList.editModal.placeholder')}
-                autoFocus
                 disabled={isEditingSaving}
               />
             </div>
@@ -1118,6 +1207,7 @@ export default function TaskListPage() {
             {/* Actions */}
             <div className="flex gap-2 sm:gap-3">
               <button
+                type="button"
                 onClick={() => {
                   setShowEditModal(false)
                   setTaskToEdit(null)
@@ -1129,6 +1219,7 @@ export default function TaskListPage() {
                 {t('common.cancel')}
               </button>
               <button
+                type="button"
                 onClick={handleSaveTaskName}
                 disabled={isEditingSaving || !editedTaskName.trim()}
                 className="flex-1 px-4 py-2 sm:py-2.5 bg-indigo-600 text-white text-xs sm:text-sm font-bold rounded-lg hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"

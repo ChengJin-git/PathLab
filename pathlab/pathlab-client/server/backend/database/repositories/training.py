@@ -3,11 +3,13 @@ TrainingTaskRepository - Data Access Layer
 """
 
 import asyncio
+from collections import Counter
 from functools import partial
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Set, Tuple, Any
+import numpy as np
 from sqlalchemy import (
     select,
     update,
@@ -19,6 +21,8 @@ from sqlalchemy import (
     or_,
     cast,
     String,
+    literal,
+    bindparam,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,14 +37,25 @@ from ..models import (
     TrainingTaskWSI,
     TrainedModel,
     TrainingLog,
+    WSISlideUserSplit,
     utc_now,
 )
 from .base import BaseRepository
-from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
+# NOTE: split_wsi_dataset / split_case_dataset are intentionally NOT imported at
+# module level. Importing backend.ai.utils triggers __init__.py which pulls in
+# cam_utils → torch at import time. The database layer is loaded by the Gateway
+# subprocess which must never import torch at startup. The import is done lazily
+# inside TrainingTaskRepository.create() below.
 from backend.ai.schemas.base import TaskStatus
-from backend.annotation.coco_utils import (
-    merge_coco_datasets,
-    extract_coco_wsi_label_sets,
+from backend.common.split_generation import (
+    generate_split_assignments,
+    load_segmentation_multilabels,
+)
+from backend.services.dataset_splits import DatasetSplitService
+from backend.ai.task_taxonomy import (
+    is_classification_task,
+    is_segmentation_task,
+    is_survival_task,
 )
 
 
@@ -85,6 +100,83 @@ def _extract_segmentation_multilabels_from_payloads(
     return classes, multilabels
 
 
+def _compute_survival_bin_edges(
+    times: List[float], statuses: List[int], n_bins: int
+) -> np.ndarray:
+    times_arr = np.asarray(times, dtype=float)
+    statuses_arr = np.asarray(statuses, dtype=int)
+    if len(times_arr) == 0:
+        return np.array([], dtype=float)
+
+    uncensored_times = times_arr[statuses_arr == 1]
+    source_times = uncensored_times if len(uncensored_times) > 0 else times_arr
+    quantiles = np.linspace(0.0, 1.0, n_bins + 1)
+    bin_edges = np.quantile(source_times, quantiles).astype(float)
+
+    eps = 1e-6
+    bin_edges[0] = float(times_arr.min()) - eps
+    bin_edges[-1] = float(times_arr.max()) + eps
+    if np.unique(bin_edges).size < n_bins + 1:
+        bin_edges = np.linspace(
+            float(times_arr.min()) - eps,
+            float(times_arr.max()) + eps,
+            n_bins + 1,
+        )
+
+    return bin_edges
+
+
+def _discretize_survival_times(
+    times: List[float], bin_edges: np.ndarray
+) -> List[int]:
+    if len(bin_edges) < 2:
+        return [0 for _ in times]
+
+    labels = np.searchsorted(bin_edges, np.asarray(times, dtype=float), side="right") - 1
+    labels = np.clip(labels, 0, len(bin_edges) - 2)
+    return labels.astype(int).tolist()
+
+
+def _build_survival_stratification_labels(
+    wsis: List[WSISlide], n_bins: int, case_level: bool
+) -> Dict[str, str]:
+    records: Dict[str, Tuple[float, int]] = {}
+    for wsi in wsis:
+        if wsi.event_time is None or wsi.event_status is None:
+            continue
+        sample_id = (
+            wsi.case_id if case_level and wsi.case_id else wsi.wsi_id
+        ) if case_level else wsi.wsi_id
+        records.setdefault(sample_id, (float(wsi.event_time), int(wsi.event_status)))
+
+    if not records:
+        return {}
+
+    sample_ids = list(records.keys())
+    times = [records[sample_id][0] for sample_id in sample_ids]
+    statuses = [records[sample_id][1] for sample_id in sample_ids]
+    bin_edges = _compute_survival_bin_edges(times, statuses, n_bins)
+    disc_labels = _discretize_survival_times(times, bin_edges)
+    return {
+        sample_id: f"{disc_label}_{1 - status}"
+        for sample_id, disc_label, status in zip(sample_ids, disc_labels, statuses)
+    }
+
+
+def _build_survival_event_labels(
+    wsis: List[WSISlide], case_level: bool
+) -> Dict[str, str]:
+    labels: Dict[str, str] = {}
+    for wsi in wsis:
+        if wsi.event_status is None:
+            continue
+        sample_id = (
+            wsi.case_id if case_level and wsi.case_id else wsi.wsi_id
+        ) if case_level else wsi.wsi_id
+        labels.setdefault(sample_id, str(int(wsi.event_status)))
+    return labels
+
+
 def _build_training_task_wsi_batches(
     task_id: str,
     wsi_ids: List[str],
@@ -107,6 +199,104 @@ def _build_training_task_wsi_batches(
             ]
         )
     return batches
+
+
+async def _load_class_labels_for_dataset(
+    db: AsyncSession,
+    dataset_id: str,
+    data_type: Optional[str] = None,
+) -> List[str]:
+    query = (
+        select(WSISlide.label)
+        .where(WSISlide.dataset_id == dataset_id)
+        .where(WSISlide.label.isnot(None))
+        .where(WSISlide.label != "")
+        .distinct()
+        .order_by(WSISlide.label)
+    )
+    if data_type:
+        query = query.where(WSISlide.data_type == data_type)
+    result = await db.execute(query)
+    return [row[0] for row in result.all()]
+
+
+async def _load_wsis_for_training_reference(
+    db: AsyncSession,
+    *,
+    wsi_ids: Optional[List[str]] = None,
+    dataset_id: Optional[str] = None,
+    data_type: Optional[str] = None,
+) -> Tuple[List[str], List[WSISlide]]:
+    if dataset_id:
+        query = (
+            select(WSISlide)
+            .where(WSISlide.dataset_id == dataset_id)
+            .order_by(desc(WSISlide.created_at))
+        )
+        if data_type:
+            query = query.where(WSISlide.data_type == data_type)
+        result = await db.execute(query)
+        wsis = list(result.scalars().all())
+        return [wsi.wsi_id for wsi in wsis], wsis
+
+    resolved_ids = list(wsi_ids or [])
+    if not resolved_ids:
+        return [], []
+
+    wsis: List[WSISlide] = []
+    batch_size = 500
+    for i in range(0, len(resolved_ids), batch_size):
+        batch_ids = resolved_ids[i : i + batch_size]
+        wsi_list = await db.execute(
+            select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
+        )
+        wsis.extend(wsi_list.scalars().all())
+    return resolved_ids, wsis
+
+
+async def _insert_dataset_wsi_associations(
+    db: AsyncSession,
+    *,
+    task_id: str,
+    dataset_id: str,
+    data_type: Optional[str] = None,
+    split_config: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    split_value = literal("train")
+    if split_config and split_config.get("strategy") == "manual":
+        split_value = func.coalesce(WSISlide.split, literal("train"))
+
+    association_select = (
+        select(
+            literal(task_id),
+            WSISlide.wsi_id,
+            split_value,
+            literal(utc_now()),
+        )
+        .where(WSISlide.dataset_id == dataset_id)
+        .order_by(desc(WSISlide.created_at))
+    )
+    if split_config and split_config.get("strategy") == "manual" and user_id:
+        association_select = association_select.outerjoin(
+            WSISlideUserSplit,
+            (WSISlideUserSplit.wsi_id == WSISlide.wsi_id)
+            & (WSISlideUserSplit.user_id == user_id),
+        ).with_only_columns(
+            literal(task_id),
+            WSISlide.wsi_id,
+            func.coalesce(WSISlideUserSplit.split, WSISlide.split, literal("train")),
+            literal(utc_now()),
+        )
+    if data_type:
+        association_select = association_select.where(WSISlide.data_type == data_type)
+    await db.execute(
+        insert(TrainingTaskWSI)
+        .from_select(
+            ["task_id", "wsi_id", "split", "created_at"],
+            association_select,
+        )
+    )
 
 
 async def _load_segmentation_multilabels(
@@ -170,36 +360,99 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             prefetched_wsis: Optional list of already-fetched WSISlide objects.
                              If provided, skips redundant DB query for WSI data.
         """
-        # Use pre-fetched WSIs if available, otherwise query from DB
         if prefetched_wsis is not None:
+            resolved_wsi_ids = list(wsi_ids)
             wsis = prefetched_wsis
         else:
-            # Extract unique classes from WSI labels
-            # For large datasets, query in batches for memory efficiency
-            wsis = []
-            batch_size = 500
-            for i in range(0, len(wsi_ids), batch_size):
-                batch_ids = wsi_ids[i : i + batch_size]
-                wsi_list = await db.execute(
-                    select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
-                )
-                wsis.extend(wsi_list.scalars().all())
+            resolved_wsi_ids, wsis = await _load_wsis_for_training_reference(
+                db, wsi_ids=wsi_ids
+            )
 
-        # Validate task based on task_type
-        task_type = task_data.get("task_type", "classification")
+        return await TrainingTaskRepository._create_from_resolved_wsis(
+            db,
+            task_data,
+            resolved_wsi_ids,
+            wsis,
+            split_config=split_config,
+        )
+
+    @staticmethod
+    async def create_reference(
+        db: AsyncSession,
+        task_data: Dict[str, Any],
+        *,
+        dataset_id: str,
+        data_type: Optional[str] = None,
+        split_config: Optional[Dict[str, Any]] = None,
+    ) -> TrainingTask:
+        task_type = str(task_data.get("task_type", "wsi_classification")).strip().lower()
+        classification_task = is_classification_task(task_type)
+
+        classes: List[str] = []
+        if classification_task:
+            classes = await _load_class_labels_for_dataset(
+                db, dataset_id, data_type=data_type
+            )
+            if len(classes) < 2:
+                raise ValueError(
+                    f"Classification tasks require at least 2 different classes. "
+                    f"Found {len(classes)} class(es): {classes}. "
+                    f"Please assign different labels to your slides."
+                )
+
+        if split_config:
+            preprocessing_config = task_data.get("preprocessing_config", {}) or {}
+            preprocessing_config["split_config"] = split_config
+            task_data["preprocessing_config"] = preprocessing_config
+
+        task_data_cleaned = {k: v for k, v in task_data.items() if k != "task_type"}
+        task_id = task_data_cleaned["task_id"]
+
+        task = TrainingTask(
+            **task_data_cleaned,
+            classes=classes,
+            status=TaskStatus.PENDING,
+            progress=0,
+        )
+        db.add(task)
+        await db.flush()
+        await _insert_dataset_wsi_associations(
+            db,
+            task_id=task_id,
+            dataset_id=dataset_id,
+            data_type=data_type,
+            split_config=split_config,
+            user_id=task_data_cleaned.get("user_id"),
+        )
+        return task
+
+    @staticmethod
+    async def _create_from_resolved_wsis(
+        db: AsyncSession,
+        task_data: Dict[str, Any],
+        wsi_ids: List[str],
+        wsis: List[Any],
+        *,
+        split_config: Optional[Dict[str, Any]] = None,
+    ) -> TrainingTask:
+
+        # Validate task based on canonical task_type.
+        task_type = task_data.get("task_type", "wsi_classification")
         classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
         segmentation_multilabels: Dict[str, Set[str]] = {}
+        task_type_normalized = str(task_type).strip().lower()
+        classification_task = is_classification_task(task_type_normalized)
+        survival_task = is_survival_task(task_type_normalized)
+        segmentation_task = is_segmentation_task(task_type_normalized)
 
-        if task_type == "segmentation":
-            classes, segmentation_multilabels = await _load_segmentation_multilabels(
-                db, wsis
-            )
+        if segmentation_task:
+            classes, segmentation_multilabels = await load_segmentation_multilabels(db, wsis)
             if not classes:
                 raise ValueError(
                     "Segmentation tasks require at least one COCO category in the selected dataset."
                 )
 
-        if task_type == "classification":
+        if classification_task:
             # Classification tasks require at least 2 classes
             if len(classes) < 2:
                 raise ValueError(
@@ -207,7 +460,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                     f"Found {len(classes)} class(es): {classes}. "
                     f"Please assign different labels to your slides."
                 )
-        elif task_type == "survival":
+        elif survival_task:
             # Survival tasks require both event (status=1) and censored (status=0) samples
             event_statuses = set(
                 wsi.event_status
@@ -241,7 +494,6 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             preprocessing_config["split_config"] = split_config
             task_data["preprocessing_config"] = preprocessing_config
 
-        # Calculate splits
         wsi_splits = {}
         if split_config:
             strategy = split_config.get("strategy", "random")
@@ -249,15 +501,15 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             if strategy == "manual":
                 # For manual strategy, read splits directly from WSI records in database
                 # This is more reliable than depending on frontend state which may be stale
-                wsi_split_map = {wsi.wsi_id: wsi.split for wsi in wsis if wsi.split}
-                wsi_splits = wsi_split_map
+                wsi_splits = await DatasetSplitService.resolve_effective_splits(
+                    db,
+                    wsis,
+                    str(task_data.get("user_id")) if task_data.get("user_id") else None,
+                )
             else:
-                # Check if dataset is case-level by looking at the first WSI's dataset via DataGroup
-                # For case-level datasets, we must split by case_id to prevent data leakage
-                is_case_level = False
-                task_type_from_group = None
+                aggregation_level = "file"
+                task_type_from_group = task_type
                 if wsis:
-                    # Get dataset's DataGroup to check aggregation_level and task_type
                     first_dataset_id = wsis[0].dataset_id
                     if first_dataset_id:
                         group_result = await db.execute(
@@ -267,76 +519,26 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                         )
                         group_row = group_result.first()
                         if group_row:
-                            is_case_level = group_row[0] == "case"
+                            aggregation_level = group_row[0]
                             task_type_from_group = group_row[1]
-
-                # Determine task type from DataGroup for split behavior
-                is_survival = task_type_from_group == "survival"
-                is_segmentation = task_type_from_group == "segmentation"
-
-                if is_case_level:
-                    # Build case_id_map and case-level labels
-                    case_id_map: Dict[str, str] = {}
-                    case_labels: Dict[str, str] = {}
-                    for wsi in wsis:
-                        case_id = wsi.case_id if wsi.case_id else wsi.wsi_id
-                        case_id_map[wsi.wsi_id] = case_id
-
-                        # Determine label for stratification
-                        label_val = None
-                        if is_survival:
-                            if wsi.event_status is not None:
-                                label_val = str(wsi.event_status)
-                        else:
-                            label_val = wsi.label
-
-                        # Use the first WSI's label for each case (they should be the same)
-                        if label_val and case_id not in case_labels:
-                            case_labels[case_id] = label_val
-
-                    # Use case-level split to prevent data leakage
-                    # Labels are keyed by case_id for stratification
-                    split_config_copy = {**split_config}
-                    if "labels" in split_config_copy:
-                        del split_config_copy["labels"]  # We'll use case_labels instead
-                    wsi_splits = await asyncio.to_thread(
-                        partial(
-                            split_case_dataset,
-                            wsi_ids,
-                            case_id_map,
-                            labels=case_labels,
-                            multilabels=segmentation_multilabels
-                            if is_segmentation
-                            else None,
-                            **split_config_copy,
-                        )
-                    )
-                else:
-                    # For slide-level datasets, use regular splitter
-                    # Build labels dict for stratified splitting
-                    wsi_labels: Dict[str, str] = {}
-
-                    for wsi in wsis:
-                        label_val = None
-                        if is_survival:
-                            if wsi.event_status is not None:
-                                label_val = str(wsi.event_status)
-                        else:
-                            label_val = wsi.label
-
-                        if label_val:
-                            wsi_labels[wsi.wsi_id] = label_val
-                    wsi_splits = await asyncio.to_thread(
-                        partial(
-                            split_wsi_dataset,
-                            wsi_ids,
-                            labels=None if is_segmentation else wsi_labels,
-                            multilabels=segmentation_multilabels
-                            if is_segmentation
-                            else None,
-                            **split_config,
-                        )
-                    )
+                task_family_for_splitter = "classification"
+                normalized_group_task_type = str(task_type_from_group).strip().lower()
+                try:
+                    if is_survival_task(normalized_group_task_type):
+                        task_family_for_splitter = "survival"
+                    elif is_segmentation_task(normalized_group_task_type):
+                        task_family_for_splitter = "segmentation"
+                except ValueError:
+                    if normalized_group_task_type in {"survival", "segmentation"}:
+                        task_family_for_splitter = normalized_group_task_type
+                wsi_splits, _ = await asyncio.to_thread(
+                    generate_split_assignments,
+                    wsis,
+                    aggregation_level=aggregation_level,
+                    task_type=task_family_for_splitter,
+                    split_config=split_config,
+                    segmentation_multilabels=segmentation_multilabels,
+                )
 
         # Pre-build bulk insert payloads before opening the write-heavy phase.
         insert_batch_size = 1000
@@ -407,7 +609,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             from sqlalchemy import cast, String
 
             result = await db.execute(
-                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                select(TrainingTask, AuthUser.username, AuthUser.nickname)
                 .options(selectinload(TrainingTask.data_group))
                 .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
                 .where(TrainingTask.task_id == task_id)
@@ -417,12 +619,12 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                 return None
 
             task = row[0]  # TrainingTask object
-            email = row[1]  # User.email (username)
+            username = row[1]  # User.username (account identity)
             nickname = row[2]  # User.nickname
 
             task_dict = task.to_dict()
-            # Use nickname if available, otherwise use email (username)
-            task_dict["username"] = nickname or email or None
+            # Use nickname if available, otherwise use username.
+            task_dict["username"] = nickname or username or None
             return task_dict
 
     @staticmethod
@@ -545,7 +747,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             from sqlalchemy import cast, String
 
             query = (
-                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                select(TrainingTask, AuthUser.username, AuthUser.nickname)
                 .options(selectinload(TrainingTask.data_group))
                 .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
             )
@@ -567,12 +769,12 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             tasks_with_username = []
             for row in rows:
                 task = row[0]  # TrainingTask object
-                email = row[1]  # User.email (username)
+                username = row[1]  # User.username (account identity)
                 nickname = row[2]  # User.nickname
 
                 task_dict = task.to_dict()
-                # Use nickname if available, otherwise use email (username)
-                task_dict["username"] = nickname or email or None
+                # Use nickname if available, otherwise use username.
+                task_dict["username"] = nickname or username or None
                 tasks_with_username.append(task_dict)
 
             return tasks_with_username
@@ -803,11 +1005,19 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
 
         Returns:
             Dict mapping wsi_id to case_id. If case_id is None, uses wsi_id as fallback.
+
+        Notes:
+            Result order matters for case-level MIL because downstream code builds
+            ``case_to_wsi`` by iterating this mapping and concatenates slide
+            features in that order. We therefore keep the order stable and aligned
+            with the training-task/export convention: newest slide first within a
+            case (``created_at DESC``), with a deterministic ``wsi_id`` tie-breaker.
         """
         result = await db.execute(
             select(WSISlide.wsi_id, WSISlide.case_id)
             .join(TrainingTaskWSI, WSISlide.wsi_id == TrainingTaskWSI.wsi_id)
             .where(TrainingTaskWSI.task_id == task_id)
+            .order_by(asc(WSISlide.case_id), desc(WSISlide.created_at), asc(WSISlide.wsi_id))
         )
 
         case_id_map: Dict[str, str] = {}
@@ -913,6 +1123,40 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             .where(TrainingTask.task_id == task_id)
             .values(preprocessing_config=preprocessing_config, updated_at=utc_now())
         )
+        await db.flush()
+        return await TrainingTaskRepository.get_by_id(db, task_id)
+
+    @staticmethod
+    async def update_training_reference_metadata(
+        db: AsyncSession,
+        task_id: str,
+        *,
+        classes: Optional[List[str]] = None,
+        split_map: Optional[Dict[str, str]] = None,
+    ) -> Optional[TrainingTask]:
+        update_data: Dict[str, Any] = {"updated_at": utc_now()}
+        if classes is not None:
+            update_data["classes"] = classes
+        if update_data.keys() - {"updated_at"}:
+            await db.execute(
+                update(TrainingTask)
+                .where(TrainingTask.task_id == task_id)
+                .values(**update_data)
+            )
+        if split_map:
+            rows = [
+                {"b_task_id": task_id, "b_wsi_id": wsi_id, "b_split": split}
+                for wsi_id, split in split_map.items()
+            ]
+            for i in range(0, len(rows), 1000):
+                await db.execute(
+                    update(TrainingTaskWSI.__table__)
+                    .where(TrainingTaskWSI.__table__.c.task_id == bindparam("b_task_id"))
+                    .where(TrainingTaskWSI.__table__.c.wsi_id == bindparam("b_wsi_id"))
+                    .values(split=bindparam("b_split"))
+                    .execution_options(synchronize_session=False),
+                    rows[i : i + 1000],
+                )
         await db.flush()
         return await TrainingTaskRepository.get_by_id(db, task_id)
 
@@ -1080,3 +1324,37 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
 
         await db.flush()
         return result.rowcount
+
+    @staticmethod
+    async def get_batch_inference_tasks(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 50,
+        task_id_prefix: str = "binfer_",
+    ) -> List[TrainingTask]:
+        query = (
+            select(TrainingTask)
+            .options(selectinload(TrainingTask.data_group))
+            .where(cast(TrainingTask.task_id, String).startswith(task_id_prefix))
+        )
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+        query = query.order_by(TrainingTask.created_at.desc()).offset(skip).limit(limit)
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def count_batch_inference_tasks(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        task_id_prefix: str = "binfer_",
+    ) -> int:
+        query = (
+            select(func.count(TrainingTask.id))
+            .where(cast(TrainingTask.task_id, String).startswith(task_id_prefix))
+        )
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+        result = await db.execute(query)
+        return result.scalar_one()

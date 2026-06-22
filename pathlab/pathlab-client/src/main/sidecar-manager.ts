@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
 import { app, BrowserWindow } from 'electron'
+import { existsSync } from 'fs'
 
 let pythonProcess: ChildProcess | null = null
 
@@ -104,6 +105,23 @@ export function startPythonSidecar(extraEnv?: Record<string, string>): Promise<n
 
     const spawnEnv = { ...process.env, ...extraEnv }
 
+    if (!isDev) {
+      const aslideLibRoots = [
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'opencv', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'sdpc', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'kfb', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'tmap', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'tron', 'lib')
+      ].filter((libPath) => existsSync(libPath))
+
+      const currentLdPath = spawnEnv.LD_LIBRARY_PATH || ''
+      const mergedLdPath = [
+        ...aslideLibRoots,
+        ...currentLdPath.split(':').filter((item) => item.trim().length > 0)
+      ]
+      spawnEnv.LD_LIBRARY_PATH = Array.from(new Set(mergedLdPath)).join(':')
+    }
+
     if (isDev) {
       pythonProcess = spawn(pythonPath, [scriptPath], {
         env: spawnEnv,
@@ -136,8 +154,30 @@ export function startPythonSidecar(extraEnv?: Record<string, string>): Promise<n
       if (!portResolved) {
         portResolved = true
         clearTimeout(timeout)
-        console.log(`[Sidecar] Gateway port discovered: ${port}`)
-        resolve(port)
+        console.log(`[Sidecar] Gateway port discovered: ${port}, waiting for /health...`)
+        // Poll Gateway /health until it returns 200 (Gateway takes 5-20 s to init DB/Redis)
+        const healthUrl = `http://127.0.0.1:${port}/health`
+        const healthDeadline = Date.now() + 60000  // 60 s hard cap
+        const pollHealth = (): void => {
+          if (Date.now() > healthDeadline) {
+            console.error(`[Sidecar] Gateway /health did not become ready within 60 s`)
+            resolve(port)  // resolve anyway so Electron does not hang
+            return
+          }
+          const http = require('http') as typeof import('http')
+          const req = http.get(healthUrl, (res) => {
+            res.resume()
+            if (res.statusCode === 200) {
+              console.log(`[Sidecar] Gateway is ready on port ${port}`)
+              resolve(port)
+            } else {
+              setTimeout(pollHealth, 500)
+            }
+          })
+          req.on('error', () => setTimeout(pollHealth, 500))
+          req.setTimeout(1000, () => { req.destroy(); setTimeout(pollHealth, 500) })
+        }
+        pollHealth()
       }
     }
 

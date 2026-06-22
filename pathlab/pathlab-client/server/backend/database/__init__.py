@@ -11,6 +11,7 @@ async_session_maker = async_session
 from .models import (
     Base,
     WSISlide,
+    WSISlideUserSplit,
     AITask,
     AIResult,
     ChatConversation,
@@ -29,6 +30,7 @@ __all__ = [
     "close_db",
     "Base",
     "WSISlide",
+    "WSISlideUserSplit",
     "AITask",
     "AIResult",
     "ChatConversation",

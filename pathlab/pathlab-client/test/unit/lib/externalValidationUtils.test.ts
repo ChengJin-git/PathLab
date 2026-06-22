@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   isSurvivalTask,
   isSegmentationTask,
-  EXTRACTOR_EMBED_DIM,
   getDatasetCompatibilityError,
   filterCompatibleDatasets,
   isDatasetCompatible,
@@ -16,9 +15,9 @@ import type { TrainingTaskMetadata } from '@renderer/lib/externalValidationUtils
 // ---------------------------------------------------------------------------
 
 describe('isSurvivalTask', () => {
-  it('returns true for "survival"', () => expect(isSurvivalTask('survival')).toBe(true))
+  it('returns false for "survival"', () => expect(isSurvivalTask('survival')).toBe(false))
   it('returns true for "wsi_survival"', () => expect(isSurvivalTask('wsi_survival')).toBe(true))
-  it('returns true for "patch_survival"', () => expect(isSurvivalTask('patch_survival')).toBe(true))
+  it('returns false for "patch_survival"', () => expect(isSurvivalTask('patch_survival')).toBe(false))
   it('returns false for classification', () => expect(isSurvivalTask('classification')).toBe(false))
   it('returns false for undefined', () => expect(isSurvivalTask(undefined)).toBe(false))
   it('returns false for empty string', () => expect(isSurvivalTask('')).toBe(false))
@@ -29,31 +28,10 @@ describe('isSurvivalTask', () => {
 // ---------------------------------------------------------------------------
 
 describe('isSegmentationTask', () => {
-  it('returns true for "segmentation"', () => expect(isSegmentationTask('segmentation')).toBe(true))
+  it('returns false for "segmentation"', () => expect(isSegmentationTask('segmentation')).toBe(false))
   it('returns true for "patch_segmentation"', () => expect(isSegmentationTask('patch_segmentation')).toBe(true))
   it('returns false for classification', () => expect(isSegmentationTask('classification')).toBe(false))
   it('returns false for undefined', () => expect(isSegmentationTask(undefined)).toBe(false))
-})
-
-// ---------------------------------------------------------------------------
-// EXTRACTOR_EMBED_DIM
-// ---------------------------------------------------------------------------
-
-describe('EXTRACTOR_EMBED_DIM', () => {
-  it('contains known extractors with correct dimensions', () => {
-    expect(EXTRACTOR_EMBED_DIM['uni']).toBe(1024)
-    expect(EXTRACTOR_EMBED_DIM['conch']).toBe(512)
-    expect(EXTRACTOR_EMBED_DIM['virchow']).toBe(1280)
-    expect(EXTRACTOR_EMBED_DIM['resnet50']).toBe(2048)
-  })
-
-  it('returns undefined for unknown extractors', () => {
-    expect(EXTRACTOR_EMBED_DIM['unknown_extractor']).toBeUndefined()
-  })
-
-  it('has at least 10 entries', () => {
-    expect(Object.keys(EXTRACTOR_EMBED_DIM).length).toBeGreaterThanOrEqual(10)
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -79,7 +57,7 @@ function makeModel(overrides: Partial<TrainedModel> = {}): TrainedModel {
 function makeTask(overrides: Partial<TrainingTaskMetadata> = {}): TrainingTaskMetadata {
   return {
     task_id: 'task_1',
-    task_type: 'classification',
+    task_type: 'wsi_classification',
     data_type: 'wsi',
     wsi_ids: ['wsi_a', 'wsi_b'],
     classes: ['tumor', 'normal'],
@@ -94,7 +72,7 @@ function makeDataset(overrides: Partial<ValidationDataset> = {}): ValidationData
     name: 'Target Dataset',
     data_type: 'wsi',
     aggregation_level: 'slide',
-    task_type: 'classification',
+    task_type: 'wsi_classification',
     total_wsi_count: 50,
     total_case_count: 50,
     display_count: 50,
@@ -129,8 +107,8 @@ describe('getDatasetCompatibilityError', () => {
   it('returns error when task_type mismatches (classification vs survival)', () => {
     const err = getDatasetCompatibilityError(
       makeModel(),
-      makeTask({ task_type: 'classification' }),
-      makeDataset({ task_type: 'survival' })
+      makeTask({ task_type: 'wsi_classification' }),
+      makeDataset({ task_type: 'wsi_survival' })
     )
     expect(err).toContain('Task type mismatch')
   })
@@ -162,16 +140,16 @@ describe('getDatasetCompatibilityError', () => {
     expect(err).toBeNull()
   })
 
-  it('returns error when WSI extractor embed dims do not match', () => {
+  it('does not reject WSI datasets based on cached extractors', () => {
     const err = getDatasetCompatibilityError(
-      makeModel({ feature_extractor: 'uni' }),
+      makeModel({ feature_extractor: 'H-Optimus-0' }),
       makeTask(),
       makeDataset({ available_feature_extractors: ['conch'] })
     )
-    expect(err).toContain('embedding dimensions do not match')
+    expect(err).toBeNull()
   })
 
-  it('skips extractor check when dataset has no extractors listed', () => {
+  it('allows WSI datasets without cached extractors', () => {
     const err = getDatasetCompatibilityError(
       makeModel({ feature_extractor: 'uni' }),
       makeTask(),
@@ -193,7 +171,7 @@ describe('getDatasetCompatibilityError', () => {
     const err = getDatasetCompatibilityError(
       makeModel({ classes: [] }),
       makeTask({ task_type: 'wsi_survival', classes: [] }),
-      makeDataset({ task_type: 'survival', distinct_labels: [], wsi_ids: [] })
+      makeDataset({ task_type: 'wsi_survival', distinct_labels: [], wsi_ids: [] })
     )
     expect(err).toBeNull()
   })
@@ -202,12 +180,12 @@ describe('getDatasetCompatibilityError', () => {
     const err = getDatasetCompatibilityError(
       makeModel({ aggregator: 'unet', feature_extractor: 'resnet' }),
       makeTask({
-        task_type: 'segmentation', data_type: 'patch',
+        task_type: 'patch_segmentation', data_type: 'patch',
         model_config: { architecture: 'unet', backbone: 'resnet' },
         classes: ['tumor'],
       }),
       makeDataset({
-        data_type: 'patch', task_type: 'segmentation',
+        data_type: 'patch', task_type: 'patch_segmentation',
         aggregation_level: 'slide',
         segmentation_labels: ['tumor'],
       })

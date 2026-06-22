@@ -13,19 +13,22 @@ import os
 import shutil
 import json
 import threading
+from importlib import import_module
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple, Callable
+from typing import Dict, List, Optional, Any, Tuple, Callable, cast
 from datetime import datetime, timezone
 import logging
 
-from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks
-from backend.ai.tasks.patch_cache import (
-    delete_all_cached_coords_for_wsi,
-    list_all_cached_coords_for_wsi,
-)
+# NOTE: cleanup_dangling_symlinks / delete_all_cached_coords_for_wsi /
+# list_all_cached_coords_for_wsi are intentionally NOT imported at module level.
+# backend.ai.tasks imports WSIClassificationTrainer which imports torch; this
+# chain would force torch into the Gateway process at startup.  Lazy imports
+# inside the three methods below confine the torch dependency to call-time.
 
 from .stats_mixin import StorageStatsMixin
 from .orphan_mixin import StorageOrphanMixin
+
+AIResultStore = import_module("backend.ai.result_store").AIResultStore
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +84,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         self.coords_dir = self.uploads_dir / "coordinates"
         self.masks_dir = self.uploads_dir / "masks"
         self.features_dir = self.uploads_dir / "features"
-        self.ai_results_dir = self.uploads_dir / "ai_results"
+        self.ai_result_bundles_dir = self.uploads_dir / "ai_results_bundles"
         self.training_dir = self.uploads_dir / "training"
         self.models_dir = self.uploads_dir / "models"
         self.logs_dir = self.uploads_dir / "logs"
@@ -92,31 +95,25 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
     # StorageStatsMixin and StorageOrphanMixin via inheritance.
     # See stats_mixin.py and orphan_mixin.py for details.
 
-    def _get_task_ai_result_patterns(self, task_id: str) -> List[str]:
-        """Get filename patterns for task-scoped AI result artifacts."""
-        return [
-            f"{task_id}_*",
-            f"train_{task_id}_*",
-            f"extval_{task_id}_*",
+    def _iter_task_ai_result_bundle_files(self, task_id: str):
+        """Yield task-scoped bundled AI result files."""
+        bundle_paths = [
+            self.ai_result_bundles_dir / f"{task_id}.zarr.zip",
         ]
+        for file_path in bundle_paths:
+            if file_path.exists() and file_path.is_file():
+                yield file_path
 
-    def _iter_task_ai_result_files(self, task_id: str):
-        """Yield task-scoped AI result files across all WSI result directories."""
-        if not self.ai_results_dir.exists() or not self.ai_results_dir.is_dir():
-            return
+    def _remove_task_ai_result_bundle_metadata(self, task_id: str):
+        """Remove non-bundle task metadata created by AIResultStore."""
+        staging_dir = self.ai_result_bundles_dir / ".staging" / f"{task_id}.zarr"
+        if staging_dir.exists() and staging_dir.is_dir():
+            yield staging_dir
 
-        seen_paths = set()
-        patterns = self._get_task_ai_result_patterns(task_id)
-
-        for wsi_result_dir in self.ai_results_dir.iterdir():
-            if not wsi_result_dir.is_dir():
-                continue
-
-            for pattern in patterns:
-                for file_path in wsi_result_dir.glob(pattern):
-                    if file_path.is_file() and file_path not in seen_paths:
-                        seen_paths.add(file_path)
-                        yield file_path
+        try:
+            AIResultStore(self.uploads_dir).delete_task(task_id)
+        except Exception as e:
+            logger.warning(f"Could not update AI result WSI index for {task_id}: {e}")
 
     def delete_wsi_files(
         self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard"
@@ -133,7 +130,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         - WSI file itself (if wsi_path provided and in uploads directory)
         - Coordinates: uploads/coordinates/{wsi_id}_coords.h5
         - Masks: uploads/masks/{wsi_id}_mask.png
-        - AI results: uploads/ai_results/{wsi_id}/ (entire directory)
+        - AI results: bundled artifacts in uploads/ai_results_bundles/
 
         Additional files deleted in complete mode:
         - Features: uploads/training/*/features/{wsi_id}.pt (all training tasks, may be symlinks)
@@ -162,7 +159,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         # 1. Delete WSI file itself
         if wsi_path and os.path.exists(wsi_path):
-            if wsi_path.startswith(str(self.uploads_dir)):
+            uploads_root = str(self.uploads_dir)
+            if os.path.abspath(wsi_path) == os.path.abspath(uploads_root) or \
+               os.path.abspath(wsi_path).startswith(os.path.abspath(uploads_root) + os.sep):
                 try:
                     size = os.path.getsize(wsi_path)
                     os.remove(wsi_path)
@@ -218,6 +217,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         # 2. Delete coordinates files (from all params_hash directories)
         # Structure: uploads/coordinates/{params_hash}/{wsi_id}_coords.h5
+        delete_all_cached_coords_for_wsi = import_module(
+            "backend.ai.tasks.patch_cache"
+        ).delete_all_cached_coords_for_wsi
         coords_result = delete_all_cached_coords_for_wsi(self.uploads_dir, wsi_id)
         deleted_files.extend(coords_result["deleted_files"])
         total_size += coords_result["total_size"]
@@ -240,20 +242,12 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 failed.append((str(mask_file), str(e)))
                 logger.error(f"Failed to delete mask {mask_file}: {e}")
 
-        # 4. Delete AI results directory
-        ai_results_wsi_dir = self.ai_results_dir / wsi_id
-        if ai_results_wsi_dir.exists() and ai_results_wsi_dir.is_dir():
-            try:
-                size = self._get_dir_size(ai_results_wsi_dir)
-                shutil.rmtree(ai_results_wsi_dir)
-                deleted_dirs.append(str(ai_results_wsi_dir))
-                total_size += size
-                logger.info(f"Deleted AI results directory: {ai_results_wsi_dir}")
-            except Exception as e:
-                failed.append((str(ai_results_wsi_dir), str(e)))
-                logger.error(
-                    f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}"
-                )
+        # 4. Delete bundled AI results for this WSI.
+        ai_result_cleanup = self.delete_wsi_ai_results(wsi_id)
+        deleted_files.extend(ai_result_cleanup["deleted_files"])
+        deleted_dirs.extend(ai_result_cleanup["deleted_dirs"])
+        failed.extend(ai_result_cleanup["failed"])
+        total_size += ai_result_cleanup["total_size"]
 
         # 4.5 Delete metadata file (always deleted in both standard and complete mode)
         metadata_file = self.metadata_dir / f"{wsi_id}.json"
@@ -353,8 +347,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         Otherwise, delete all AI results for the WSI.
 
         Files deleted:
-        - If task_id specified: uploads/ai_results/{wsi_id}/train_{task_id}_*.* (result.json, attention.npy, etc.)
-        - If task_id not specified: uploads/ai_results/{wsi_id}/ (entire directory)
+        - Bundled AI result artifacts from uploads/ai_results_bundles/{task_id}.zarr.zip
 
         Args:
             wsi_id: WSI identifier
@@ -375,69 +368,47 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         failed = []
         total_size = 0
 
-        ai_results_wsi_dir = self.ai_results_dir / wsi_id
+        store = AIResultStore(self.uploads_dir)
+        task_ids = [task_id] if task_id else [
+            item["task_id"] for item in store.list_wsi_artifacts(wsi_id)
+        ]
+        seen_task_ids = sorted(set(task_ids))
+        if task_id:
+            seen_task_ids = [task_id]
 
-        if not ai_results_wsi_dir.exists():
-            return {
-                "deleted_files": [],
-                "deleted_dirs": [],
-                "failed": [],
-                "total_size": 0,
-                "summary": f"No AI results found for WSI {wsi_id}",
-            }
+        for current_task_id in seen_task_ids:
+            try:
+                result = store.delete_wsi_result(current_task_id, wsi_id)
+                if not result["deleted"]:
+                    continue
+                freed = int(result["size_before"]) - int(result["size_after"])
+                total_size += max(freed, 0)
+                bundle_path = store.bundle_path(current_task_id)
+                if result["bundle_removed"]:
+                    deleted_files.append(str(bundle_path))
+                else:
+                    deleted_files.append(str(bundle_path))
+                logger.info(
+                    f"Deleted bundled AI result artifacts for WSI {wsi_id}, task {current_task_id}: "
+                    f"{', '.join(result['removed_artifacts'])}"
+                )
+            except Exception as e:
+                bundle_path = store.bundle_path(current_task_id)
+                failed.append((str(bundle_path), str(e)))
+                logger.error(
+                    f"Failed to delete bundled AI results for WSI {wsi_id}, task {current_task_id}: {e}"
+                )
 
         if task_id:
-            # Delete only files for the specific task
-            patterns = self._get_task_ai_result_patterns(task_id)
-            for pattern in patterns:
-                for file_path in ai_results_wsi_dir.glob(pattern):
-                    if file_path.is_file():
-                        try:
-                            size = file_path.stat().st_size
-                            file_path.unlink()
-                            deleted_files.append(str(file_path))
-                            total_size += size
-                            logger.info(f"Deleted AI result file: {file_path}")
-                        except Exception as e:
-                            failed.append((str(file_path), str(e)))
-                            logger.error(
-                                f"Failed to delete AI result file {file_path}: {e}"
-                            )
-
-            # Clean up empty directory
-            if ai_results_wsi_dir.exists() and not any(ai_results_wsi_dir.iterdir()):
-                try:
-                    ai_results_wsi_dir.rmdir()
-                    deleted_dirs.append(str(ai_results_wsi_dir))
-                    logger.info(
-                        f"Removed empty AI results directory: {ai_results_wsi_dir}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Could not remove AI results directory {ai_results_wsi_dir}: {e}"
-                    )
-
             summary = (
                 f"WSI {wsi_id} AI results cleanup (task {task_id}): "
                 f"{len(deleted_files)} files deleted, {len(failed)} failed, "
                 f"{total_size / (1024**2):.2f} MB freed"
             )
         else:
-            # Delete entire directory
-            try:
-                total_size = self._get_dir_size(ai_results_wsi_dir)
-                shutil.rmtree(ai_results_wsi_dir)
-                deleted_dirs.append(str(ai_results_wsi_dir))
-                logger.info(f"Deleted AI results directory: {ai_results_wsi_dir}")
-            except Exception as e:
-                failed.append((str(ai_results_wsi_dir), str(e)))
-                logger.error(
-                    f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}"
-                )
-
             summary = (
                 f"WSI {wsi_id} AI results cleanup: "
-                f"{len(deleted_dirs)} directories deleted, {len(failed)} failed, "
+                f"{len(deleted_files)} files updated/deleted, {len(failed)} failed, "
                 f"{total_size / (1024**2):.2f} MB freed"
             )
 
@@ -483,29 +454,31 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         total_size = 0
 
         # 1. Delete task-scoped AI result files (internal inference or external validation)
-        touched_ai_result_dirs = set()
-        for file_path in self._iter_task_ai_result_files(task_id) or []:
+        for file_path in self._iter_task_ai_result_bundle_files(task_id) or []:
             try:
                 size = file_path.stat().st_size
                 file_path.unlink()
                 deleted_files.append(str(file_path))
                 total_size += size
-                touched_ai_result_dirs.add(file_path.parent)
-                logger.info(f"Deleted task AI result file: {file_path}")
+                logger.info(f"Deleted bundled task AI result file: {file_path}")
             except Exception as e:
                 failed.append((str(file_path), str(e)))
-                logger.error(f"Failed to delete task AI result file {file_path}: {e}")
+                logger.error(
+                    f"Failed to delete bundled task AI result file {file_path}: {e}"
+                )
 
-        for result_dir in touched_ai_result_dirs:
-            if result_dir.exists() and not any(result_dir.iterdir()):
-                try:
-                    result_dir.rmdir()
-                    deleted_dirs.append(str(result_dir))
-                    logger.info(f"Removed empty AI results directory: {result_dir}")
-                except Exception as e:
-                    logger.warning(
-                        f"Could not remove AI results directory {result_dir}: {e}"
-                    )
+        for dir_path in self._remove_task_ai_result_bundle_metadata(task_id) or []:
+            try:
+                size = self._get_dir_size(dir_path)
+                shutil.rmtree(dir_path)
+                deleted_dirs.append(str(dir_path))
+                total_size += size
+                logger.info(f"Deleted bundled task AI result metadata: {dir_path}")
+            except Exception as e:
+                failed.append((str(dir_path), str(e)))
+                logger.error(
+                    f"Failed to delete bundled task AI result metadata {dir_path}: {e}"
+                )
 
         # 2. Delete training directory (contains features - may be symlinks to cache)
         training_task_dir = self.training_dir / task_id
@@ -585,7 +558,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
                 if model_dir.exists() and model_dir.is_dir():
                     # Safety check: only delete if in models directory
-                    if str(model_dir).startswith(str(self.models_dir)):
+                    models_root = str(self.models_dir)
+                    if os.path.abspath(str(model_dir)) == os.path.abspath(models_root) or \
+                       os.path.abspath(str(model_dir)).startswith(os.path.abspath(models_root) + os.sep):
                         try:
                             size = self._get_dir_size(model_dir)
                             shutil.rmtree(model_dir)
@@ -636,7 +611,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 "total_files": int
             }
         """
-        info = {
+        info: Dict[str, Any] = {
             "wsi_id": wsi_id,
             "wsi_file": {},
             "coordinates": {},
@@ -657,6 +632,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         # Coordinates (search across all params_hash directories)
         # New structure: uploads/coordinates/{params_hash}/{wsi_id}_coords.h5
+        list_all_cached_coords_for_wsi = import_module(
+            "backend.ai.tasks.patch_cache"
+        ).list_all_cached_coords_for_wsi
         coords_files = list_all_cached_coords_for_wsi(self.uploads_dir, wsi_id)
         if coords_files:
             # Aggregate info from all coords files
@@ -690,26 +668,19 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             info["total_size"] += info["mask"]["size"]
             info["total_files"] += 1
 
-        # AI results directory
-        ai_results_dir = self.ai_results_dir / wsi_id
-        if ai_results_dir.exists() and ai_results_dir.is_dir():
-            size = self._get_dir_size(ai_results_dir)
-            file_count = sum(1 for _ in ai_results_dir.rglob("*") if _.is_file())
-            info["ai_results"] = {
-                "path": str(ai_results_dir),
-                "size": size,
-                "exists": True,
-                "file_count": file_count,
-            }
-            info["total_size"] += size
-            info["total_files"] += file_count
-        else:
-            info["ai_results"] = {
-                "path": str(ai_results_dir),
-                "size": 0,
-                "exists": False,
-                "file_count": 0,
-            }
+        store = AIResultStore(self.uploads_dir)
+        artifacts = store.list_wsi_artifacts(wsi_id)
+        bundle_paths = {store.bundle_path(item["task_id"]) for item in artifacts}
+        size = sum(path.stat().st_size for path in bundle_paths if path.exists())
+        info["ai_results"] = {
+            "path": str(self.ai_result_bundles_dir),
+            "size": size,
+            "exists": bool(artifacts),
+            "file_count": len(bundle_paths),
+            "artifact_count": len(artifacts),
+        }
+        info["total_size"] += size
+        info["total_files"] += len(bundle_paths)
 
         # Features from training tasks
         if self.training_dir.exists():
@@ -765,7 +736,10 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         return info
 
     def get_training_task_storage_info(
-        self, task_id: str, model_paths: Optional[List[str]] = None
+        self,
+        task_id: str,
+        model_paths: Optional[List[str]] = None,
+        quick: bool = False,
     ) -> Dict[str, Any]:
         """
         Get storage information for a training task.
@@ -773,6 +747,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         Args:
             task_id: Training task identifier
             model_paths: List of model paths (optional)
+            quick: Return existence-only metadata without recursive size scans
 
         Returns:
             Dictionary with storage information
@@ -780,8 +755,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         OPTIMIZED: Uses _get_directory_stats for single-pass directory traversal
         instead of separate size and file count calculations.
         """
-        info = {
+        info: Dict[str, Any] = {
             "task_id": task_id,
+            "quick": quick,
             "ai_results": {},
             "training_dir": {},
             "training_logs": {},
@@ -791,24 +767,67 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "total_files": 0,
         }
 
-        # Task-scoped AI result files across ai_results/{wsi_id}/
+        if quick:
+            training_dir = self.training_dir / task_id
+            training_log_dir = self.logs_dir / "training" / task_id
+            analysis_log_dir = self.logs_dir / "analysis" / task_id
+
+            info["ai_results"] = {
+                "path": str(self.ai_result_bundles_dir / f"{task_id}.zarr.zip"),
+                "size": 0,
+                "exists": (self.ai_result_bundles_dir / f"{task_id}.zarr.zip").exists(),
+                "file_count": 0,
+                "wsi_dir_count": 0,
+            }
+            info["training_dir"] = {
+                "path": str(training_dir),
+                "size": 0,
+                "exists": training_dir.exists() and training_dir.is_dir(),
+                "file_count": 0,
+            }
+            info["training_logs"] = {
+                "path": str(training_log_dir),
+                "size": 0,
+                "exists": training_log_dir.exists() and training_log_dir.is_dir(),
+                "file_count": 0,
+            }
+            info["analysis_logs"] = {
+                "path": str(analysis_log_dir),
+                "size": 0,
+                "exists": analysis_log_dir.exists() and analysis_log_dir.is_dir(),
+                "file_count": 0,
+            }
+            if model_paths:
+                for model_path in model_paths:
+                    model_dir = (
+                        Path(model_path).parent
+                        if Path(model_path).is_file()
+                        else Path(model_path)
+                    )
+                    info["models"].append(
+                        {
+                            "path": str(model_dir),
+                            "size": 0,
+                            "file_count": 0,
+                            "exists": model_dir.exists() and model_dir.is_dir(),
+                        }
+                    )
+            return info
+
         ai_result_size = 0
         ai_result_count = 0
-        ai_result_wsi_dirs = set()
-        for file_path in self._iter_task_ai_result_files(task_id) or []:
-            try:
-                ai_result_size += file_path.stat().st_size
-                ai_result_count += 1
-                ai_result_wsi_dirs.add(str(file_path.parent))
-            except Exception:
-                continue
+        bundle_path = self.ai_result_bundles_dir / f"{task_id}.zarr.zip"
+        ai_results_path = bundle_path
+        if bundle_path.exists() and bundle_path.is_file():
+            ai_result_size += bundle_path.stat().st_size
+            ai_result_count += 1
 
         info["ai_results"] = {
-            "path": str(self.ai_results_dir),
+            "path": str(ai_results_path),
             "size": ai_result_size,
             "exists": ai_result_count > 0,
             "file_count": ai_result_count,
-            "wsi_dir_count": len(ai_result_wsi_dirs),
+            "wsi_dir_count": 0,
         }
         info["total_size"] += ai_result_size
         info["total_files"] += ai_result_count
@@ -885,7 +904,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         - coordinates/
         - masks/
         - features/
-        - ai_results/
+        - ai_result_bundles/
         - training/
         - models/
         - logs/
@@ -916,7 +935,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             (self.coords_dir, "coordinates"),
             (self.masks_dir, "masks"),
             (self.features_dir, "features"),
-            (self.ai_results_dir, "ai_results"),
+            (self.ai_result_bundles_dir, "ai_result_bundles"),
             (self.training_dir, "training"),
             (self.models_dir, "models"),
             (self.logs_dir, "logs"),
@@ -1017,6 +1036,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 "summary": str
             }
         """
+        cleanup_dangling_symlinks = import_module(
+            "backend.ai.tasks.feature_cache"
+        ).cleanup_dangling_symlinks
         result = cleanup_dangling_symlinks(self.uploads_dir)
 
         result["summary"] = (

@@ -4,14 +4,17 @@ Task Queue Management Routes
 Provides API endpoints for monitoring and managing the GPU task queue.
 """
 
+from collections.abc import Mapping
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..task_queue import get_task_queue
 from ..dependencies import logger
 from ..utils import cancel_ai_service_training
+from ..task_dispatch import is_worker_healthy, publish_task_cancellation
+from task_worker.runtime_status import get_runtime_status, empty_runtime_status, RUNTIME_STATUS_TTL_SECONDS
 from backend.ai.schemas.base import TaskStatus
+from datetime import datetime, timezone, timedelta
 from backend.database import get_db
 from backend.database.repositories import TrainingTaskRepository, AITaskRepository
 from backend.common.config import Config
@@ -35,10 +38,10 @@ async def get_queue_config(user: User = Depends(require_admin)):
             "task_timeout": int       # Task timeout in seconds
         }
     """
-    queue = get_task_queue()
-    max_concurrent = queue.max_concurrent if queue else 4
-
-    return {"max_concurrent": max_concurrent, "task_timeout": Config.get_task_timeout()}
+    return {
+        "max_concurrent": Config.get_max_concurrent(default=4),
+        "task_timeout": Config.get_task_timeout(),
+    }
 
 
 @router.get("")
@@ -49,6 +52,7 @@ async def get_queue_status(user: User = Depends(require_admin)):
     Returns:
         {
             "max_concurrent": int,       # Maximum concurrent tasks allowed
+            "gpu_count": int,            # Number of GPUs available to the worker
             "running_count": int,        # Number of currently running tasks
             "pending_count": int,        # Number of tasks waiting in queue
             "queue_size": int,           # Total queue size
@@ -57,11 +61,61 @@ async def get_queue_status(user: User = Depends(require_admin)):
             "is_running": bool           # Whether the queue worker is running
         }
     """
-    queue = get_task_queue()
-    if not queue:
-        raise HTTPException(status_code=503, detail="Task queue not initialized")
+    snapshot = await get_runtime_status()
+    if snapshot is not None and _is_snapshot_fresh(snapshot):
+        return {
+            "max_concurrent": snapshot.get("max_concurrent") or Config.get_max_concurrent(default=4),
+            "gpu_count": snapshot.get("gpu_count", 0),
+            "task_timeout": snapshot.get("task_timeout") or Config.get_task_timeout(),
+            "running_count": snapshot.get("running_count", 0),
+            "pending_count": snapshot.get("pending_count", 0),
+            "queue_size": snapshot.get("queue_size", 0),
+            "descriptor_pending_count": snapshot.get("descriptor_pending_count", 0),
+            "descriptor_processing_count": snapshot.get("descriptor_processing_count", 0),
+            "descriptor_dlq_count": snapshot.get("descriptor_dlq_count", 0),
+            "running_task_ids": snapshot.get("running_task_ids", []),
+            "running_tasks": snapshot.get("running_tasks", []),
+            "pending_task_ids": snapshot.get("pending_task_ids", []),
+            "patching_count": snapshot.get("patching_count", 0),
+            "patching_task_ids": snapshot.get("patching_task_ids", []),
+            "gpu_stage_details": snapshot.get("gpu_stage_details", {}),
+            "is_running": snapshot.get("is_running", False),
+        }
 
-    return queue.get_status()
+    worker_running = await is_worker_healthy()
+    fallback = empty_runtime_status(is_running=worker_running)
+    return {
+        "max_concurrent": Config.get_max_concurrent(default=4),
+        "gpu_count": fallback["gpu_count"],
+        "task_timeout": Config.get_task_timeout(),
+        "running_count": fallback["running_count"],
+        "pending_count": fallback["pending_count"],
+        "queue_size": fallback["queue_size"],
+        "descriptor_pending_count": fallback["descriptor_pending_count"],
+        "descriptor_processing_count": fallback["descriptor_processing_count"],
+        "descriptor_dlq_count": fallback["descriptor_dlq_count"],
+        "running_task_ids": fallback["running_task_ids"],
+        "running_tasks": fallback["running_tasks"],
+        "pending_task_ids": fallback["pending_task_ids"],
+        "patching_count": fallback["patching_count"],
+        "patching_task_ids": fallback["patching_task_ids"],
+        "gpu_stage_details": fallback["gpu_stage_details"],
+        "is_running": fallback["is_running"],
+    }
+
+
+def _is_snapshot_fresh(snapshot: Mapping[str, object]) -> bool:
+    updated_at_raw = snapshot.get("updated_at")
+    if not updated_at_raw:
+        return False
+    try:
+        updated_at = datetime.fromisoformat(str(updated_at_raw))
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - updated_at
+        return age <= timedelta(seconds=RUNTIME_STATUS_TTL_SECONDS)
+    except (ValueError, TypeError):
+        return False
 
 
 @router.post("/config")
@@ -85,22 +139,9 @@ async def update_queue_config(
 
     # Update max_concurrent if provided
     if req.max_concurrent is not None:
-        queue = get_task_queue()
-        if not queue:
-            raise HTTPException(status_code=503, detail="Task queue not initialized")
-
-        # Prevent changing max_concurrent on single GPU systems
-        if queue.gpu_count == 1 and req.max_concurrent != 1:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot change max_concurrent with single GPU. Only 1 concurrent task allowed.",
-            )
-
         try:
-            await queue.set_max_concurrent(req.max_concurrent)
-            # Persist to config file so it survives service restart
-            Config.set_max_concurrent(req.max_concurrent)
-            messages.append(f"max_concurrent updated to {req.max_concurrent}")
+            max_concurrent = Config.set_max_concurrent(req.max_concurrent)
+            messages.append(f"max_concurrent updated to {max_concurrent}")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -117,15 +158,28 @@ async def update_queue_config(
             status_code=400, detail="No configuration parameters provided"
         )
 
-    # Get current config
-    queue = get_task_queue()
     return {
         "message": "; ".join(messages),
         "config": {
-            "max_concurrent": queue.max_concurrent if queue else 4,
+            "max_concurrent": Config.get_max_concurrent(default=4),
             "task_timeout": Config.get_task_timeout(),
         },
     }
+
+
+def _status_to_queue_state(status: object) -> Optional[str]:
+    value = status.value if isinstance(status, TaskStatus) else str(status)
+    value = value.split(".")[-1].lower()
+    if value in {
+        TaskStatus.QUEUED.value,
+        TaskStatus.PENDING.value,
+        TaskStatus.PATCHING.value,
+        TaskStatus.RESUMING.value,
+    }:
+        return "pending"
+    if value in {TaskStatus.TRAINING.value, TaskStatus.EXTRACTING.value}:
+        return "running"
+    return None
 
 
 @router.delete("/{task_id}")
@@ -159,7 +213,9 @@ async def cancel_queued_task(
                 status_code=403, detail="You don't have permission to cancel this task"
             )
 
-        # Try to cancel the running asyncio.Task (for CPU-only analysis)
+        await publish_task_cancellation(task_id)
+
+        # Try to cancel the running asyncio.Task when this process owns one.
         task_cancelled = await analysis_state.cancel_running_task(task_id)
 
         # Update analysis state to cancelled
@@ -197,12 +253,13 @@ async def cancel_queued_task(
             task.user_id, user, "You don't have permission to cancel this task"
         )
 
-    queue = get_task_queue()
-    if not queue:
-        raise HTTPException(status_code=503, detail="Task queue not initialized")
+    if not ai_task and not task:
+        return {
+            "cancelled": False,
+            "message": f"Task {task_id} not found or already completed",
+        }
 
-    # Try to cancel in memory queue (this triggers asyncio.CancelledError in pipeline)
-    cancelled_in_queue = await queue.cancel_task(task_id)
+    await publish_task_cancellation(task_id)
 
     # Also notify AI service to cancel training and release GPU
     # This is needed because the HTTP request to AI service may still be in progress
@@ -237,13 +294,10 @@ async def cancel_queued_task(
         await db.commit()
 
         return {"cancelled": True, "message": f"Task {task_id} cancelled successfully"}
-    elif cancelled_in_queue:
-        return {"cancelled": True, "message": f"Task {task_id} cancelled from queue"}
-    else:
-        return {
-            "cancelled": False,
-            "message": f"Task {task_id} not found or already completed",
-        }
+    return {
+        "cancelled": False,
+        "message": f"Task {task_id} not found or already completed",
+    }
 
 
 @router.get("/{task_id}")
@@ -289,15 +343,32 @@ async def check_task_in_queue(
                         "status": "not_found",
                     }
 
-    queue = get_task_queue()
-    if not queue:
-        raise HTTPException(status_code=503, detail="Task queue not initialized")
+    analysis_state = get_analysis_state()
+    analysis_task = await analysis_state.get(task_id)
+    if analysis_task:
+        queue_status = _status_to_queue_state(analysis_task.get("status"))
+        return {
+            "task_id": task_id,
+            "in_queue": queue_status is not None,
+            "status": queue_status or "not_found",
+        }
 
-    status_info = queue.get_status()
+    ai_task = await AITaskRepository.get_by_id(db, task_id)
+    if ai_task:
+        queue_status = _status_to_queue_state(ai_task.status)
+        return {
+            "task_id": task_id,
+            "in_queue": queue_status is not None,
+            "status": queue_status or "not_found",
+        }
 
-    if task_id in status_info["running_task_ids"]:
-        return {"task_id": task_id, "in_queue": True, "status": "running"}
-    elif task_id in status_info["pending_task_ids"]:
-        return {"task_id": task_id, "in_queue": True, "status": "pending"}
-    else:
-        return {"task_id": task_id, "in_queue": False, "status": "not_found"}
+    training_task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if training_task:
+        queue_status = _status_to_queue_state(training_task.status)
+        return {
+            "task_id": task_id,
+            "in_queue": queue_status is not None,
+            "status": queue_status or "not_found",
+        }
+
+    return {"task_id": task_id, "in_queue": False, "status": "not_found"}

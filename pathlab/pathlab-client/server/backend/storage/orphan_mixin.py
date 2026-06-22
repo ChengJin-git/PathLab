@@ -116,7 +116,7 @@ class StorageOrphanMixin:
         # Root directories that should never be deleted
         root_dirs = {
             self.coords_dir, self.masks_dir, self.features_dir,
-            self.ai_results_dir, self.training_dir, self.models_dir,
+            self.ai_result_bundles_dir, self.training_dir, self.models_dir,
             self.logs_dir, self.wsi_files_dir, self.metadata_dir,
             self.uploads_dir
         }
@@ -329,6 +329,27 @@ class StorageOrphanMixin:
                                     result["total_orphaned_count"] += 1
                                     result["total_orphaned_file_count"] += 1
 
+    def _scan_ai_result_bundles(self, directory: Path, existing_task_set: set[Any], result: Dict[str, Any]) -> None:
+        """Scanner for bundled task-level AI results."""
+        if not directory.exists():
+            return
+        for bundle_path in directory.glob("*.zarr.zip"):
+            if not bundle_path.is_file():
+                continue
+            task_id = bundle_path.name[: -len(".zarr.zip")]
+            if task_id in existing_task_set:
+                continue
+            size = bundle_path.stat().st_size
+            result["orphaned_ai_results"].append({
+                "path": str(bundle_path),
+                "size": size,
+                "task_id": task_id,
+                "type": "task_bundle"
+            })
+            result["total_orphaned_size"] += size
+            result["total_orphaned_count"] += 1
+            result["total_orphaned_file_count"] += 1
+
     def _scan_training_dirs(self, directory: Path, existing_task_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for training directories."""
         if directory.exists():
@@ -501,10 +522,10 @@ class StorageOrphanMixin:
                 "scanner": lambda d: self._scan_features_cache(d, existing_wsi_set, result)
             },
             {
-                "category": "ai_results",
+                "category": "ai_result_bundles",
                 "result_key": "orphaned_ai_results",
-                "directory": self.uploads_dir / "ai_results",
-                "scanner": lambda d: self._scan_ai_results(d, existing_wsi_set, existing_task_set, result)
+                "directory": self.ai_result_bundles_dir,
+                "scanner": lambda d: self._scan_ai_result_bundles(d, existing_task_set, result)
             },
             {
                 "category": "training",

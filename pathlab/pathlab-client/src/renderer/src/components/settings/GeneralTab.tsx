@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Cloud, Server, Key, Info, CheckCircle, Mic, Globe, Mail } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -10,6 +10,7 @@ import { buildAuthRequestInit } from '../../api/client'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { useTranslation } from 'react-i18next'
+import { CUSTOM_MODEL_SENTINEL, MODEL_OPTIONS, isCustomModelId } from '../../constants/models'
 
 // Status Badge Component
 function StatusBadge({ status }: { status: 'online' | 'offline' | 'checking' }) {
@@ -48,41 +49,6 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () =>
   )
 }
 
-/**
- * Single source of truth for all available AI models.
- * Used by GeneralTab (<select>) and AIChatPage (multimodal upload validation).
- */
-export interface ModelOption {
-  id: string
-  label: string
-  multimodal: boolean
-  closedSource?: boolean
-}
-
-export const MODEL_OPTIONS: ModelOption[] = [
-  // Multimodal models (support image input)
-  { id: 'qwen/qwen3.5-plus-02-15', label: 'Qwen3.5-Plus-02-15', multimodal: true },
-  { id: 'moonshotai/kimi-k2.5', label: 'Kimi-K2.5', multimodal: true },
-  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
-  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
-  // Text-only models
-  { id: 'z-ai/glm-5', label: 'GLM-5', multimodal: false },
-  { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
-  { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
-  { id: 'minimax/minimax-m2.7', label: 'Minimax-M2.7', multimodal: false },
-  { id: 'xiaomi/mimo-v2-pro', label: 'MIMO-V2-Pro', multimodal: false },
-]
-
-export const CUSTOM_MODEL_SENTINEL = '__custom__'
-
-export const MULTIMODAL_MODELS = new Set(
-  MODEL_OPTIONS.filter(m => m.multimodal).map(m => m.id)
-)
-
-function isCustomModelId(id: string): boolean {
-  return !!id && id !== CUSTOM_MODEL_SENTINEL && !MODEL_OPTIONS.some(m => m.id === id)
-}
-
 export interface GeneralTabProps {
   showConfirmDialog: ShowConfirmDialog
   closeConfirmDialog: () => void
@@ -93,7 +59,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   // Remote LLM state
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
-  const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
+  const [model, setModel] = useState('qwen/qwen3.6-plus:free')
   const [isCustomMode, setIsCustomMode] = useState(false)
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
@@ -112,6 +78,13 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 
   const [resendEnabled, setResendEnabled] = useState(false)
   const [resendApiKey, setResendApiKey] = useState('')
+
+  const [turnstileEnabled, setTurnstileEnabled] = useState(false)
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
+  const [turnstileSecretKey, setTurnstileSecretKey] = useState('')
+  const [tencentCaptchaEnabled, setTencentCaptchaEnabled] = useState(false)
+  const [tencentCaptchaAppId, setTencentCaptchaAppId] = useState('')
+  const [tencentCaptchaSecretKey, setTencentCaptchaSecretKey] = useState('')
 
   const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
   const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('ws://127.0.0.1:8001/api-ws/v1/realtime')
@@ -173,6 +146,12 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setResendEnabled(s.resend_enabled || false)
       setResendApiKey(s.resend_api_key || '')
+      setTurnstileEnabled(s.turnstile_enabled || false)
+      setTurnstileSiteKey(s.turnstile_site_key || '')
+      setTurnstileSecretKey(s.turnstile_secret_key || '')
+      setTencentCaptchaEnabled(s.tencent_captcha_enabled || false)
+      setTencentCaptchaAppId(s.tencent_captcha_app_id || '')
+      setTencentCaptchaSecretKey(s.tencent_captcha_secret_key || '')
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
       setLocalAsrModel(s.local_asr_model); setLocalAsrApiKey(s.local_asr_api_key)
       if (s.local_vllm_enabled && s.local_vllm_base_url) {
@@ -206,6 +185,10 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
         resend_enabled: resendEnabled, resend_api_key: resendApiKey,
+        turnstile_enabled: turnstileEnabled, turnstile_site_key: turnstileSiteKey,
+        turnstile_secret_key: turnstileSecretKey,
+        tencent_captcha_enabled: tencentCaptchaEnabled, tencent_captcha_app_id: tencentCaptchaAppId,
+        tencent_captcha_secret_key: tencentCaptchaSecretKey,
       })
       localStorage.setItem('openrouter_api_key', apiKey)
       localStorage.setItem('openrouter_base_url', baseUrl)
@@ -236,7 +219,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 
           <Card className="border border-slate-200 shadow-sm overflow-hidden">
             <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-100">
-              {/* Left Column: LLM Settings (Primary) + Web Search */}
               <div className="flex flex-col divide-y divide-slate-100">
                 <div className="p-5 space-y-4 bg-slate-50/30">
                   <div className="flex items-center gap-2 mb-2">
@@ -321,7 +303,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                   </div>
                 </div>
 
-                {/* Web Search (Exa) - Moved to Left Column */}
                 <div className="p-5 space-y-4">
                   <div className="flex items-center gap-2 mb-2">
                     <div className="p-1.5 bg-indigo-100 rounded-md">
@@ -350,6 +331,45 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-cyan-100 rounded-md">
+                        <Key className="w-4 h-4 text-cyan-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-slate-900">Cloudflare Turnstile</h3>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Captcha</span>
+                      </div>
+                    </div>
+                    <ToggleSwitch enabled={turnstileEnabled} onChange={() => setTurnstileEnabled(!turnstileEnabled)} />
+                  </div>
+
+                  {turnstileEnabled && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Site Key</Label>
+                        <Input
+                          value={turnstileSiteKey}
+                          onChange={(e) => setTurnstileSiteKey(e.target.value)}
+                          placeholder="YOUR_TURNSTILE_SITE_KEY"
+                          className="h-9 text-sm border-slate-300 focus:border-cyan-500 focus:ring-cyan-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Secret Key</Label>
+                        <Input
+                          type="password"
+                          value={turnstileSecretKey}
+                          onChange={(e) => setTurnstileSecretKey(e.target.value)}
+                          placeholder="YOUR_TURNSTILE_SECRET_KEY"
+                          className="h-9 text-sm border-slate-300 focus:border-cyan-500 focus:ring-cyan-500"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -453,12 +473,50 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                     </div>
                   )}
                 </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-blue-100 rounded-md">
+                        <Key className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-slate-900">Tencent Captcha</h3>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Captcha (CN)</span>
+                      </div>
+                    </div>
+                    <ToggleSwitch enabled={tencentCaptchaEnabled} onChange={() => setTencentCaptchaEnabled(!tencentCaptchaEnabled)} />
+                  </div>
+
+                  {tencentCaptchaEnabled && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">App ID</Label>
+                        <Input
+                          value={tencentCaptchaAppId}
+                          onChange={(e) => setTencentCaptchaAppId(e.target.value)}
+                          placeholder="YOUR_TENCENT_APP_ID"
+                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Secret Key</Label>
+                        <Input
+                          type="password"
+                          value={tencentCaptchaSecretKey}
+                          onChange={(e) => setTencentCaptchaSecretKey(e.target.value)}
+                          placeholder="YOUR_TENCENT_SECRET_KEY"
+                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
               </div>
             </div>
           </Card>
         </section>
-
-        {/* Removed Separate Web Search Section, now integrated above */}
 
         {/* Local Services Section */}
         <section className="space-y-3">

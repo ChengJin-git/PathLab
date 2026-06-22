@@ -1,4 +1,5 @@
 import type { TrainingTaskStatus } from '../../contexts/backgroundTask/types'
+import type { TaskType } from '../../constants/training'
 
 export interface LogEntry {
   id: number
@@ -13,7 +14,7 @@ export interface LogEntry {
 export interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
+  task_type: TaskType | 'external_validation' | 'batch_inference'
   data_type: 'wsi' | 'patch'
   task_description: string
   status: TrainingTaskStatus
@@ -46,6 +47,7 @@ export interface TaskDetail {
       ratios?: { train: number; val: number; test: number }
       manual_splits?: Record<string, string>
       seed?: number
+      stratified?: boolean
     }
   }
   model_config: {
@@ -60,6 +62,7 @@ export interface TaskDetail {
     early_stopping_patience?: number  // Number of epochs to wait before early stopping
     // Segmentation-specific fields
     architecture?: string      // Segmentation architecture (unet, deeplabv3, etc.)
+    decoder_type?: string      // Segmentation decoder type for FM (linear, conv, dpt, unetr)
     loss_names?: string[]      // Segmentation loss function names
     loss_weights?: number[]    // Segmentation loss function weights
     // External validation specific fields
@@ -70,6 +73,9 @@ export interface TaskDetail {
     dataset_id?: string
     dataset_name?: string  // Dataset name for display
     total_wsi?: number
+    analysis_metrics?: string[]
+    analysis_charts?: string[]
+    bootstrap_ci_metrics?: string[]
   }
   classes?: string[]
   error_message?: string

@@ -4,8 +4,8 @@ DatasetRepository - Data Access Layer
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict, Any
-from sqlalchemy import select, update, delete, func, insert
+from typing import Any, List, Optional, Dict
+from sqlalchemy import select, update, delete, func, insert, desc, literal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,6 +23,7 @@ from ..models import (
     TrainingTaskWSI,
     utc_now,
 )
+from ...common.config import Config
 from .base import BaseRepository
 
 
@@ -35,6 +36,15 @@ class DatasetRepository(BaseRepository[Dataset]):
 
     model = Dataset
     pk_field = "dataset_id"
+
+    @classmethod
+    async def get_by_id(cls, db: AsyncSession, pk_value: Any) -> Optional[Dataset]:
+        result = await db.execute(
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .where(Dataset.dataset_id == pk_value)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_name(
@@ -73,7 +83,7 @@ class DatasetRepository(BaseRepository[Dataset]):
         dataset_id = str(uuid.uuid4())
         try:
             async with db.begin_nested():
-                return await DatasetRepository.create(
+                await DatasetRepository.create(
                     db,
                     dataset_id=dataset_id,
                     name=name,
@@ -83,6 +93,10 @@ class DatasetRepository(BaseRepository[Dataset]):
                     parent_dataset_id=parent_dataset_id,
                     is_public=is_public,
                 )
+            fetched = await DatasetRepository.get_by_id(db, dataset_id)
+            if fetched is not None:
+                return fetched
+            raise RuntimeError(f"Dataset {dataset_id} not found after creation")
         except IntegrityError:
             logger.debug(
                 f"Dataset concurrent insert detected for name='{name}', re-querying"
@@ -177,7 +191,9 @@ class DatasetRepository(BaseRepository[Dataset]):
     @staticmethod
     async def get_wsi_ids(db: AsyncSession, dataset_id: str) -> List[str]:
         result = await db.execute(
-            select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+            select(WSISlide.wsi_id)
+            .where(WSISlide.dataset_id == dataset_id)
+            .order_by(desc(WSISlide.created_at))
         )
         return [row[0] for row in result.all()]
 
@@ -195,6 +211,47 @@ class DatasetRepository(BaseRepository[Dataset]):
         mapping: Dict[str, List[str]] = {did: [] for did in dataset_ids}
         for dataset_id, wsi_id in result.all():
             mapping[dataset_id].append(wsi_id)
+        return mapping
+
+    @staticmethod
+    async def get_wsi_path_refs_batch(
+        db: AsyncSession, dataset_ids: List[str]
+    ) -> Dict[str, List[Dict[str, str]]]:
+        if not dataset_ids:
+            return {}
+        result = await db.execute(
+            select(WSISlide.dataset_id, WSISlide.wsi_id, WSISlide.wsi_path).where(
+                WSISlide.dataset_id.in_(dataset_ids)
+            )
+        )
+        mapping: Dict[str, List[Dict[str, str]]] = {did: [] for did in dataset_ids}
+        for dataset_id, wsi_id, wsi_path in result.all():
+            mapping[dataset_id].append({"wsi_id": wsi_id, "wsi_path": wsi_path})
+        return mapping
+
+    @staticmethod
+    async def get_external_wsi_path_refs_batch(
+        db: AsyncSession, dataset_ids: List[str]
+    ) -> Dict[str, List[Dict[str, str]]]:
+        if not dataset_ids:
+            return {}
+
+        uploads_dir = str(Config.get_uploads_dir())
+        uploads_prefix = f"{uploads_dir.rstrip('/')}/"
+        upload_root_length = len(uploads_prefix)
+        result = await db.execute(
+            select(WSISlide.dataset_id, WSISlide.wsi_id, WSISlide.wsi_path)
+            .where(WSISlide.dataset_id.in_(dataset_ids))
+            .where(WSISlide.wsi_path.isnot(None))
+            .where(WSISlide.wsi_path != uploads_dir)
+            .where(
+                func.substr(WSISlide.wsi_path, 1, upload_root_length)
+                != literal(uploads_prefix)
+            )
+        )
+        mapping: Dict[str, List[Dict[str, str]]] = {did: [] for did in dataset_ids}
+        for dataset_id, wsi_id, wsi_path in result.all():
+            mapping[dataset_id].append({"wsi_id": wsi_id, "wsi_path": wsi_path})
         return mapping
 
     @staticmethod

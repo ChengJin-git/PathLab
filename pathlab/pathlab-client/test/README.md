@@ -1,17 +1,19 @@
 # PathLab Client 单元测试
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
-本目录包含 PathLab 前端的完整单元测试套件，覆盖全部业务逻辑模块。
+本目录包含 PathLab 前端的单元测试套件，覆盖 API 客户端、工具函数、Context、页面和组件等主要业务模块。
+
+当前测试清单以 `test/**/*.test.{ts,tsx}` 为准；README 只记录稳定的目录分层和代表性测试对象，不把所有测试文件数量写死。
 
 ## 测试技术栈
 
 | 工具 | 版本 | 用途 |
 |------|------|------|
-| [Vitest](https://vitest.dev/) | ^2.0 | 测试运行器与断言库 |
+| [Vitest](https://vitest.dev/) | ^2.1.9 | 测试运行器与断言库 |
 | [@testing-library/react](https://testing-library.com/docs/react-testing-library/intro/) | ^16 | React Context / Hook 测试 |
 | [@testing-library/jest-dom](https://testing-library.com/docs/ecosystem-jest-dom) | — | DOM 扩展断言 |
-| jsdom | ^24 | 浏览器环境模拟 |
+| jsdom | ^24.1.3 | 浏览器环境模拟 |
 
 ## 运行测试
 
@@ -36,7 +38,7 @@ test/
 ├── helpers/              # 测试工具函数
 │   └── apiHelpers.ts     # ok() / errResp() / noContent() / blobResp() / createSSEStream()
 └── unit/
-    ├── api/              # API 客户端层测试（19 个文件）
+    ├── api/              # API 客户端层测试
     │   ├── client.test.ts
     │   ├── crypto.test.ts
     │   ├── auth.test.ts
@@ -49,6 +51,7 @@ test/
     │   ├── users.test.ts
     │   ├── analysis.test.ts
     │   ├── annotation.test.ts
+    │   ├── batchInference.test.ts
     │   ├── export.test.ts
     │   ├── feedback.test.ts
     │   ├── grants.test.ts
@@ -56,23 +59,17 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数 / Hook 测试（8 个文件）
-    │   ├── cache.test.ts
-    │   ├── utils.test.ts
-    │   ├── chatMessageParser.test.ts
-    │   ├── datasetPagination.test.ts
-    │   ├── segmentationUploadUtils.test.ts
-    │   ├── externalValidationUtils.test.ts
-    │   ├── trainingSubmissionTracker.test.ts
-    │   └── useAsyncAction.test.tsx
+    ├── lib/              # 纯工具函数 / Hook 测试
+    │   └── *.test.ts(x)
     ├── contexts/         # React Context 测试
     │   └── AuthContext.test.tsx
-    └── components/       # 组件测试（2 个文件）
-        └── settings/
-            ├── PermissionCenterModal.test.tsx
-            └── storage/
-                └── BatchScanResults.test.tsx
+    ├── constants/        # 常量测试
+    ├── pages/            # 页面级测试
+    └── components/       # 组件测试
+        └── **/*.test.tsx
 ```
+
+后端 pytest 套件位于 `server/tests/`，覆盖 Gateway 路由、权限边界、任务队列、存储、分析、AI 结果与 GPU/模型 smoke；详见 `server/README.md`。
 
 ---
 
@@ -88,7 +85,7 @@ test/
 - `blobResp(content, type?)` — 二进制 / 文件下载响应
 - `createSSEStream(lines)` — 构造 SSE 流用于流式 AI 对话测试
 
-新增的 API 测试文件全部通过 `import { ok, errResp } from '../../helpers/apiHelpers'` 使用这些工具，替代了旧测试文件中手写 Response mock 的方式。
+API 测试文件通过 `import { ok, errResp } from '../../helpers/apiHelpers'` 等方式复用这些工具，避免在各测试中重复手写 Response mock。
 
 ---
 
@@ -107,8 +104,6 @@ test/
 ## unit/lib/cache.test.ts
 
 **对应源文件**：`src/renderer/src/lib/cache.ts`
-**测试数量**：29 个
-
 PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件对这三种原语进行全面测试。
 
 ### 测试对象与覆盖点
@@ -145,11 +140,20 @@ PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件�
 
 ---
 
+## unit/lib/avatarUrl.test.ts
+
+**对应源文件**：`src/renderer/src/lib/avatarUrl.ts`
+覆盖头像 URL 解析辅助函数：
+
+- 空值返回 `null`
+- 已经是绝对 URL 的头像地址保持不变
+- 以 `/avatars/...` 开头的根路径会按 `API_BASE` 自动补齐为完整后端地址
+
+---
+
 ## unit/lib/utils.test.ts
 
 **对应源文件**：`src/renderer/src/lib/utils.ts`
-**测试数量**：13 个
-
 ### 测试对象与覆盖点
 
 **`cn()`**（Tailwind 类名合并）
@@ -178,8 +182,6 @@ PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件�
 ## unit/lib/chatMessageParser.test.ts
 
 **对应源文件**：`src/renderer/src/lib/chatMessageParser.ts`
-**测试数量**：18 个
-
 AI 对话消息中嵌入了多种 `[TAG]...[/TAG]` 格式的结构化控制块，这些块只供前端解析，发送给 AI 时需要清理或脱敏。
 
 ### 测试对象与覆盖点
@@ -207,8 +209,6 @@ AI 对话消息中嵌入了多种 `[TAG]...[/TAG]` 格式的结构化控制块�
 ## unit/api/crypto.test.ts
 
 **对应源文件**：`src/renderer/src/api/crypto.ts`
-**测试数量**：12 个
-
 PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输。
 
 ### 测试对象与覆盖点
@@ -243,8 +243,6 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 ## unit/api/client.test.ts
 
 **对应源文件**：`src/renderer/src/api/client.ts`
-**测试数量**：59 个
-
 整个 API 层的基础设施，本文件测试覆盖最广。
 
 ### 测试对象与覆盖点
@@ -323,8 +321,6 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 ## unit/api/auth.test.ts
 
 **对应源文件**：`src/renderer/src/api/auth.ts`
-**测试数量**：21 个
-
 ### 测试对象与覆盖点
 
 **`loginWithCredentials()`**
@@ -346,7 +342,7 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 **`getCurrentUser()`**
 
 - 无 token 时直接返回 `{ is_logged_in: false }`，不发网络请求
-- 有 token 时请求 `/auth/users/me`，返回用户信息
+- 有 token 时请求 `/auth/me`，返回用户信息
 
 **`updateCurrentUser()`**
 
@@ -355,7 +351,7 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 
 **`registerUser()`**
 
-- 发送 `POST` 到 `/auth/register`，body 包含 email / password / role
+- 发送 `POST` 到已禁用的 `/auth/register`；测试保留该客户端函数的请求封装行为，管理员创建用户不再使用它
 
 **`uploadAvatar()` / `deleteAvatar()`**
 
@@ -367,8 +363,6 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 ## unit/api/wsi.test.ts
 
 **对应源文件**：`src/renderer/src/api/wsi.ts`
-**测试数量**：33 个
-
 WSI（全玻片图像）是系统核心数据对象，本文件测试完整的数据管理 CRUD。
 
 ### 测试对象与覆盖点
@@ -380,9 +374,13 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **`fetchWSIList()`**
 
-- 默认 `page_size=0`（获取全部）
+- 默认 `page=1&page_size=20`（分页获取）
 - 按 `dataset_id` 过滤
 - 带 TTL 的缓存，`invalidateWSIListCache()` 清除后重新请求
+
+**`fetchAllWSIList()` / `fetchAllDatasets()`**
+
+- 使用有界分页逐页获取完整列表，不发送 `page_size=0`
 
 **`fetchWSIIds()`**
 
@@ -428,8 +426,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/training.test.ts
 
 **对应源文件**：`src/renderer/src/api/training.ts`
-**测试数量**：23 个
-
 ### 测试对象与覆盖点
 
 **`getTrainingTasks()`**
@@ -464,15 +460,13 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **`fetchExtractors()`**
 
-- 获取可用特征提取器列表（UNI、CONCH、CytoFM 等）
+- 获取可用特征提取器列表（UNI、CONCH、SmartCyto 等）
 
 ---
 
 ## unit/api/results.test.ts
 
 **对应源文件**：`src/renderer/src/api/results.ts`
-**测试数量**：14 个
-
 ### 测试对象与覆盖点
 
 **`fetchResults()`**
@@ -498,8 +492,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/stats.test.ts
 
 **对应源文件**：`src/renderer/src/api/stats.ts`
-**测试数量**：17 个
-
 ### 测试对象与覆盖点
 
 **`fetchStats()`**
@@ -522,8 +514,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/chat.test.ts
 
 **对应源文件**：`src/renderer/src/api/chat.ts`
-**测试数量**：23 个
-
 ### 测试对象与覆盖点
 
 **会话 CRUD**
@@ -553,8 +543,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/heatmap.test.ts
 
 **对应源文件**：`src/renderer/src/api/heatmap.ts`
-**测试数量**：22 个
-
 ### 测试对象与覆盖点
 
 **`fetchAvailableHeatmaps()`**
@@ -590,42 +578,41 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/users.test.ts
 
 **对应源文件**：`src/renderer/src/api/users.ts`
-**测试数量**：23 个
-
 管理员专用接口。
 
 ### 测试对象与覆盖点
 
 **用户 CRUD**
 
-- `fetchUsers()`：GET 用户列表
-- `fetchUserDetail()`：GET 单个用户
+- `listUsers()`：GET 用户列表
+- `listUsersPaged()`：分页 / 搜索用户列表
+- `getUserById()`：GET 单个用户
 - `createUser()`：POST 创建用户（含 role、password 等字段）
 - `updateUser()`：PATCH 更新用户信息
 - `deleteUser()`：DELETE
 
-**状态管理**
+**批量状态管理**
 
-- `setUserActiveStatus(userId, true/false)`：激活 / 停用用户账号
+- `batchActivateUsers(userIds)` / `batchDeactivateUsers(userIds)`：批量激活 / 停用用户账号
+- `batchDeleteUsers(userIds)`：批量删除用户
 
-**密码**
+**协议与维护**
 
-- `resetUserPassword(userId, newPassword)`：管理员重置用户密码
-
-**权限与维护**
-
-- `getMyDatasetGrants()`：获取当前用户的临时提权数据集 ID 列表
-- `getClientIP()`：获取客户端 IP（用于协议签署记录）
-- `getMaintenanceNotice()`：获取当前维护公告（含 `active`、`message`、`needs_acknowledgment`）
+- `acceptAgreement(ip?)`：当前用户接受协议
+- `revokeUserAgreement(userId)`：管理员撤销指定用户的协议接受状态
+- `getMaintenanceMode()` / `setMaintenanceMode(enabled)`：读取 / 更新维护模式
+- `getMaintenanceNotice()` / `setMaintenanceNotice(message)`：读取 / 更新维护公告
 - `acknowledgeNotice()`：标记用户已读维护公告
+
+**辅助**
+
+- `getClientIP()`：获取客户端 IP（用于协议签署记录）
 
 ---
 
 ## unit/contexts/AuthContext.test.tsx
 
 **对应源文件**：`src/renderer/src/contexts/AuthContext.tsx`
-**测试数量**：38 个
-
 唯一的 React Context 测试，使用 `renderHook` + `act` + `waitFor` 测试认证状态机的完整生命周期。
 
 ### Mock 策略
@@ -833,11 +820,24 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 ---
 
+## unit/api/batchInference.test.ts
+
+**对应源文件**：`src/renderer/src/api/batchInference.ts`
+
+覆盖无标签数据集批量推理的完整接口：
+
+- `fetchDatasetsForInference()`：获取可提交批量推理的无标签数据集列表
+- `startBatchInference()`：提交批量推理任务（指定模型任务 ID 与目标数据集 ID）
+- `listBatchInferenceTasks()`：列出当前用户的批量推理任务列表
+- `getBatchInferenceResults(taskId)`：获取指定推理任务的逐 WSI 预测结果
+- `getBatchInferenceSummary(taskId)`：获取推理汇总摘要（类别分布、处理 slide 数等）
+- `exportBatchInferenceCsv(taskId)`：导出推理结果为 CSV 文件（Blob 响应，触发浏览器下载）
+
+---
+
 ## unit/lib/datasetPagination.test.ts
 
 **对应源文件**：`src/renderer/src/lib/datasetPagination.ts`
-**测试数量**：3 个
-
 覆盖 `clampDatasetPage()` 的三条分支：请求出错时保持当前页不变、正在加载且无数据时保持不变、数据稳定时将页码夹紧到总页数上限。
 
 ---
@@ -845,8 +845,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/segmentationUploadUtils.test.ts
 
 **对应源文件**：`src/renderer/src/lib/segmentationUploadUtils.ts`
-**测试数量**：21 个
-
 覆盖分割标注上传的文件匹配工具函数：
 
 - `getSegmentationStem(name)` — 剥离 `.json` 与其他扩展名后小写化，覆盖多种命名组合
@@ -858,13 +856,10 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/externalValidationUtils.test.ts
 
 **对应源文件**：`src/renderer/src/lib/externalValidationUtils.ts`
-**测试数量**：28 个
-
 覆盖外部验证的模型-数据集兼容性校验逻辑：
 
 - `isSurvivalTask()` / `isSegmentationTask()` — 任务类型判断，含边界值（undefined、空串）
-- `EXTRACTOR_EMBED_DIM` — 常量完整性（已知提取器维度、未知返回 undefined）
-- `getDatasetCompatibilityError()` — 核心兼容性逻辑，覆盖：data_type 不匹配、task_type 不匹配、分类标签集不等、提取器 embed dim 不匹配、WSI 数据泄漏检测、survival 免标签检查、分割任务特有规则（文件级数据集、架构 / backbone 元数据校验、source/target 数据集不能相同）
+- `getDatasetCompatibilityError()` — 核心兼容性逻辑，覆盖：data_type 不匹配、task_type 不匹配、分类标签集不等、WSI 数据泄漏检测、survival 免标签检查、分割任务特有规则（文件级数据集、架构 / backbone 元数据校验、source/target 数据集不能相同）；WSI 特征缺失由 external validation 运行时按模型提取器自动生成，不再用缓存提取器维度做兼容性拦截
 - `filterCompatibleDatasets()` / `isDatasetCompatible()` — 基于 `getDatasetCompatibilityError` 的过滤包装
 
 ---
@@ -872,8 +867,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/useAsyncAction.test.tsx
 
 **对应源文件**：`src/renderer/src/lib/useAsyncAction.ts`
-**测试数量**：6 个
-
 覆盖 `useAsyncAction` Hook 的核心语义：
 
 - 初始状态 `isPending = false`
@@ -892,8 +885,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/trainingSubmissionTracker.test.ts
 
 **对应源文件**：`src/renderer/src/lib/trainingSubmissionTracker.ts`
-**测试数量**：23 个
-
 覆盖基于 localStorage 的训练提交状态机：
 
 - **状态转换**：`markTrainingSubmissionPending()` → `Created` → `Failed` → `Cancelled`，验证各转换保留 `createdAt`、携带可选 `taskName` / `error`
@@ -902,6 +893,23 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 - **超时检测**：`isTrainingSubmissionPendingTimedOut()` 基于默认（30 分钟）与自定义超时阈值
 - **清除**：`clearTrainingSubmissionRecord()` 只删除指定 task，不影响其他记录；对不存在的 task 不抛错
 - 所有测试使用 `vi.useFakeTimers()` 精确控制时间推进
+
+---
+
+---
+
+## unit/lib/listPageFileView.test.ts
+
+**对应源文件**：`src/renderer/src/lib/utils/listPageFileView.ts`
+
+覆盖 WSI 列表页文件视图区域的显示状态计算逻辑：
+
+- `getListPageFileViewState()`：
+  - 初始文件加载中：只展示加载态，不显示搜索操作栏与空态提示
+  - 无文件且无搜索词：显示数据集空态
+  - 搜索词有效但无匹配：显示"无匹配文件"提示
+  - 有文件且无活跃搜索：正常显示文件表格
+  - 有活跃搜索词（无论是否有结果）：显示搜索操作栏
 
 ---
 

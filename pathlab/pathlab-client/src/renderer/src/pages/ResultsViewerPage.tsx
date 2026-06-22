@@ -1,20 +1,23 @@
 import { useState, useEffect, useRef } from 'react'
+import { useDebounce } from '../lib/useDebounce'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
-import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
+import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check, Activity } from 'lucide-react'
 import { Tooltip } from '../components/ui/tooltip'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { EmptyStatePanel, SegmentedControl } from '../components/ui/workspace-primitives'
 import { API_BASE } from '../config'
 
 import { getTrainedModels, TrainedModel, buildAuthRequestInit, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { AnalysisDetails, type AnalysisSummary, type BootstrapCI, type ChartData } from '../components/results/AnalysisDetails'
+import { IndependentInferencePanel } from '../components/results/IndependentInferencePanel'
 import {
   CLASSIFICATION_METRICS,
   CLASSIFICATION_CHARTS,
@@ -37,7 +40,7 @@ import {
 import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
 import { formatDateTime } from '../lib/utils'
 
-type PageMode = 'internal-analysis' | 'external-validation'
+type PageMode = 'internal-analysis' | 'external-validation' | 'batch-inference'
 
 const getSegmentationClassCount = (task?: Pick<TrainingTask, 'classes'> | null): number => {
   const classCount = task?.classes?.filter(Boolean).length ?? 0
@@ -81,6 +84,12 @@ interface TrainingTask {
   classes?: string[] | null
   source_dataset_id?: string | null
   model_config?: Record<string, unknown> | null
+  split_config?: {
+    strategy?: 'random' | 'k_fold' | 'manual'
+    n_splits?: number
+    ratios?: { train: number; val: number; test: number }
+    stratified?: boolean
+  } | null
   model_id: string | null
   is_kfold: boolean  // Whether this task was trained with K-Fold cross-validation
 }
@@ -115,11 +124,56 @@ const getTaskResultsDisplayCount = (task?: TrainingTask | null): number => {
   return testCount > 0 ? testCount : task.ai_results_count
 }
 
+const isTaskKFold = (task?: TrainingTask | null): boolean => {
+  if (!task) return false
+  return task.is_kfold || task.split_config?.strategy === 'k_fold'
+}
+
+const getTaskSplitLabel = (
+  task: TrainingTask | null | undefined,
+  t: ReturnType<typeof useTranslation>['t']
+): string | null => {
+  const strategy = task?.split_config?.strategy
+  if (!strategy) return null
+  if (strategy === 'random') return t('taskDetail.configuration.splitRandom')
+  if (strategy === 'k_fold') return `${task?.split_config?.n_splits ?? 'K'}${t('taskDetail.configuration.splitKFold')}`
+  return t('taskDetail.configuration.splitManual')
+}
+
+export function filterTasksByQuery(
+  tasks: TrainingTask[],
+  query: string
+): TrainingTask[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return tasks
+  return tasks.filter(task => {
+    if (task.name.toLowerCase().includes(q)) return true
+    if (task.task_type.toLowerCase().includes(q)) return true
+    if (task.task_id.toLowerCase().includes(q)) return true
+    const modelLabel = getTaskModelDisplayLabel(task)
+    if (modelLabel?.toLowerCase().includes(q)) return true
+    const backbone = typeof task.model_config?.backbone === 'string' ? task.model_config.backbone : null
+    if (backbone?.toLowerCase().includes(q)) return true
+    const splitStrategy = task.split_config?.strategy
+    if (splitStrategy) {
+      if (splitStrategy === 'random' && 'random'.includes(q)) return true
+      if (splitStrategy === 'manual' && 'manual'.includes(q)) return true
+      if (splitStrategy === 'k_fold') {
+        const nSplits = task.split_config?.n_splits ?? 'K'
+        const foldLabel = `${nSplits}-fold`
+        if (foldLabel.toLowerCase().includes(q)) return true
+        if ('k-fold'.includes(q)) return true
+      }
+    }
+    return false
+  })
+}
+
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
-  const { analysisTasks, subscribeAnalysisSSE } = useBackgroundTask()
+  const { analysisTasks, subscribeAnalysisSSE, rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
   const { isAdmin } = useAuth()
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -129,6 +183,16 @@ export default function ResultsViewerPage() {
     const unsubscribe = subscribeAnalysisSSE()
     return () => unsubscribe()
   }, [subscribeAnalysisSSE])
+
+  useEffect(() => {
+    const unsubscribe = subscribeTrainingSSE()
+    return () => unsubscribe()
+  }, [subscribeTrainingSSE])
+
+  useEffect(() => {
+    if (rawTrainingTasks === null) return
+    void qc.invalidateQueries({ queryKey: ['results-tasks'] })
+  }, [rawTrainingTasks, qc])
 
   // Check for task_id in URL params first, then fall back to navigation state
   const taskIdFromUrl = searchParams.get('task_id') || searchParams.get('task')
@@ -147,10 +211,16 @@ export default function ResultsViewerPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleting, runDeleting] = useAsyncAction<void>({ onError: (err) => setAnalysisError(err instanceof Error ? err.message : t('resultsPage.failedToDeleteRetry')) })
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
+  const [taskSearchQuery, setTaskSearchQuery] = useState('')
+  const debouncedTaskSearchQuery = useDebounce(taskSearchQuery, 300)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])
 
-  const [pageMode, setPageMode] = useState<PageMode>('internal-analysis')
+  const [pageMode, setPageMode] = useState<PageMode>(() => {
+    const stored = localStorage.getItem('results-page-mode') as PageMode | null
+    const valid: PageMode[] = ['internal-analysis', 'external-validation', 'batch-inference']
+    return stored && valid.includes(stored) ? stored : 'internal-analysis'
+  })
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [datasetId, setDatasetId] = useState<string | null>(null)
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
@@ -197,7 +267,7 @@ export default function ResultsViewerPage() {
       return data.items.filter(m => m.is_active) as TrainedModel[]
     },
     staleTime: 2 * 60 * 1000,
-    enabled: pageMode === 'external-validation',
+    enabled: pageMode === 'external-validation' || pageMode === 'batch-inference',
   })
 
   const { data: validationDatasets = [] as ValidationDataset[] } = useQuery({
@@ -245,6 +315,10 @@ export default function ResultsViewerPage() {
     enabled: !!extValQueryTaskId,
     staleTime: 30 * 1000,
   })
+
+  useEffect(() => {
+    localStorage.setItem('results-page-mode', pageMode)
+  }, [pageMode])
 
   useEffect(() => {
     // Check for task_id in URL params first
@@ -748,37 +822,26 @@ export default function ResultsViewerPage() {
       </PageHeader>
 
       {/* Mode Tabs */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        <button
-          onClick={() => setPageMode('internal-analysis')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-            pageMode === 'internal-analysis'
-              ? 'bg-indigo-600 text-white shadow-md'
-              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          {t('resultsPage.internalAnalysis')}
-        </button>
-        <button
-          onClick={() => setPageMode('external-validation')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-            pageMode === 'external-validation'
-              ? 'bg-orange-600 text-white shadow-md'
-              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-          }`}
-        >
-          <FlaskConical className="w-4 h-4" />
-          {t('resultsPage.externalValidation')}
-        </button>
+      <div className="mb-6 overflow-x-auto no-scrollbar">
+        <SegmentedControl
+          value={pageMode}
+          onChange={(value) => setPageMode(value as PageMode)}
+          options={[
+            { value: 'internal-analysis', label: t('resultsPage.internalAnalysis') },
+            { value: 'external-validation', label: t('resultsPage.externalValidation') },
+            { value: 'batch-inference', label: t('resultsPage.batchInference.tabTitle') },
+          ]}
+          className="w-max min-w-full sm:min-w-0"
+        />
       </div>
 
       {tasks.length === 0 ? (
-        <Card className="p-12 text-center">
-          <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.noCompletedTasks')}</h3>
-          <p className="text-gray-500">{t('resultsPage.completeTaskHint')}</p>
-        </Card>
+        <EmptyStatePanel
+          title={t('resultsPage.noCompletedTasks')}
+          description={t('resultsPage.completeTaskHint')}
+          tone="neutral"
+          icon={<BarChart3 className="h-8 w-8" />}
+        />
       ) : pageMode === 'external-validation' ? (
         /* External Validation Mode — 4-col layout matching Internal Analysis */
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">
@@ -817,7 +880,7 @@ export default function ResultsViewerPage() {
                           type="text"
                           value={modelSearchQuery}
                           onChange={e => setModelSearchQuery(e.target.value)}
-                          placeholder={t('resultsPage.searchModels', { defaultValue: 'Search models...' })}
+                          placeholder={t('resultsPage.searchModels')}
                           className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400"
                           onClick={e => e.stopPropagation()}
                         />
@@ -831,7 +894,7 @@ export default function ResultsViewerPage() {
                           if (filtered.length === 0) {
                             return (
                               <div className="px-4 py-8 text-center text-gray-500">
-                                {trainedModels.length === 0 ? t('resultsPage.noActiveModels') : t('resultsPage.noMatchingModels', { defaultValue: 'No models match your search' })}
+                                {trainedModels.length === 0 ? t('resultsPage.noActiveModels') : t('resultsPage.noMatchingModels')}
                               </div>
                             )
                           }
@@ -1228,7 +1291,7 @@ export default function ResultsViewerPage() {
 
                         {expandedExtAnalysis === analysis.analysis_id && (
                           <div className="border-t border-gray-100 p-4 bg-gray-50">
-                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                            <AnalysisDetails analysis={analysis} taskId={validationProgress?.validation_id} taskName={selectedModelId ?? validationProgress?.model_id ?? validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                           </div>
                         )}
                       </Card>
@@ -1249,7 +1312,7 @@ export default function ResultsViewerPage() {
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                      <AnalysisDetails analysis={currentResult.summary} taskId={validationProgress?.validation_id} taskName={selectedModelId ?? validationProgress?.model_id ?? validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                     </div>
                   </Card>
                 ) : extAnalyses.length > 0 ? (
@@ -1263,7 +1326,7 @@ export default function ResultsViewerPage() {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
+                      <AnalysisDetails analysis={extAnalyses[0]} taskId={validationProgress?.validation_id} taskName={selectedModelId ?? validationProgress?.model_id ?? validationProgress?.validation_id} modelId={selectedModelId ?? validationProgress?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} isExternal />
                     </div>
                   </Card>
                 ) : (
@@ -1277,6 +1340,9 @@ export default function ResultsViewerPage() {
             </div>
           </div>
         </div>
+      ) : pageMode === 'batch-inference' ? (
+        /* Batch Inference Mode */
+        <IndependentInferencePanel trainedModels={trainedModels} />
       ) : (
         /* Internal Analysis Mode */
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">
@@ -1315,6 +1381,11 @@ export default function ResultsViewerPage() {
                             {getTaskModelDisplayLabel(selectedTask)}
                           </Badge>
                         )}
+                        {getTaskSplitLabel(selectedTask, t) && (
+                          <Badge variant="secondary" className="bg-sky-50 text-sky-700 hover:bg-sky-100 text-[10px] tracking-wider font-bold px-2">
+                            {getTaskSplitLabel(selectedTask, t)}
+                          </Badge>
+                        )}
                         <span className="text-xs text-gray-400 font-medium">
                           {formatDateTime(selectedTask.created_at || '', '')}
                         </span>
@@ -1332,16 +1403,39 @@ export default function ResultsViewerPage() {
                   <>
                     <div
                       className="fixed inset-0 z-10"
-                      onClick={() => setIsTaskDropdownOpen(false)}
+                      onClick={() => { setIsTaskDropdownOpen(false); setTaskSearchQuery('') }}
                     />
                     <div className="absolute z-20 w-full mt-2 bg-white/80 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl shadow-indigo-500/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top ring-1 ring-black/5">
+                      <div className="px-3 py-2 border-b border-gray-100">
+                        <input
+                          type="text"
+                          value={taskSearchQuery}
+                          onChange={e => setTaskSearchQuery(e.target.value)}
+                          placeholder={t('resultsPage.searchTasks')}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
                       <div className="max-h-[320px] overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-gray-200">
-                        {tasks.map(task => (
+                        {(() => {
+                          const filteredTasks = filterTasksByQuery(tasks, debouncedTaskSearchQuery)
+                          if (filteredTasks.length === 0) {
+                            return (
+                              <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
+                                <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
+                                  <History className="w-5 h-5 text-gray-400" />
+                                </div>
+                                <p>{tasks.length === 0 ? t('resultsPage.noTasksAvailable') : t('resultsPage.noMatchingTasks')}</p>
+                              </div>
+                            )
+                          }
+                          return filteredTasks.map(task => (
                           <button
                             key={task.task_id}
                             onClick={() => {
                               setSelectedTaskId(task.task_id)
                               setIsTaskDropdownOpen(false)
+                              setTaskSearchQuery('')
                             }}
                             onMouseEnter={() => {
                               if (task.task_id !== selectedTaskId) {
@@ -1389,6 +1483,15 @@ export default function ResultsViewerPage() {
                                       {getTaskModelDisplayLabel(task)}
                                     </span>
                                   )}
+                                  {getTaskSplitLabel(task, t) && (
+                                    <span className={`text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                      selectedTaskId === task.task_id
+                                        ? 'bg-white/20 text-white'
+                                        : 'bg-sky-50 text-sky-700'
+                                    }`}>
+                                      {getTaskSplitLabel(task, t)}
+                                    </span>
+                                  )}
                                   {task.created_at && (
                                     <span className={`text-xs transition-colors duration-200 ${
                                       selectedTaskId === task.task_id ? 'text-indigo-100' : 'text-gray-400'
@@ -1422,15 +1525,8 @@ export default function ResultsViewerPage() {
                               )}
                             </div>
                           </button>
-                        ))}
-                        {tasks.length === 0 && (
-                          <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
-                             <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
-                               <History className="w-5 h-5 text-gray-400" />
-                             </div>
-                             <p>{t('resultsPage.noTasksAvailable')}</p>
-                          </div>
-                        )}
+                        ))
+                        })()}
                       </div>
                     </div>
                   </>
@@ -1464,7 +1560,7 @@ export default function ResultsViewerPage() {
                           {t(metric.labelKey, { defaultValue: metric.label })}
                         </span>
                         {/* 95% CI button only for non-K-Fold tasks (K-Fold uses mean ± std) */}
-                        {selectedMetrics.includes(metric.id) && !selectedTask?.is_kfold && (
+                        {selectedMetrics.includes(metric.id) && !isTaskKFold(selectedTask) && (
                           <button
                             type="button"
                             onClick={() => toggleBootstrapCI(metric.id)}
@@ -1669,7 +1765,7 @@ export default function ResultsViewerPage() {
 
                         {expandedAnalysis === analysis.analysis_id && (
                           <div className="border-t border-gray-100 p-4 bg-gray-50">
-                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                            <AnalysisDetails analysis={analysis} taskId={selectedTaskId!} taskName={selectedTask?.name ?? selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                           </div>
                         )}
                       </Card>
@@ -1690,7 +1786,7 @@ export default function ResultsViewerPage() {
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                      <AnalysisDetails analysis={currentResult.summary} taskId={selectedTaskId!} taskName={selectedTask?.name ?? selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : analyses.length > 0 ? (
@@ -1704,7 +1800,7 @@ export default function ResultsViewerPage() {
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto pr-2 custom-scrollbar">
-                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
+                      <AnalysisDetails analysis={analyses[0]} taskId={selectedTaskId!} taskName={selectedTask?.name ?? selectedTaskId!} modelId={selectedTask?.model_id ?? undefined} selectedMetrics={selectedMetrics} selectedCharts={selectedCharts} />
                     </div>
                   </Card>
                 ) : (

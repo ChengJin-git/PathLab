@@ -15,6 +15,7 @@ interface AnnotationOverlayProps {
   onRegionCreated: (region: Omit<AnnotationRegion, 'id'>) => void
   onRegionTooLarge?: () => void  // called when drawn region exceeds MAX_ROI_SIZE
   isLabelDropdownOpen?: boolean  // when true, disable canvas pointer-events so dropdown is interactive
+  cancelToken?: number
 }
 
 /** Max ROI dimension in level-0 pixels */
@@ -48,10 +49,11 @@ export function AnnotationOverlay({
   regions,
   labelColors,
   slideWidth,
-  slideHeight,
+  slideHeight: _slideHeight,
   onRegionCreated,
   onRegionTooLarge,
   isLabelDropdownOpen = false,
+  cancelToken,
 }: AnnotationOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -61,6 +63,12 @@ export function AnnotationOverlay({
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [viewerReady, setViewerReady] = useState(false)
+  const prevCancelTokenRef = useRef<number | undefined>(cancelToken)
+  const cancelRectDrawing = useCallback(() => {
+    setIsDrawing(false)
+    setRectStart(null)
+    setRectEnd(null)
+  }, [])
 
   // Resize canvas to match container
   const resizeCanvas = useCallback(() => {
@@ -409,6 +417,51 @@ export function AnnotationOverlay({
     }
   }, [annotationMode])
 
+  // Drawing keyboard controls (cancel / polygon undo)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
+      if (!annotationMode) return
+
+      if (e.key === 'Escape') {
+        if (drawingTool === 'polygon' && polygonPoints.length > 0) {
+          e.preventDefault()
+          setPolygonPoints([])
+          setMousePos(null)
+        }
+        if (drawingTool === 'rect' && isDrawing) {
+          e.preventDefault()
+          cancelRectDrawing()
+        }
+        return
+      }
+
+      if ((e.key === 'Backspace' || e.key === 'Delete') && drawingTool === 'polygon' && polygonPoints.length > 0) {
+        e.preventDefault()
+        setPolygonPoints(prev => prev.slice(0, -1))
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [annotationMode, drawingTool, polygonPoints.length, isDrawing, cancelRectDrawing])
+
+  // External drawing cancel signal
+  useEffect(() => {
+    const previous = prevCancelTokenRef.current
+    prevCancelTokenRef.current = cancelToken
+    if (cancelToken === undefined || previous === cancelToken) return
+    if (drawingTool === 'polygon' && polygonPoints.length > 0) {
+      setPolygonPoints([])
+      setMousePos(null)
+    }
+    if (drawingTool === 'rect' && isDrawing) {
+      cancelRectDrawing()
+    }
+  }, [cancelToken, drawingTool, polygonPoints.length, isDrawing, cancelRectDrawing])
+
   // ─── Mouse event handlers ───────────────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (!annotationMode || spaceHeld) return
@@ -520,4 +573,3 @@ export function AnnotationOverlay({
     />
   )
 }
-

@@ -16,6 +16,7 @@ export interface TasksTabProps {
 export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProps) {
   const { t } = useTranslation()
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null)
+  const [maxConcurrent, setMaxConcurrent] = useState<number | null>(null)
   const [loadingQueue, setLoadingQueue] = useState(false)
   const [queueError, setQueueError] = useState<string | null>(null)
   const [taskTimeout, setTaskTimeout] = useState('259200')
@@ -30,7 +31,11 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
   }, [t])
 
   const loadTaskConfig = useCallback(async () => {
-    try { const config = await getQueueConfig(); setTaskTimeout(String(config.task_timeout)) }
+    try {
+      const config = await getQueueConfig()
+      setTaskTimeout(String(config.task_timeout))
+      setMaxConcurrent((current) => current ?? config.max_concurrent)
+    }
     catch (err) { console.error('Failed to load task config:', err) }
   }, [])
 
@@ -42,7 +47,15 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
   }, [loadQueueStatus])
 
   const handleUpdateMaxConcurrent = useCallback(async (newValue: number) => {
-    try { await updateQueueConfig({ max_concurrent: newValue }); const status = await getQueueStatus(); setQueueStatus(status) }
+    try {
+      const result = await updateQueueConfig({ max_concurrent: newValue })
+      setMaxConcurrent(result.config.max_concurrent)
+      const status = await getQueueStatus()
+      setQueueStatus({
+        ...status,
+        max_concurrent: result.config.max_concurrent
+      })
+    }
     catch (err) { console.error('Failed to update queue config:', err); setQueueError(err instanceof Error ? err.message : t('settings.tasksTab.failedToUpdateQueueConfig')) }
   }, [t])
 
@@ -59,6 +72,7 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
     })
   }
   const isSingleGPU = queueStatus?.gpu_count === 1
+  const displayedMaxConcurrent = maxConcurrent ?? queueStatus?.max_concurrent ?? 1
   const queueDiagnosis = queueStatus
     ? (() => {
         if (!queueStatus.is_running) {
@@ -196,7 +210,7 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                       <Tooltip content={isSingleGPU ? t('settings.tasksTab.disabledSingleGPU') : t('settings.tasksTab.decrease')}>
                         <button
                           type="button"
-                          onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
+                          onClick={() => handleUpdateMaxConcurrent(Math.max(1, displayedMaxConcurrent - 1))}
                           disabled={isSingleGPU}
                           className={`p-2.5 text-gray-600 transition-colors border-r border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
                         >
@@ -207,7 +221,7 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                         type="number"
                         min="1"
                         max="10"
-                        value={queueStatus.max_concurrent}
+                        value={displayedMaxConcurrent}
                         disabled={isSingleGPU}
                         onChange={(e) => {
                           const val = parseInt(e.target.value);
@@ -220,7 +234,7 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                       <Tooltip content={isSingleGPU ? t('settings.tasksTab.disabledSingleGPU') : t('settings.tasksTab.increase')}>
                         <button
                           type="button"
-                          onClick={() => handleUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
+                          onClick={() => handleUpdateMaxConcurrent(Math.min(10, displayedMaxConcurrent + 1))}
                           disabled={isSingleGPU}
                           className={`p-2.5 text-gray-600 transition-colors border-l border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
                         >

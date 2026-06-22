@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 from .users import current_active_user, JWT_SECRET
 from .models import User
 from backend.database.database import get_db
+from backend.database.database import safe_session
 
 
 PATHSCIENTIST_ACCESS_TOKEN_AUDIENCE = "pathscientist:access"
@@ -376,17 +377,26 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive"
             )
 
-        # Single-device login enforcement: check session_nonce
+        # Multi-session enforcement: nonce must be present and in the active nonces list
         jwt_nonce = payload.get("sn")
         if not jwt_nonce:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Session expired. Please login again.",
             )
-        db_nonce = getattr(user, "session_nonce", None)
-        if jwt_nonce != db_nonce:
+        import json as _json
+
+        try:
+            db_nonces: list[str] = _json.loads(
+                getattr(user, "session_nonces", None) or "[]"
+            )
+            if not isinstance(db_nonces, list):
+                db_nonces = []
+        except (ValueError, TypeError):
+            db_nonces = []
+        if jwt_nonce not in db_nonces:
             logger.info(
-                f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch"
+                f"[Auth] Rejected stale token for user {user.id}: nonce not in active sessions"
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -408,13 +418,13 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
 
 async def get_user_from_token_param(
     token: Optional[str] = Query(None, description="JWT token for SSE authentication"),
-    db: AsyncSession = Depends(get_db),
 ) -> User:
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
-    return await _get_user_from_jwt(token, db)
+    async with safe_session() as db:
+        return await _get_user_from_jwt(token, db)
 
 
 def create_pathscientist_access_token(
@@ -530,7 +540,6 @@ async def get_user_from_header_or_param(
         None, alias="token", description="JWT token for image authentication"
     ),
     authorization: Optional[str] = Header(None, alias="Authorization"),
-    db: AsyncSession = Depends(get_db),
 ) -> User:
     jwt_token = None
     if authorization and authorization.startswith("Bearer "):
@@ -543,4 +552,5 @@ async def get_user_from_header_or_param(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
 
-    return await _get_user_from_jwt(jwt_token, db)
+    async with safe_session() as db:
+        return await _get_user_from_jwt(jwt_token, db)

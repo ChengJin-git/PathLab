@@ -109,6 +109,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     }
   }, [])
 
+  const openPanel = useCallback(() => {
+    setIsPanelExpanded(true)
+  }, [])
+
   // SSE hooks — each owns its own state
   const { trainingTasks, rawTrainingTasks } = useTrainingSSE(isLoggedIn, trainingSSEEnabled)
   const { analysisTasks } = useAnalysisSSE(isLoggedIn, analysisSSEEnabled)
@@ -138,7 +142,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const tasks = useMemo(() => {
     const filteredTrainingTasks = trainingTasks.filter(t => !dismissedServerTasks.has(t.id))
     const filteredAnalysisTasks = analysisTasks.filter(t => !dismissedServerTasks.has(t.id))
-    const filteredStorageTasks = storageTasks.filter(t => !dismissedServerTasks.has(t.id))
+    const filteredStorageTasks = storageTasks.filter(t => !dismissedServerTasks.has(t.id) && t.type !== 'scan_directory')
 
     // Find external analysis tasks and their corresponding external validation tasks
     const externalAnalysisByTaskId = new Map<string, BackgroundTask>()
@@ -179,7 +183,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       return task
     })
 
-    const serverTaskIdSet = new Set(filteredTrainingTasks.map(t => t.id.replace(/^training_/, '').replace(/^extval_/, '')))
+    const serverTaskIdSet = new Set(filteredTrainingTasks.map(t => t.id
+      .replace(/^training_/, '')
+      .replace(/^extval_/, '')
+      .replace(/^batchinf_/, '')))
     const syntheticSubmissionTasks: BackgroundTask[] = listTrainingSubmissionRecords(['pending'])
       .filter(record => {
         if (isTrainingSubmissionPendingTimedOut(record)) {
@@ -188,25 +195,32 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         }
         return !serverTaskIdSet.has(record.taskId)
       })
-      .map(record => ({
-        id: `training_${record.taskId}`,
-        type: 'training',
-        title: record.taskName || record.taskId,
-        items: [{
-          id: record.taskId,
-          name: t('backgroundTask.taskTitles.training', { name: record.taskName || record.taskId }),
+      .map(record => {
+        const isBatchInference = record.taskId.startsWith('binfer_')
+        const title = record.taskName || record.taskId
+
+        return {
+          id: `${isBatchInference ? 'batchinf_' : 'training_'}${record.taskId}`,
+          type: isBatchInference ? 'batch_inference' : 'training',
+          title,
+          items: [{
+            id: record.taskId,
+            name: isBatchInference
+              ? t('backgroundTask.taskTitles.batchInference', { name: title })
+              : t('backgroundTask.taskTitles.training', { name: title }),
+            status: 'pending',
+            progress: 0,
+          }],
           status: 'pending',
-          progress: 0,
-        }],
-        status: 'pending',
-        createdAt: new Date(record.createdAt),
-        totalProgress: 0,
-        successCount: 0,
-        failedCount: 0,
-        isServerTask: true,
-        serverTaskStatus: 'creating',
-        taskName: record.taskName,
-      }))
+          createdAt: new Date(record.createdAt),
+          totalProgress: 0,
+          successCount: 0,
+          failedCount: 0,
+          isServerTask: true,
+          serverTaskStatus: 'creating',
+          taskName: record.taskName,
+        }
+      })
 
     return [
       ...localTasks,
@@ -343,7 +357,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Task action callbacks
   const {
     addUploadTask, addDeleteWSITask, addMigrationTask, addDeleteTrainingTask,
-    addExtractionTask,
+    addExtractionTask, addAnalysisExportTask,
     cancelTask, clearCompletedTasks, removeTask, togglePanel,
     cancelServerTask, hasUploadingTasks, addMetadataUploadTask, getMetadataUploadResult
   } = useTaskActions({
@@ -368,11 +382,13 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     addExtractionTask,
     addMigrationTask,
     addMetadataUploadTask,
+    addAnalysisExportTask,
     cancelTask,
     cancelServerTask,
     clearCompletedTasks,
     removeTask,
     togglePanel,
+    openPanel,
     refreshDiskSpace,
     getMetadataUploadResult,
     subscribeTrainingSSE,

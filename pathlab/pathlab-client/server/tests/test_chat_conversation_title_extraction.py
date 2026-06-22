@@ -1,13 +1,33 @@
 from types import SimpleNamespace
+from typing import Any, Callable, cast
+from importlib import import_module
 
-from gateway.routes.chat_conversation import (
-    _build_title_generation_payload,
-    _build_title_prompt,
-    _clean_message_for_title,
-    _extract_title_response_text,
-    _get_title_source_message,
-    _normalize_title_language,
-    _resolve_title_language,
+chat_conversation = import_module("gateway.routes.chat_conversation")
+
+_build_title_generation_payload = cast(
+    Callable[..., dict[str, object]],
+    chat_conversation._build_title_generation_payload,
+)
+_build_title_prompt = cast(
+    Callable[[str, str], str], chat_conversation._build_title_prompt
+)
+_clean_message_for_title = cast(Callable[[str], str], chat_conversation._clean_message_for_title)
+_extract_title_response_text = cast(
+    Callable[[dict[str, object]], str],
+    chat_conversation._extract_title_response_text,
+)
+_extract_title_stream_response_text = cast(
+    Callable[[str], str],
+    chat_conversation._extract_title_stream_response_text,
+)
+_get_title_source_message = cast(
+    Callable[[Any], str | None], chat_conversation._get_title_source_message
+)
+_normalize_title_language = cast(
+    Callable[[str | None], str | None], chat_conversation._normalize_title_language
+)
+_resolve_title_language = cast(
+    Callable[[str | None, str], str], chat_conversation._resolve_title_language
 )
 
 
@@ -51,12 +71,15 @@ def test_extract_title_response_text_supports_string_content():
 
 
 def test_extract_title_response_text_supports_content_parts():
-    message = {
+    message = cast(
+        dict[str, object],
+        {
         "content": [
             {"type": "text", "text": "AI 病理学研究方向"},
             {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
         ]
-    }
+        },
+    )
 
     assert _extract_title_response_text(message) == "AI 病理学研究方向"
 
@@ -100,3 +123,27 @@ def test_build_title_generation_payload_keeps_openrouter_payload_clean():
     )
 
     assert "chat_template_kwargs" not in payload
+
+
+def test_build_title_generation_payload_uses_streaming_like_chat_path():
+    payload = _build_title_generation_payload(
+        model="google/gemini-2.0-flash-001",
+        title_prompt="Summarize this message",
+        use_local_vllm=False,
+    )
+
+    assert payload["stream"] is True
+
+
+def test_extract_title_stream_response_text_concatenates_sse_deltas():
+    response_text = "".join(
+        [
+            'data: {"choices":[{"delta":{"content":"Seg"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"PC 数据集"}}]}\n\n',
+            "data: [DONE]\n\n",
+        ]
+    )
+
+    result = _extract_title_stream_response_text(response_text)
+
+    assert result == "SegPC 数据集"

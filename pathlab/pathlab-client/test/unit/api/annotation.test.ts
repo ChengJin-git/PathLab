@@ -218,7 +218,7 @@ describe('extractRegions', () => {
     mockFetch.mockResolvedValueOnce(ok({ task_id: 'extract_001', status: 'queued' }))
     const result = await extractRegions({
       dataset_name: 'Extracted Tumor ROIs',
-      task_type: 'segmentation',
+      task_type: 'patch_segmentation',
       annotations: MOCK_ANNOTATIONS_MAP,
     })
     const [url, opts] = mockFetch.mock.calls[0]

@@ -9,12 +9,15 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, children, className }: PageHeaderProps) {
   return (
-    <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 ${className || 'mb-8'}`}>
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 tracking-tight">{title}</h1>
-        {description && <p className="text-sm sm:text-lg text-gray-500 mt-1 sm:mt-2 leading-relaxed">{description}</p>}
+    <div
+      data-page-header="true"
+      className={`flex flex-col gap-4 border-b border-[color:var(--surface-border)] pt-2 pb-4 md:flex-row md:items-start md:justify-between ${className || 'mb-4'}`}
+    >
+      <div className="min-w-0 space-y-2">
+        <h1 className="text-[1.85rem] font-semibold leading-tight tracking-[-0.035em] text-slate-950 sm:text-[2.35rem]">{title}</h1>
+        {description && <p className="max-w-3xl text-sm leading-7 text-slate-500 sm:text-base">{description}</p>}
       </div>
-      {children && <div className="flex items-center gap-3">{children}</div>}
+      {children && <div data-page-header-actions="true" className="flex flex-wrap items-center gap-3">{children}</div>}
     </div>
   )
 }

@@ -1,12 +1,18 @@
 import json
+from importlib import import_module
+from typing import Any
+
 import redis.asyncio as aioredis
 
-from backend.common.redis_client import get_redis, make_key, REDIS_URL
+_redis_client = import_module("backend.common.redis_client")
+get_redis = _redis_client.get_redis
+make_key = _redis_client.make_key
+REDIS_URL = _redis_client.REDIS_URL
 
 CHANNEL_PREFIX = "annot_ch"
 
 
-async def publish(dataset_id: str, payload: dict) -> None:
+async def publish(dataset_id: str, payload: dict[str, Any]) -> None:
     await get_redis().publish(make_key(CHANNEL_PREFIX, dataset_id), json.dumps(payload))
 
 

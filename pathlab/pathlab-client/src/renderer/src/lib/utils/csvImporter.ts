@@ -1,6 +1,24 @@
 import ExcelJS from 'exceljs'
 import Papa from 'papaparse'
 
+export async function readFileText(file: File): Promise<string> {
+  if (typeof file.text === 'function') {
+    return file.text()
+  }
+
+  if (typeof file.arrayBuffer === 'function') {
+    const buffer = await file.arrayBuffer()
+    return new TextDecoder().decode(buffer)
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    reader.readAsText(file)
+  })
+}
+
 export async function xlsxToCSV(arrayBuffer: ArrayBuffer): Promise<{ sheetNames: string[]; csv: string }> {
   const workbook = new ExcelJS.Workbook()
   await workbook.xlsx.load(arrayBuffer)
@@ -29,7 +47,7 @@ export async function parseCsvMetadata(file: File): Promise<Map<string, any>> {
 
   if (file.name.toLowerCase().endsWith('.csv')) {
     // PapaParse: actively maintained, no known vulnerabilities, zero dependencies
-    const text = await file.text()
+    const text = await readFileText(file)
     const result = Papa.parse<any>(text, { header: true, skipEmptyLines: true })
     jsonData = result.data
   } else {

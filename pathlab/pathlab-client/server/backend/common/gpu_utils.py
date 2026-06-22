@@ -12,9 +12,10 @@ Usage:
 """
 
 import logging
+import os
 import threading
 import time
-from typing import Tuple, Any
+from typing import Tuple, Any, cast
 
 import torch
 
@@ -42,6 +43,10 @@ _vram_reservation_lock = threading.Lock()
 _vram_reservations: list[tuple[float, int, float]] = []  # (expiry, cuda_idx, mb)
 
 
+def _get_pynvml() -> Any:
+    return cast(Any, globals().get("pynvml"))
+
+
 def _normalize_uuid(uuid_str: str) -> str:
     """Strip GPU-/MIG- prefixes so torch and pynvml UUIDs can be compared.
 
@@ -53,6 +58,34 @@ def _normalize_uuid(uuid_str: str) -> str:
         if s.startswith(prefix):
             return s[len(prefix) :]
     return s
+
+
+def _get_visible_physical_gpu_indices(nvml_count: int) -> list[int]:
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not visible_devices:
+        return list(range(nvml_count))
+
+    indices: list[int] = []
+    for token in visible_devices.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            physical_idx = int(token)
+        except ValueError:
+            return list(range(nvml_count))
+        if 0 <= physical_idx < nvml_count:
+            indices.append(physical_idx)
+    return indices
+
+
+def _get_physical_gpu_index_for_logical_index(
+    logical_index: int, nvml_count: int
+) -> int | None:
+    visible_indices = _get_visible_physical_gpu_indices(nvml_count)
+    if logical_index < 0 or logical_index >= len(visible_indices):
+        return None
+    return visible_indices[logical_index]
 
 
 def _add_vram_reservation(cuda_idx: int, mb: float) -> None:
@@ -82,12 +115,19 @@ def _get_nvml_handle_for_cuda_device(cuda_index: int) -> Any:
     if cuda_index in _cuda_to_nvml_handle:
         return _cuda_to_nvml_handle[cuda_index]
 
+    pynvml_mod = _get_pynvml()
+    if pynvml_mod is None:
+        raise RuntimeError("pynvml is not available")
+
     cuda_uuid = torch.cuda.get_device_properties(cuda_index).uuid
     cuda_uuid_normalized = _normalize_uuid(str(cuda_uuid))
-    num_nvml = pynvml.nvmlDeviceGetCount()
+    num_nvml = pynvml_mod.nvmlDeviceGetCount()
     for i in range(num_nvml):
-        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-        if _normalize_uuid(pynvml.nvmlDeviceGetUUID(handle)) == cuda_uuid_normalized:
+        handle = pynvml_mod.nvmlDeviceGetHandleByIndex(i)
+        if (
+            _normalize_uuid(pynvml_mod.nvmlDeviceGetUUID(handle))
+            == cuda_uuid_normalized
+        ):
             _cuda_to_nvml_handle[cuda_index] = handle
             logger.debug(
                 f"CUDA:{cuda_index} → physical GPU {i} (UUID {cuda_uuid_normalized[:24]}…) cached"
@@ -124,10 +164,13 @@ def get_gpu_memory_info(device_index: int) -> Tuple[float, float, float]:
     if _nvml_available:
         try:
             handle = _get_nvml_handle_for_cuda_device(device_index)
-            info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            total_mb = info.total / (1024**2)
-            used_mb = info.used / (1024**2)
-            free_mb = info.free / (1024**2)
+            pynvml_mod = _get_pynvml()
+            if pynvml_mod is None:
+                raise RuntimeError("pynvml is not available")
+            info = pynvml_mod.nvmlDeviceGetMemoryInfo(handle)
+            total_mb = float(info.total) / (1024**2)
+            used_mb = float(info.used) / (1024**2)
+            free_mb = float(info.free) / (1024**2)
             return (used_mb, free_mb, total_mb)
         except Exception as e:
             logger.warning(
@@ -309,7 +352,7 @@ def is_gpu_healthy(gpu_index: int) -> bool:
         return False
 
 
-def probe_all_gpu_health() -> dict:
+def probe_all_gpu_health() -> dict[int, bool]:
     """
     Return {gpu_index: is_healthy} for every GPU visible to this process.
 
@@ -320,7 +363,7 @@ def probe_all_gpu_health() -> dict:
     """
     if torch.cuda.is_available():
         num_gpus = torch.cuda.device_count()
-        results: dict = {}
+        results: dict[int, bool] = {}
         logger.info(f"Running GPU health probe on {num_gpus} GPU(s)...")
         for i in range(num_gpus):
             healthy = is_gpu_healthy(i)
@@ -341,21 +384,26 @@ def probe_all_gpu_health() -> dict:
         return {}
 
     try:
-        num_gpus = pynvml.nvmlDeviceGetCount()
-        results = {}
-        logger.info(
-            f"CUDA unavailable; running pynvml health probe on {num_gpus} GPU(s)..."
+        pynvml_mod = _get_pynvml()
+        if pynvml_mod is None:
+            return {}
+        visible_physical_indices = _get_visible_physical_gpu_indices(
+            pynvml_mod.nvmlDeviceGetCount()
         )
-        for i in range(num_gpus):
+        results: dict[int, bool] = {}
+        logger.info(
+            f"CUDA unavailable; running pynvml health probe on {len(visible_physical_indices)} visible GPU(s)..."
+        )
+        for logical_idx, physical_idx in enumerate(visible_physical_indices):
             try:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                pynvml.nvmlDeviceGetMemoryInfo(handle)
-                name = pynvml.nvmlDeviceGetName(handle)
-                results[i] = True
-                logger.info(f"  cuda:{i} ({name}): OK")
+                handle = pynvml_mod.nvmlDeviceGetHandleByIndex(physical_idx)
+                pynvml_mod.nvmlDeviceGetMemoryInfo(handle)
+                name = pynvml_mod.nvmlDeviceGetName(handle)
+                results[logical_idx] = True
+                logger.info(f"  cuda:{logical_idx} ({name}): OK")
             except Exception as e:
-                results[i] = False
-                logger.warning(f"  cuda:{i}: FAILED via pynvml — {e}")
+                results[logical_idx] = False
+                logger.warning(f"  cuda:{logical_idx}: FAILED via pynvml — {e}")
         bad = [i for i, ok in results.items() if not ok]
         if bad:
             logger.warning(
@@ -464,7 +512,12 @@ def get_gpu_count() -> int:
     # unaffected, so fall back to it for headcount.
     if _nvml_available:
         try:
-            return pynvml.nvmlDeviceGetCount()
+            pynvml_mod = _get_pynvml()
+            if pynvml_mod is None:
+                return 0
+            return len(
+                _get_visible_physical_gpu_indices(pynvml_mod.nvmlDeviceGetCount())
+            )
         except Exception:
             pass
     return 0
@@ -511,19 +564,24 @@ def get_all_gpu_info() -> list[Any]:
     if not _nvml_available:
         return []
     try:
-        num_gpus = pynvml.nvmlDeviceGetCount()
+        pynvml_mod = _get_pynvml()
+        if pynvml_mod is None:
+            return []
+        visible_physical_indices = _get_visible_physical_gpu_indices(
+            pynvml_mod.nvmlDeviceGetCount()
+        )
         gpu_info = []
-        for i in range(num_gpus):
+        for logical_idx, physical_idx in enumerate(visible_physical_indices):
             try:
-                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                name = pynvml.nvmlDeviceGetName(handle)
-                mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                total_mb = mem.total / (1024**2)
-                free_mb = mem.free / (1024**2)
-                used_mb = mem.used / (1024**2)
+                handle = pynvml_mod.nvmlDeviceGetHandleByIndex(physical_idx)
+                name = pynvml_mod.nvmlDeviceGetName(handle)
+                mem = pynvml_mod.nvmlDeviceGetMemoryInfo(handle)
+                total_mb = float(mem.total) / (1024**2)
+                free_mb = float(mem.free) / (1024**2)
+                used_mb = float(mem.used) / (1024**2)
                 gpu_info.append(
                     {
-                        "index": i,
+                        "index": logical_idx,
                         "name": name,
                         "allocated_mb": used_mb,
                         "free_mb": free_mb,
@@ -557,11 +615,19 @@ def check_gpu_vram_available(
         if not _nvml_available:
             return (False, 0.0, "No GPU available")
         try:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
-            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            name = pynvml.nvmlDeviceGetName(handle)
-            free_mb = mem.free / (1024**2)
-            total_mb = mem.total / (1024**2)
+            pynvml_mod = _get_pynvml()
+            if pynvml_mod is None:
+                return (False, 0.0, "No GPU available")
+            physical_idx = _get_physical_gpu_index_for_logical_index(
+                gpu_index, pynvml_mod.nvmlDeviceGetCount()
+            )
+            if physical_idx is None:
+                return (False, 0.0, f"Invalid GPU index: {gpu_index}")
+            handle = pynvml_mod.nvmlDeviceGetHandleByIndex(physical_idx)
+            mem = pynvml_mod.nvmlDeviceGetMemoryInfo(handle)
+            name = pynvml_mod.nvmlDeviceGetName(handle)
+            free_mb = float(mem.free) / (1024**2)
+            total_mb = float(mem.total) / (1024**2)
             ok = free_mb >= min_vram_mb
             msg = f"cuda:{gpu_index} ({name}): {free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
             return (ok, free_mb, msg)

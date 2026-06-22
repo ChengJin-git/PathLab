@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { PackagePlus, Loader2, ChevronDown } from 'lucide-react'
 import { Tooltip } from '../ui/tooltip'
 import { AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
+import type { TaskType } from '../../constants/training'
 import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 interface CreateDatasetDialogProps {
@@ -13,7 +14,7 @@ interface CreateDatasetDialogProps {
   labelColors: Record<string, string>
   hasWsiSources?: boolean
   defaultSource?: string | null
-  onSubmitCreateDataset: (params: { datasetName: string; taskType: 'classification' | 'segmentation'; sourceOrgan: string }) => Promise<void>
+  onSubmitCreateDataset: (params: { datasetName: string; taskType: TaskType; sourceOrgan: string }) => Promise<void>
 }
 
 export function CreateDatasetDialog({
@@ -25,7 +26,7 @@ export function CreateDatasetDialog({
   const { t } = useTranslation()
   const [datasetName, setDatasetName] = useState('')
   const [nameError, setNameError] = useState(false)
-  const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
+  const [taskType, setTaskType] = useState<TaskType>('patch_classification')
   const [sourceSelection, setSourceSelection] = useState('')
   const [sourceCustom, setSourceCustom] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -67,7 +68,7 @@ export function CreateDatasetDialog({
     if (show) {
       setDatasetName('')
       setNameError(false)
-      setTaskType('classification')
+      setTaskType('patch_classification')
       setSubmitting(false)
       const normalized = defaultSource?.trim() || ''
       if (!normalized) {
@@ -137,23 +138,26 @@ export function CreateDatasetDialog({
           <fieldset className="mb-4">
             <legend className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.taskType')}</legend>
             <div className="flex gap-2">
-              {(['classification', 'segmentation'] as const).map(tt => {
-                const isDisabled = submitting || (tt === 'segmentation' && hasWsiSources)
+              {([
+                { value: 'patch_classification', labelKey: 'classification' },
+                { value: 'patch_segmentation', labelKey: 'segmentation' },
+              ] as const).map(({ value, labelKey }) => {
+                const isDisabled = submitting || (value === 'patch_segmentation' && hasWsiSources)
                 return (
-                  <Tooltip key={tt} content={tt === 'segmentation' && hasWsiSources ? t('annotation.segmentationWsiNotSupported') : undefined}>
+                  <Tooltip key={value} content={value === 'patch_segmentation' && hasWsiSources ? t('annotation.segmentationWsiNotSupported') : undefined}>
                     <button
                       type="button"
-                      onClick={() => !isDisabled && setTaskType(tt)}
+                      onClick={() => !isDisabled && setTaskType(value)}
                       disabled={isDisabled}
                       className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
-                        taskType === tt
+                        taskType === value
                           ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
                           : isDisabled
                             ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
                             : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                       }`}
                     >
-                      {t(`annotation.${tt}`)}
+                      {t(`annotation.${labelKey}`)}
                     </button>
                   </Tooltip>
                 )

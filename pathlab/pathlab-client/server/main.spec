@@ -254,6 +254,81 @@ all_datas += [
     (os.path.join(server_root, 'gateway', 'prompts'),   'gateway/prompts'),
 ]
 
+# openslide-python >= 4.0 ships libopenslide.so.1 inside the openslide_bin
+# wheel package and loads it via importlib.resources (not ctypes.util.find_library).
+# PyInstaller does NOT automatically bundle .so files that are package data, so
+# we must include it explicitly as a datas entry so it lands at
+# _internal/openslide_bin/libopenslide.so.1 where importlib.resources can find it.
+_openslide_bin_so = None
+try:
+    import importlib.resources as _ir
+    import openslide_bin as _osb
+    _lib_name = 'libopenslide.so.1' if sys.platform == 'linux' else (
+        'libopenslide.1.dylib' if sys.platform == 'darwin' else 'libopenslide-1.dll'
+    )
+    with _ir.as_file(_ir.files('openslide_bin').joinpath(_lib_name)) as _p:
+        if _p.exists():
+            _openslide_bin_so = str(_p)
+except Exception:
+    pass
+
+if _openslide_bin_so:
+    all_datas.append((_openslide_bin_so, 'openslide_bin'))
+    print(f"[spec] Including openslide_bin library: {_openslide_bin_so}")
+else:
+    print("[spec] WARNING: openslide_bin library not found; openslide may fail at runtime")
+
+# ---------------------------------------------------------------------------
+# Aslide native libraries: sdpc/lib, kfb/lib, tron/lib
+#
+# collect_all('Aslide') collects these .so files as "binaries", but PyInstaller
+# strips their directory structure and deposits them flat into _internal/ top
+# level. sdpc_bindings.py uses os.path.dirname(os.path.abspath(__file__)) to
+# construct the path to lib/libsqrayslideservice.so, so the files MUST land at
+# _internal/Aslide/sdpc/lib/ (and similarly for kfb and tron).
+#
+# Solution: include each lib/ directory as datas (not binaries) so PyInstaller
+# copies the full directory tree verbatim to the correct dest path.
+# ---------------------------------------------------------------------------
+# Use importlib.util.find_spec to locate Aslide reliably across venv/conda/system
+try:
+    import importlib.util as _importlib_util
+    _aslide_init = _importlib_util.find_spec('Aslide')
+    if _aslide_init and _aslide_init.origin:
+        _aslide_base = os.path.dirname(_aslide_init.origin)
+    else:
+        import Aslide as _Aslide_mod
+        _aslide_base = os.path.dirname(os.path.abspath(_Aslide_mod.__file__))
+except Exception:
+    _aslide_base = None
+
+if _aslide_base and os.path.isdir(_aslide_base):
+    for _subdir, _dest in [
+        ('sdpc/lib',   'Aslide/sdpc/lib'),
+        ('kfb/lib',    'Aslide/kfb/lib'),
+        ('tron/lib',   'Aslide/tron/lib'),
+        ('opencv/lib', 'Aslide/opencv/lib'),
+    ]:
+        _src_dir = os.path.join(_aslide_base, *_subdir.split('/'))
+        if os.path.isdir(_src_dir):
+            _so_files = []
+            try:
+                for _f in os.listdir(_src_dir):
+                    _fp = os.path.join(_src_dir, _f)
+                    if os.path.isfile(_fp) and ('.so' in _f or '.dylib' in _f):
+                        _so_files.append(_fp)
+            except OSError:
+                pass
+            if _so_files:
+                all_datas.append((_src_dir, _dest))
+                print(f"[spec] Including Aslide libs: {_src_dir} -> {_dest} ({len(_so_files)} .so files)")
+            else:
+                print(f"[spec] WARNING: Aslide lib dir exists but no .so files: {_src_dir}")
+        else:
+            print(f"[spec] WARNING: Aslide lib dir not found: {_src_dir}")
+else:
+    print("[spec] WARNING: Aslide package not found via importlib; Aslide slide support may fail")
+
 # Deduplicate datas (collect_all may produce duplicates)
 seen_datas = set()
 dedup_datas = []
@@ -336,13 +411,37 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         # Exclude test frameworks (not needed at runtime)
-        'pytest', 'unittest', 'doctest', 'pdb',
+        # NOTE: 'pdb', 'unittest', 'doctest' must NOT be excluded:
+        #   - torch/distributed/__init__.py imports pdb
+        #   - torch/_dispatch/python.py imports unittest.mock
+        #   - torch and other libs use doctest internally
+        'pytest',
         # Exclude Jupyter / IPython (heavy, not needed)
         'IPython', 'jupyter', 'notebook',
         # Exclude Qt GUI (not needed in headless server)
         'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'tkinter', 'wx',
         # Exclude matplotlib GUI backend (marker-pdf may import matplotlib)
         'matplotlib.backends._backend_tk',
+        # --- Size optimisation: packages not needed in the sidecar ---------------
+        # Triton: torch JIT-compilation backend (torch.compile). PathLab never
+        # calls torch.compile(), so the ~540 MB Triton wheel is dead weight.
+        'triton',
+        # vLLM and its exclusive dependencies.  The check-vllm endpoint only
+        # pings an *external* vLLM server via httpx — it never imports the vllm
+        # Python package.  vllm, ray, xgrammar and llguidance are all uninstalled
+        # from the environment; these entries are a safety-net for future re-installs.
+        'vllm', 'ray', 'xgrammar', 'llguidance',
+        # HoloViz / Panel visualisation stack pulled in as optional lancedb deps.
+        # None of these are used by the PathLab sidecar.
+        'panel', 'bokeh', 'holoviews', 'hvplot', 'param', 'colorcet',
+        # PyAV — video/audio I/O pulled in as an optional transformers dep.
+        # PathLab only uses transformers for image feature extraction, not video.
+        'av',
+        # Polars — high-performance DataFrame lib used by the HoloViz stack above.
+        # lancedb's core functionality works with pyarrow/pandas without polars.
+        'polars',
+        # CuPy — GPU array library; was a vllm optional dep, not used directly.
+        'cupy', 'cupy_backends',
     ],
     noarchive=False,
     optimize=0,

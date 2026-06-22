@@ -8,35 +8,12 @@ import { deletePathScientistSession, listPathScientistSessions, stopPathScientis
 import type { PathScientistSessionSummary } from '../types/pathscientist'
 import { formatFileSize } from '../lib/utils/utils'
 import { formatPathScientistElapsed } from '../lib/pathscientistTime'
-import { sessionTrainingProgressLabel } from '../lib/pathscientistSessions'
+import { displaySessionStatus, isLiveSessionStatus, dedupePathScientistSessions, sessionStatusClass, sessionTrainingProgressLabel } from '../lib/pathscientistSessions'
+import { ConfirmDialog } from '../components/settings/ConfirmDialog'
 
 function formatTime(value: number | undefined, unknownLabel: string) {
   if (!value) return unknownLabel
   return new Date(value * 1000).toLocaleString()
-}
-
-function displayStatus(status?: string) {
-  if (status === 'finished') return 'completed'
-  return status || 'unknown'
-}
-
-function statusClass(status?: string) {
-  switch (displayStatus(status)) {
-    case 'completed':
-      return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-    case 'failed':
-      return 'bg-red-50 text-red-700 ring-red-200'
-    case 'running':
-      return 'bg-blue-50 text-blue-700 ring-blue-200'
-    case 'queued':
-      return 'bg-amber-50 text-amber-700 ring-amber-200'
-    default:
-      return 'bg-gray-100 text-gray-600 ring-gray-200'
-  }
-}
-
-function isLiveSessionStatus(status?: string) {
-  return status === 'queued' || status === 'running'
 }
 
 function formatWorkspaceSize(bytes?: number | null) {
@@ -53,54 +30,6 @@ function useRunningClock(enabled: boolean) {
   return nowMs
 }
 
-function sessionDedupeKey(session: PathScientistSessionSummary) {
-  if (session.workspace_path) return `workspace:${session.workspace_path}`
-  if (session.conversation_id) return `conversation:${session.conversation_id}`
-  return `session:${session.session_id}`
-}
-
-function sessionRank(session: PathScientistSessionSummary) {
-  return [
-    isLiveSessionStatus(session.status) ? 1 : 0,
-    session.model ? 1 : 0,
-    session.conversation_id ? 1 : 0,
-    session.updated_at || 0,
-    session.created_at || 0,
-  ]
-}
-
-function isBetterSessionCandidate(
-  candidate: PathScientistSessionSummary,
-  current: PathScientistSessionSummary,
-) {
-  const nextRank = sessionRank(candidate)
-  const currentRank = sessionRank(current)
-  for (let index = 0; index < nextRank.length; index += 1) {
-    if (nextRank[index] !== currentRank[index]) {
-      return nextRank[index] > currentRank[index]
-    }
-  }
-  return false
-}
-
-function dedupeSessions(sessions: PathScientistSessionSummary[]) {
-  const selectedByKey = new Map<string, PathScientistSessionSummary>()
-  const keyOrder: string[] = []
-  for (const session of sessions) {
-    const key = sessionDedupeKey(session)
-    const current = selectedByKey.get(key)
-    if (!current) {
-      selectedByKey.set(key, session)
-      keyOrder.push(key)
-    } else if (isBetterSessionCandidate(session, current)) {
-      selectedByKey.set(key, session)
-    }
-  }
-  return keyOrder
-    .map((key) => selectedByKey.get(key))
-    .filter((session): session is PathScientistSessionSummary => Boolean(session))
-}
-
 export default function PathScientistSessionsPage() {
   const { t } = useTranslation()
   const [sessions, setSessions] = useState<PathScientistSessionSummary[]>([])
@@ -108,6 +37,16 @@ export default function PathScientistSessionsPage() {
   const [error, setError] = useState('')
   const [stoppingIds, setStoppingIds] = useState<Set<string>>(() => new Set())
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set())
+
+  const [dialogState, setDialogState] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+
+  const showConfirmDialog = (config: { title: string; message: string; onConfirm: () => void }) => {
+    setDialogState({ isOpen: true, ...config })
+  }
+
+  const closeConfirmDialog = () => {
+    setDialogState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+  }
 
   const loadSessions = async (silent = false) => {
     if (!silent) setIsLoading(true)
@@ -126,12 +65,16 @@ export default function PathScientistSessionsPage() {
     void loadSessions()
   }, [t])
 
+  const visibleSessions = useMemo(() => dedupePathScientistSessions(sessions), [sessions])
+  const nowMs = useRunningClock(visibleSessions.some((session) => isLiveSessionStatus(session.status)))
+
   useEffect(() => {
+    if (!visibleSessions.some((session) => isLiveSessionStatus(session.status))) return undefined
     const timer = window.setInterval(() => {
       void loadSessions(true)
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [visibleSessions])
 
   const handleStopSession = async (event: React.MouseEvent, sessionId: string) => {
     event.preventDefault()
@@ -159,25 +102,28 @@ export default function PathScientistSessionsPage() {
     event.preventDefault()
     event.stopPropagation()
     if (deletingIds.has(sessionId)) return
-    const confirmed = window.confirm(t('pathScientist.sessionsPage.deleteConfirm'))
-    if (!confirmed) return
-    setDeletingIds((current) => new Set(current).add(sessionId))
-    setError('')
-    try {
-      await deletePathScientistSession(sessionId)
-      setSessions((current) => current.filter((session) => session.session_id !== sessionId))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('pathScientist.sessionsPage.deleteFailed'))
-    } finally {
-      setDeletingIds((current) => {
-        const next = new Set(current)
-        next.delete(sessionId)
-        return next
-      })
-    }
+    showConfirmDialog({
+      title: t('pathScientist.sessionsPage.deleteConfirmTitle'),
+      message: t('pathScientist.sessionsPage.deleteConfirm'),
+      onConfirm: async () => {
+        closeConfirmDialog()
+        setDeletingIds((current) => new Set(current).add(sessionId))
+        setError('')
+        try {
+          await deletePathScientistSession(sessionId)
+          setSessions((current) => current.filter((session) => session.session_id !== sessionId))
+        } catch (err) {
+          setError(err instanceof Error ? err.message : t('pathScientist.sessionsPage.deleteFailed'))
+        } finally {
+          setDeletingIds((current) => {
+            const next = new Set(current)
+            next.delete(sessionId)
+            return next
+          })
+        }
+      },
+    })
   }
-  const visibleSessions = useMemo(() => dedupeSessions(sessions), [sessions])
-  const nowMs = useRunningClock(visibleSessions.some((session) => isLiveSessionStatus(session.status)))
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6">
@@ -188,7 +134,7 @@ export default function PathScientistSessionsPage() {
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-blue-600 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-white shadow-sm shadow-blue-200">
-              <Beaker className="h-3.5 w-3.5" /> PathScientist
+              <Beaker className="h-3.5 w-3.5" /> AutoResearch
             </div>
             <h1 className="text-3xl font-extrabold tracking-tight text-gray-950 sm:text-4xl">{t('pathScientist.sessionsPage.title')}</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-500 sm:text-base">
@@ -227,8 +173,8 @@ export default function PathScientistSessionsPage() {
             const titlePending = Boolean(session.title_pending && !session.title && isLiveSessionStatus(session.status))
             const title = titlePending ? t('pathScientist.generatingTitle') : session.title || t('pathScientist.sessionsPage.untitledSession')
             const showQuestionPreview = Boolean(session.question && (titlePending || !session.title || session.title !== session.question))
-            const sessionStatus = displayStatus(session.status)
-            const sessionStage = displayStatus(session.stage)
+            const sessionStatus = displaySessionStatus(session.status)
+            const sessionStage = displaySessionStatus(session.stage)
             const showStage = sessionStage && sessionStage !== 'unknown' && sessionStage !== sessionStatus
             const canStop = isLiveSessionStatus(session.status)
             const canDelete = !canStop
@@ -302,7 +248,7 @@ export default function PathScientistSessionsPage() {
                         {t('pathScientist.sessionsPage.delete')}
                       </Button>
                     )}
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${statusClass(session.status)}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ring-1 ${sessionStatusClass(session.status)}`}>
                       {sessionStatus}
                       {runningElapsed && <span className="ml-1 font-semibold opacity-80">· {runningElapsed}</span>}
                     </span>
@@ -319,6 +265,11 @@ export default function PathScientistSessionsPage() {
           })}
         </div>
       )}
+
+      <ConfirmDialog
+        dialog={dialogState}
+        onClose={closeConfirmDialog}
+      />
     </div>
   )
 }

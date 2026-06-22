@@ -23,6 +23,7 @@ export interface SelectProps {
     triggerClassName?: string
     dropdownClassName?: string
     disabled?: boolean
+    ariaLabel?: string
 }
 
 function isGroupedOptions(
@@ -40,6 +41,7 @@ export function Select({
     triggerClassName,
     dropdownClassName,
     disabled = false,
+    ariaLabel,
 }: SelectProps) {
     const [isOpen, setIsOpen] = React.useState(false)
     const [dropdownStyle, setDropdownStyle] = React.useState<React.CSSProperties>({})
@@ -51,6 +53,7 @@ export function Select({
         : [...options]
 
     const selectedOption = flatOptions.find((opt) => opt.value === value)
+    const listboxId = React.useId()
 
     React.useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -66,6 +69,25 @@ export function Select({
         document.addEventListener("mousedown", handleClickOutside)
         return () => document.removeEventListener("mousedown", handleClickOutside)
     }, [])
+
+    React.useEffect(() => {
+        if (!isOpen) return
+        const updatePosition = () => {
+            if (triggerRef.current) {
+                const rect = triggerRef.current.getBoundingClientRect()
+                setDropdownStyle({
+                    position: "fixed",
+                    top: rect.bottom + 4,
+                    left: rect.left,
+                    width: rect.width,
+                    zIndex: 9999,
+                })
+            }
+        }
+        // capture:true catches scroll on any ancestor, not just window
+        window.addEventListener("scroll", updatePosition, true)
+        return () => window.removeEventListener("scroll", updatePosition, true)
+    }, [isOpen])
 
     const handleOpen = () => {
         if (disabled) return
@@ -93,6 +115,8 @@ export function Select({
             type="button"
             onClick={() => handleSelect(option.value)}
             disabled={option.disabled}
+            role="option"
+            aria-selected={option.value === value}
             className={cn(
                 "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none hover:bg-gray-100 hover:text-gray-900 disabled:pointer-events-none disabled:opacity-50",
                 option.value === value && "font-medium bg-gray-50"
@@ -111,8 +135,10 @@ export function Select({
         <div
             ref={dropdownRef}
             style={dropdownStyle}
+            role="listbox"
+            id={listboxId}
             className={cn(
-                "max-h-60 overflow-auto rounded-md border border-gray-200 bg-white p-1 shadow-lg animate-in fade-in-0 zoom-in-95",
+                "max-h-60 overflow-auto rounded-[1.25rem] border border-[color:var(--surface-border-strong)] bg-[color:var(--surface-elevated)] p-1.5 shadow-[var(--shadow-elevated)] animate-in fade-in-0 zoom-in-95",
                 dropdownClassName
             )}
         >
@@ -143,9 +169,13 @@ export function Select({
                 type="button"
                 onClick={handleOpen}
                 disabled={disabled}
+                aria-label={ariaLabel}
+                aria-expanded={isOpen}
+                aria-haspopup="listbox"
+                aria-controls={isOpen ? listboxId : undefined}
                 className={cn(
-                    "flex h-9 w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-gray-50",
-                    isOpen && "ring-1 ring-gray-950 border-gray-400",
+                    "flex h-11 w-full items-center justify-between rounded-[1rem] border border-[color:var(--surface-border-strong)] bg-[color:var(--surface-elevated)] px-4 py-2 text-sm text-slate-700 shadow-[var(--shadow-soft)] transition-[border-color,box-shadow,background-color] duration-200 focus-visible:outline-none focus-visible:border-primary-300 focus-visible:ring-4 focus-visible:ring-primary-500/30 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-white",
+                    isOpen && "border-primary-300 ring-4 ring-primary-500/20",
                     triggerClassName
                 )}
             >

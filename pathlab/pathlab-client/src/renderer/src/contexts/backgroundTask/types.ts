@@ -4,19 +4,20 @@
 
 import type { TrainingTaskDetail } from '../../api/training'
 import type { UploadSplitsResponse } from '../../api/wsi'
+import type { TaskType as CanonicalTrainingTaskType } from '../../constants/training'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'metadata_upload' | 'extraction'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_wsis' | 'delete_task' | 'training' | 'external_validation' | 'batch_inference' | 'analysis' | 'segmentation_export' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'scan_directory' | 'metadata_upload' | 'extraction'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
-export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data'
+export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'scan_directory' | 'delete_wsis'
 
 // Training task status from backend (more granular)
 export type TrainingTaskStatus = 'creating' | 'pending' | 'queued' | 'resuming' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
 
 // Server task type from backend
-export type ServerTaskType = 'classification' | 'survival' | 'segmentation' | 'external_validation'
+export type ServerTaskType = CanonicalTrainingTaskType | 'external_validation' | 'batch_inference'
 
 // Individual task item (e.g., one file in a batch)
 export interface TaskItem {
@@ -44,12 +45,14 @@ export interface BackgroundTask {
   isServerTask?: boolean
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
   taskName?: string  // Task name for training tasks
+  datasetId?: string  // Dataset ID for batch_import / upload tasks (for scoping upload guards)
   datasetName?: string  // Dataset name for delete_dataset / batch_import storage tasks
   dataLevel?: 'wsi' | 'patch' // For progress calculation
   // For analysis tasks
   analysisType?: 'internal' | 'external'  // Type of analysis
   taskCategory?: 'classification' | 'survival' | 'segmentation'  // Task category for i18n display (internal analysis only)
   trainingTaskId?: string  // The training task ID this analysis belongs to (for merging external validation)
+  exportTaskId?: string  // Async export task ID for cancellable analysis exports
 }
 
 // Disk space info
@@ -64,7 +67,7 @@ export interface MetadataUploadTaskConfig {
   csvFile: File              // Already-converted CSV file (or raw CSV if user selected CSV)
   datasetName: string        // Dataset name to find/poll for
   datasetId?: string         // If already known
-  uploadMode: 'classification' | 'survival' | 'segmentation'
+  uploadMode: CanonicalTrainingTaskType
   dataLevel: 'file' | 'case'
 }
 
@@ -86,7 +89,7 @@ export interface UploadTaskFile {
     source_organ?: string  // Source organ/tissue for new dataset
     aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     is_public?: boolean
-    task_type?: 'classification' | 'survival' | 'segmentation'
+    task_type?: CanonicalTrainingTaskType
     label?: string
     case_id?: string
     age?: number
@@ -120,11 +123,13 @@ export interface BackgroundTaskContextType {
   addExtractionTask: (taskId: string, datasetName: string) => string
   addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
   addMetadataUploadTask: (config: MetadataUploadTaskConfig) => string
+  addAnalysisExportTask: (exportTaskId: string, analysisId: string, taskName: string) => string
   cancelTask: (taskId: string) => void
   cancelServerTask: (task: BackgroundTask) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void
   removeTask: (task: BackgroundTask) => void
   togglePanel: () => void
+  openPanel: () => void
   refreshDiskSpace: () => Promise<void>
   getMetadataUploadResult: (datasetName: string) => MetadataUploadResult | undefined
 
@@ -134,7 +139,7 @@ export interface BackgroundTaskContextType {
   subscribeStorageSSE: () => () => void
 
   // Validation
-  hasUploadingTasks: () => boolean  // Check if there are any uploading tasks (upload or batch_import)
+  hasUploadingTasks: (datasetId?: string) => boolean  // Check if there are any uploading tasks (upload or batch_import), optionally scoped to a dataset
 
   // Dataset deletion overlay state (context-level, persists across navigation)
   deletingDatasetNames: Set<string>

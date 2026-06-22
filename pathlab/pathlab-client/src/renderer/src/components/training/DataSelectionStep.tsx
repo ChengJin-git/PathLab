@@ -19,7 +19,7 @@ import {
   Check,
   Eye,
 } from 'lucide-react'
-import { TaskType, SplitStrategy } from '../../constants/training'
+import { TaskType, SplitStrategy, isSegmentationTask, isSurvivalTask } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
 import { DatasetSummary } from '../../api'
 import { WSIDataTable } from './WSIDataTable'
@@ -85,6 +85,8 @@ export interface DataSelectionStepProps {
   setSplitStrategy: (strategy: SplitStrategy) => void
   kFoldSplits: number
   setKFoldSplits: (k: number) => void
+  stratified: boolean
+  setStratified: (value: boolean) => void
   kFoldValidation: KFoldValidation
   randomSplitValidation: RandomSplitValidation
   hasPreDefinedSplits: boolean
@@ -152,6 +154,8 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
     setSplitStrategy,
     kFoldSplits,
     setKFoldSplits,
+    stratified,
+    setStratified,
     kFoldValidation,
     randomSplitValidation,
     hasPreDefinedSplits,
@@ -242,6 +246,8 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           setSplitStrategy={setSplitStrategy}
           kFoldSplits={kFoldSplits}
           setKFoldSplits={setKFoldSplits}
+          stratified={stratified}
+          setStratified={setStratified}
           kFoldValidation={kFoldValidation}
           randomSplitValidation={randomSplitValidation}
           hasPreDefinedSplits={hasPreDefinedSplits}
@@ -292,6 +298,8 @@ function DatasetGrid({
 }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const isSurvival = isSurvivalTask(taskType)
+  const isSegmentation = isSegmentationTask(taskType)
 
   if (datasetsLoading) {
     return (
@@ -307,16 +315,16 @@ function DatasetGrid({
       <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
         <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
         <p className="text-base sm:text-lg font-bold text-gray-700">
-          {taskType === 'survival'
+          {isSurvival
             ? t('training.dataSelection.noSurvivalDatasets')
-            : taskType === 'segmentation'
+            : isSegmentation
               ? t('training.dataSelection.noSegmentationDatasets')
               : t('training.dataSelection.noClassificationDatasets')}
         </p>
         <p className="text-xs sm:text-sm text-gray-500 mt-1">
-          {taskType === 'survival'
+          {isSurvival
             ? t('training.dataSelection.registerSurvivalHint')
-            : taskType === 'segmentation'
+            : isSegmentation
               ? t('training.dataSelection.registerSegmentationHint')
               : t('training.dataSelection.registerClassificationHint')}
         </p>
@@ -328,14 +336,17 @@ function DatasetGrid({
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-0.5">
       {datasets.map((dataset) => {
         const isSelected = selectedDatasetId === dataset.dataset_id
+        const isUnavailable = dataset.availability?.status === 'unavailable'
         return (
           <div
             key={dataset.dataset_id ?? dataset.dataset_name}
-            onClick={() => onSelectDataset(isSelected ? null : dataset.dataset_id, isSelected ? '' : dataset.dataset_name)}
+            onClick={() => !isUnavailable && onSelectDataset(isSelected ? null : dataset.dataset_id, isSelected ? '' : dataset.dataset_name)}
             className={`p-4 sm:p-5 rounded-xl transition-all cursor-pointer group relative overflow-hidden ${
-              isSelected
-                ? 'bg-primary-50 border-2 border-primary-500 shadow-md shadow-primary-500/10'
-                : 'bg-white border border-gray-200 hover:border-primary-400 hover:shadow-lg hover:shadow-primary-600/5'
+              isUnavailable
+                ? 'bg-gray-50 border border-gray-200 opacity-60 cursor-not-allowed'
+                : isSelected
+                  ? 'bg-primary-50 border-2 border-primary-500 shadow-md shadow-primary-500/10'
+                  : 'bg-white border border-gray-200 hover:border-primary-400 hover:shadow-lg hover:shadow-primary-600/5'
             }`}
           >
             {/* Selected checkmark */}
@@ -346,23 +357,40 @@ function DatasetGrid({
                 </div>
               </div>
             )}
-            {!isSelected && (
+            {!isSelected && !isUnavailable && (
               <div className="absolute top-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 <ArrowRight className="w-4 h-4 text-primary-500" />
               </div>
             )}
+            {isUnavailable && (
+              <div className="absolute top-2 right-2">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                  {t('training.dataSelection.unavailable')}
+                </span>
+              </div>
+            )}
             <div className="flex items-start gap-3 sm:gap-4">
               <div className={`shrink-0 p-2 sm:p-2.5 rounded-xl transition-colors ${
-                isSelected ? 'bg-primary-100' : 'bg-primary-50 group-hover:bg-primary-100'
+                isUnavailable
+                  ? 'bg-gray-100'
+                  : isSelected ? 'bg-primary-100' : 'bg-primary-50 group-hover:bg-primary-100'
               }`}>
-                <FolderOpen className={`w-5 h-5 sm:w-6 sm:h-6 ${isSelected ? 'text-primary-700' : 'text-primary-600'}`} />
+                <FolderOpen className={`w-5 h-5 sm:w-6 sm:h-6 ${
+                  isUnavailable ? 'text-gray-400' : isSelected ? 'text-primary-700' : 'text-primary-600'
+                }`} />
               </div>
               <div className="flex-1 min-w-0">
                 <h4 className={`font-bold truncate transition-colors text-sm sm:text-base ${
-                  isSelected ? 'text-primary-800' : 'text-gray-900 group-hover:text-primary-700'
+                  isUnavailable
+                    ? 'text-gray-500'
+                    : isSelected ? 'text-primary-800' : 'text-gray-900 group-hover:text-primary-700'
                 }`}>{dataset.dataset_name}</h4>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2">
-                  <span className={`text-[10px] sm:text-xs font-semibold flex items-center gap-1 ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>
+                  <span className={`text-[10px] sm:text-xs font-semibold flex items-center gap-1 ${
+                    isUnavailable
+                      ? 'text-gray-400'
+                      : isSelected ? 'text-primary-600' : 'text-gray-500'
+                  }`}>
                     <FileText className="w-3 h-3" />
                     {t(dataset.data_type === 'patch' ? 'training.dataSelection.filesCount' : 'training.dataSelection.slidesCount', { count: dataset.file_count })}
                   </span>

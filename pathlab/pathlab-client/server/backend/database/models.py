@@ -71,7 +71,7 @@ class DataGroup(TimestampMixin, Base):
     aggregation_level = Column(String(20), nullable=False)  # 'file' | 'case'
     task_type = Column(
         String(50), nullable=False
-    )  # 'classification' | 'survival' | ... (extensible)
+    )  # 'wsi_classification' | 'patch_classification' | 'wsi_survival' | 'patch_segmentation'
 
     # Relationships
     datasets = relationship(
@@ -119,7 +119,9 @@ class Dataset(TimestampMixin, Base):
 
     __tablename__ = "datasets"
 
-    dataset_id = Column(String(255), nullable=False)  # UUID for API
+    dataset_id = Column(
+        String(255), nullable=False, index=True
+    )  # UUID for API
     name = Column(
         String(255), nullable=False
     )  # Display name (stored only, never sent in URL/params)
@@ -148,6 +150,11 @@ class Dataset(TimestampMixin, Base):
         index=True,
     )
 
+    # Explicit UniqueConstraint so the constraint appears inline in CREATE TABLE DDL.
+    # SQLAlchemy 2.0 emits column-level unique=True as a deferred CREATE UNIQUE INDEX,
+    # which is emitted AFTER CREATE TABLE. Because parent_dataset_id has a
+    # FK → dataset_id, PostgreSQL rejects CREATE TABLE if there is no inline
+    # UNIQUE or PRIMARY KEY constraint on dataset_id at that moment.
     __table_args__ = (
         UniqueConstraint("dataset_id", name="uq_datasets_dataset_id"),
     )
@@ -190,7 +197,7 @@ class WSISlide(TimestampMixin, Base):
 
     __tablename__ = "wsi_slides"
 
-    wsi_id = Column(String(255), nullable=False)
+    wsi_id = Column(String(255), nullable=False, index=True)
     original_filename = Column(
         String(500)
     )  # Original filename for internal reference (not exposed to frontend)
@@ -261,12 +268,19 @@ class WSISlide(TimestampMixin, Base):
         "WSISlide", remote_side=[wsi_id], foreign_keys=[parent_wsi_id]
     )
 
+    # Explicit UniqueConstraint so the constraint appears inline in CREATE TABLE DDL.
+    # SQLAlchemy 2.0 emits column-level unique=True as a deferred CREATE UNIQUE INDEX,
+    # which is emitted AFTER CREATE TABLE. Because parent_wsi_id has a
+    # FK → wsi_id, PostgreSQL rejects CREATE TABLE if there is no inline
+    # UNIQUE or PRIMARY KEY constraint on wsi_id at that moment.
     __table_args__ = (
         UniqueConstraint("wsi_id", name="uq_wsi_slides_wsi_id"),
         Index("idx_wsi_user_dataset", "user_id", "dataset_id"),
         Index("idx_wsi_dataset_created", "dataset_id", "created_at"),
         Index("idx_wsi_user_type", "user_id", "data_type"),
         Index("idx_wsi_dataset_type", "dataset_id", "data_type"),
+        Index("idx_wsi_dataset_case", "dataset_id", "case_id"),
+        Index("idx_wsi_dataset_type_case", "dataset_id", "data_type", "case_id"),
     )
 
     def _get_file_extension(self) -> str:
@@ -358,6 +372,26 @@ class WSISlide(TimestampMixin, Base):
             if self.created_at
             else None,
         }
+
+
+class WSISlideUserSplit(TimestampMixin, Base):
+    """Per-user split overrides for public datasets."""
+
+    __tablename__ = "wsi_slide_user_splits"
+
+    wsi_id = Column(
+        String(255),
+        ForeignKey("wsi_slides.wsi_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = Column(String(255), nullable=False)
+    split = Column(String(20), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("wsi_id", "user_id", name="uq_wsi_slide_user_splits_wsi_user"),
+        Index("idx_wsi_slide_user_splits_user", "user_id"),
+        Index("idx_wsi_slide_user_splits_wsi", "wsi_id"),
+    )
 
 
 class AITask(Base):
@@ -481,13 +515,13 @@ class ChatConversation(TimestampMixin, Base):
 
     __tablename__ = "chat_conversations"
     __table_args__ = (
-        UniqueConstraint(
-            "conversation_id",
-            name="uq_chat_conversations_conversation_id",
-        ),
+        # Explicit UniqueConstraint so the constraint appears inline in CREATE TABLE DDL.
+        # Required for the self-referencing FK on parent_conversation_id to be valid
+        # at table creation time (PostgreSQL rejects FK referencing non-UNIQUE col).
+        UniqueConstraint("conversation_id", name="uq_chat_conversations_conversation_id"),
     )
 
-    conversation_id = Column(String(255), nullable=False)
+    conversation_id = Column(String(255), nullable=False, index=True)
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
     parent_conversation_id = Column(
@@ -1173,8 +1207,8 @@ class AnalysisRun(Base):
     """
     Analysis Run table.
     Tracks internal analysis runs (statistical analysis on training task results).
-    External validation runs are tracked via TrainingTask (task_type='external_validation'
-    in the linked DataGroup) and are NOT stored here to avoid double-counting.
+    External validation runs are tracked via TrainingTask (task_id prefix 'extval_')
+    and are NOT stored here to avoid double-counting.
     """
 
     __tablename__ = "analysis_runs"

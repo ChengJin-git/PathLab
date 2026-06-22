@@ -29,6 +29,8 @@ import { DatasetRegistrationCard, parseDatasetRegistrationConfig, removeDatasetR
 import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBlock } from './MetadataUploadCard'
 import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
 import PatchInferenceCard, { parsePatchInferenceConfig, removePatchInferenceBlock } from './PatchInferenceCard'
+import { BatchInferenceSummaryCard, parseBatchInferenceSummary, removeBatchInferenceSummaryBlock } from './BatchInferenceSummaryCard'
+import { BatchInferenceConfigCard, parseBatchInferenceConfig, removeBatchInferenceConfigBlock } from './BatchInferenceConfigCard'
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
@@ -377,6 +379,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
     metadataUploadConfig,
     modelListConfig,
     patchInferenceConfig,
+    batchInferenceSummaryConfig,
+    batchInferenceConfig,
     referenceCards,
     citationContexts,
   } = useMemo(() => {
@@ -399,6 +403,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
       metadataUploadConfig: parseMetadataUploadConfig(content),
       modelListConfig: parseModelListConfig(content),
       patchInferenceConfig: parsePatchInferenceConfig(content),
+      batchInferenceSummaryConfig: parseBatchInferenceSummary(content),
+      batchInferenceConfig: parseBatchInferenceConfig(content),
       referenceCards: parseAllReferenceCards(content),
       citationContexts: parseCitationContexts(content),
     }
@@ -676,6 +682,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
   if (patchInferenceConfig) displayContent = removePatchInferenceBlock(displayContent)
+  if (batchInferenceSummaryConfig) displayContent = removeBatchInferenceSummaryBlock(displayContent)
+  if (batchInferenceConfig) displayContent = removeBatchInferenceConfigBlock(displayContent)
   // Remove WEB_SEARCH request block - AI's internal search request
   displayContent = displayContent.replace(/\[WEB_SEARCH\][\s\S]*?\[\/WEB_SEARCH\]/g, '').trim()
   // Remove READ_ARTICLE request block - AI's internal article reading request
@@ -862,6 +870,31 @@ const AssistantMessage = React.memo(function AssistantMessage({
         </div>
       )}
 
+      {/* Thinking indicator — shown inside AssistantMessage when streaming but no text content yet
+          and no search/PDF status cards are visible. This covers the gap between when the message
+          bubble is rendered and when actual PDF status events or text chunks arrive. */}
+      {isStreaming && !displayContent.trim() && !showSearchZone && !incompleteTag && !hasFunctionalCard && (
+        <div className="flex items-center gap-2.5 py-2" aria-busy="true">
+          <div className="flex items-center gap-1" aria-hidden="true">
+            <div
+              className="w-2 h-2 bg-primary-400 rounded-full animate-bounce"
+              style={{ animationDelay: '0ms', animationDuration: '1.2s' }}
+            />
+            <div
+              className="w-2 h-2 bg-primary-400 rounded-full animate-bounce"
+              style={{ animationDelay: '200ms', animationDuration: '1.2s' }}
+            />
+            <div
+              className="w-2 h-2 bg-primary-400 rounded-full animate-bounce"
+              style={{ animationDelay: '400ms', animationDuration: '1.2s' }}
+            />
+          </div>
+          <span className="text-sm font-medium text-gray-400">
+            {t('aiChat.thinking')}
+          </span>
+        </div>
+      )}
+
       {/* Markdown content — no skeleton; stream starts directly */}
       {displayContent.trim() && (
         <div className="prose prose-slate max-w-none prose-sm
@@ -899,7 +932,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
             <OptionButtons
               options={options}
               onSelect={onOptionSelect}
-              disabled={isLoading}
+              disabled={isStreaming || isLoading}
             />
           </motion.div>
         ) : incompleteTag === 'OPTIONS' && (
@@ -1184,6 +1217,36 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Batch Inference Config Card */}
+        {batchInferenceConfig ? (
+          <motion.div key="batch-inference-config-real" {...cardTransition}>
+            <BatchInferenceConfigCard
+              config={batchInferenceConfig}
+              onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
+              onSubmitError={onTaskSubmitError}
+              messageId={messageId}
+              onConfigChange={(updatedConfig) => {
+                if (onMessageContentReplace) {
+                  const nextBlock = `[BATCH_INFERENCE_CONFIG]\n${JSON.stringify(updatedConfig, null, 2)}\n[/BATCH_INFERENCE_CONFIG]`
+                  const updatedContent = content.replace(/\[BATCH_INFERENCE_CONFIG\][\s\S]*?\[\/BATCH_INFERENCE_CONFIG\]/, nextBlock)
+                  void onMessageContentReplace(messageId, updatedContent)
+                }
+              }}
+            />
+          </motion.div>
+        ) : incompleteTag === 'BATCH_INFERENCE_CONFIG' && (
+          <motion.div key="batch-inference-config-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
+        {/* Batch Inference Summary Card */}
+        {batchInferenceSummaryConfig && (
+          <motion.div key="batch-inference-summary-real" {...cardTransition}>
+            <BatchInferenceSummaryCard config={batchInferenceSummaryConfig} />
+          </motion.div>
+        )}
+
         {/* Metadata Upload Card */}
         {metadataUploadConfig ? (
           <motion.div key="metadata-upload-real" {...cardTransition}>
@@ -1225,6 +1288,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'METADATA_UPLOAD',
           'MODEL_LIST',
           'PATCH_INFERENCE',
+          'BATCH_INFERENCE_CONFIG',
+          'BATCH_INFERENCE_SUMMARY',
           'CITATION_CONTEXTS',
           'REFERENCE',
           'WEB_SEARCH_RESULT',
@@ -1250,4 +1315,3 @@ const AssistantMessage = React.memo(function AssistantMessage({
 })
 
 export default AssistantMessage
-

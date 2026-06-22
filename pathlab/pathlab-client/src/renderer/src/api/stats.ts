@@ -138,7 +138,7 @@ export function hasValidRecentActivityCache(): boolean {
  */
 export interface UserUsageItem {
   user_id: string
-  email: string
+  username: string
   nickname: string | null
   role: string
   wsi_count: number

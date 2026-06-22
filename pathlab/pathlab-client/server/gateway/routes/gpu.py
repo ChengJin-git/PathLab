@@ -21,7 +21,7 @@ from backend.common.gpu_utils import (
     NoGPUAvailableError,
 )
 from gateway.models import GPUInfo, GPUStatusResponse
-from ..task_queue import get_task_queue
+from task_worker.runtime_status import get_runtime_status
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,14 @@ async def get_gpu_info(
             cuda_version=cuda_version,
         )
 
-    bad_gpus = get_task_queue().get_bad_gpus()
+    snapshot = await get_runtime_status()
+    bad_gpu_ids = snapshot.get("bad_gpu_ids") if snapshot else None
+    if isinstance(bad_gpu_ids, list):
+        bad_gpus: frozenset[int] = frozenset(
+            int(g) for g in bad_gpu_ids if isinstance(g, int)
+        )
+    else:
+        bad_gpus = frozenset()
 
     # Collect info for all GPUs
     gpus: List[GPUInfo] = []

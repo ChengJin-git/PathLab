@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ok, errResp } from '../../helpers/apiHelpers'
+import { ok } from '../../helpers/apiHelpers'
 
 vi.mock('@renderer/config', () => ({
   API_BASE: 'http://localhost:6100',
@@ -25,6 +25,7 @@ import {
   scanDirectory,
   startBatchImportTask,
   startDeleteExternalTask,
+  startDeleteWSIsTask,
   getStorageTaskStatus,
   cancelStorageTask,
   startBatchUpdateMetadataTask,
@@ -185,6 +186,13 @@ describe('getTrainingTaskStorageInfo', () => {
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/storage/training/task_001')
   })
+
+  it('requests quick summary mode when asked', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ task_id: 'task_001', quick: true, ai_results: { path: '', size: 0, exists: false, file_count: 0, wsi_dir_count: 0 }, training_dir: { path: '', size: 0, exists: false, file_count: 0 }, training_logs: { path: '', size: 0, exists: false, file_count: 0 }, analysis_logs: { path: '', size: 0, exists: false, file_count: 0 }, models: [], total_size: 0, total_size_mb: 0, total_size_gb: 0, total_files: 0 }))
+    await getTrainingTaskStorageInfo('task_001', { quick: true })
+    const [url] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/storage/training/task_001?quick=true')
+  })
 })
 
 describe('detectOrphanedFiles', () => {
@@ -258,12 +266,19 @@ describe('scanDirectory', () => {
 
   it('passes optional scan options', async () => {
     mockFetch.mockResolvedValueOnce(ok({ scan_id: 'scan_001', directory: '/data', files: [], total_count: 0, valid_count: 0, total_size: 0, wsi_count: 0, patch_count: 0, page: 2, page_size: 50, total_pages: 0 }))
-    await scanDirectory('/data', { scanId: 'scan_001', taskType: 'classification', page: 2, pageSize: 50 })
+    await scanDirectory('/data', { scanId: 'scan_001', taskType: 'wsi_classification', page: 2, pageSize: 50 })
     const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
     expect(body.scan_id).toBe('scan_001')
-    expect(body.task_type).toBe('classification')
+    expect(body.task_type).toBe('wsi_classification')
     expect(body.page).toBe(2)
     expect(body.page_size).toBe(50)
+  })
+
+  it('accepts canonical task types in scan options', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ scan_id: 'scan_001', directory: '/data', files: [], total_count: 0, valid_count: 0, total_size: 0, wsi_count: 0, patch_count: 0, page: 1, page_size: 100, total_pages: 0 }))
+    await scanDirectory('/data', { taskType: 'patch_segmentation' })
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.task_type).toBe('patch_segmentation')
   })
 })
 
@@ -287,6 +302,25 @@ describe('startDeleteExternalTask', () => {
     expect(String(url)).toContain('/storage/tasks/delete-external')
     const body = JSON.parse(opts?.body as string)
     expect(body.wsi_ids).toEqual(['wsi_001', 'wsi_002', 'wsi_003'])
+  })
+})
+
+describe('startDeleteWSIsTask', () => {
+  it('sends POST to /storage/tasks/delete-wsis with ids and mode', async () => {
+    mockFetch.mockResolvedValueOnce(ok({
+      task_id: 'delete_wsis_abc',
+      message: 'Delete WSI task started',
+      total_items: 2,
+    }))
+
+    const result = await startDeleteWSIsTask({ wsi_ids: ['wsi_1', 'wsi_2'], mode: 'complete' })
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/storage/tasks/delete-wsis')
+    expect(opts?.method).toBe('POST')
+    const body = JSON.parse(opts?.body as string)
+    expect(body).toEqual({ wsi_ids: ['wsi_1', 'wsi_2'], mode: 'complete' })
+    expect(result.task_id).toBe('delete_wsis_abc')
   })
 })
 

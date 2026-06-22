@@ -23,7 +23,7 @@ export function EditUserModal({ user, editForm, onEditFormChange, onSave, onClos
         <div className="space-y-4">
           <div>
             <Label className="text-sm text-gray-600">{t('settings.editUserModal.username')}</Label>
-            <Input value={user.email} disabled className="mt-1 bg-gray-50" />
+            <Input value={user.username} disabled className="mt-1 bg-gray-50" />
           </div>
           <div>
             <Label className="text-sm text-gray-600">{t('settings.editUserModal.nickname')}</Label>

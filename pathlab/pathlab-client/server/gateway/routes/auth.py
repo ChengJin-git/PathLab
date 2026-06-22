@@ -12,7 +12,8 @@ Endpoints:
 - POST /auth/jwt/login - DISABLED (blocked to prevent Turnstile bypass)
 - POST /auth/jwt/logout - Logout (client-side token removal)
 - POST /auth/secure-login - Secure login with client-side hashed password
-- POST /auth/register - Register new user
+- POST /auth/register - Disabled direct registration endpoint
+- POST /auth/users - Create user directly (admin only)
 - GET /auth/me - Get current user info
 - PATCH /auth/me - Update current user info
 - GET /auth/users - List all users (admin only)
@@ -34,20 +35,20 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from pydantic import Field
 
-from backend.database import get_db
+from backend.database import async_session, get_db
 from backend.auth import (
     fastapi_users,
     auth_backend,
     current_active_user,
     User,
     UserRead,
-    UserCreate,
     UserUpdate,
     require_admin,
 )
-from backend.auth.schemas import UserReadAdmin, AdminUserUpdate
+from backend.auth.schemas import UserReadAdmin, AdminUserUpdate, AdminUserCreate
 from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
+from backend.common.geo_ip import get_client_ip, is_mainland_china_ip
 from gateway.models import (
     AccessRequest,
     SecureLoginRequest,
@@ -114,20 +115,20 @@ def is_educational_email(email: str) -> bool:
 
 async def _send_activation_email(user: "User") -> None:
     logger.info(
-        f"[activation_email] triggered for user={user.email!r} "
+        f"[activation_email] triggered for user={user.username!r} "
         f"reg_email={user.registration_email!r}"
     )
     if not user.registration_email:
         logger.info(
-            f"[activation_email] skipped: no registration_email for user={user.email!r}"
+            f"[activation_email] skipped: no registration_email for user={user.username!r}"
         )
         return
     await send_templated_email(
         template_key="account_activated",
         to_email=user.registration_email,
         context={
-            "display_name": user.nickname or user.email,
-            "username": user.email,
+            "display_name": user.nickname or user.username,
+            "username": user.username,
         },
         for_admin=False,
     )
@@ -140,8 +141,8 @@ async def _send_application_received_email(user: "User") -> None:
         template_key="new_user_registration_notice",
         to_email=user.registration_email,
         context={
-            "display_name": user.nickname or user.email,
-            "username": user.email,
+            "display_name": user.nickname or user.username,
+            "username": user.username,
             "registration_email": user.registration_email,
         },
         for_admin=False,
@@ -149,33 +150,65 @@ async def _send_application_received_email(user: "User") -> None:
 
 
 async def _send_admin_application_email(user: "User") -> None:
-    from backend.common.config import Config
+    recipients: list[str] = []
+    admin_users_with_missing_email = []
+    
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(User).where(User.role == "admin")
+            )
+            admin_users = result.scalars().all()
+            logger.info(f"[admin_registration_email] found {len(admin_users)} admin users")
+            
+            for admin_user in admin_users:
+                if admin_user.role != "admin" or not admin_user.is_active:
+                    continue
+                email = (admin_user.registration_email or admin_user.email or "").strip().lower()
+                if email and email not in recipients:
+                    recipients.append(email)
+                elif not email:
+                    admin_users_with_missing_email.append(admin_user.username)
+                    
+    except Exception as exc:
+        logger.warning(f"[admin_registration_email] could not resolve admins: {exc}")
+        logger.exception("[admin_registration_email] full exception:")
 
-    settings = Config.get_global_settings()
-    admin_notify_email = settings.get("admin_notify_email", "")
-    await send_templated_email(
-        template_key="admin_new_user_registration_notice",
-        to_email=admin_notify_email,
-        context={
-            "display_name": user.nickname or user.email,
-            "username": user.email,
-            "registration_email": user.registration_email or "-",
-        },
-        for_admin=True,
-    )
+    if admin_users_with_missing_email:
+        logger.warning(
+            f"[admin_registration_email] admin users without email: {', '.join(admin_users_with_missing_email)}. "
+            f"Please set their email in user profile or configure admin_notify_email in settings."
+        )
+    
+    if not recipients:
+        settings = Config.get_global_settings()
+        fallback_email = (settings.get("admin_notify_email", "") or "").strip().lower()
+        if fallback_email:
+            recipients.append(fallback_email)
+            logger.info(f"[admin_registration_email] using fallback email: {fallback_email}")
+        else:
+            logger.warning(
+                "[admin_registration_email] no recipients found. "
+                "Please either: 1) Set email for admin users, or 2) Configure admin_notify_email in settings."
+            )
+            return
+
+    logger.info(f"[admin_registration_email] sending to {len(recipients)} recipient(s): {recipients}")
+    
+    for admin_email in recipients:
+        await send_templated_email(
+            template_key="admin_new_user_registration_notice",
+            to_email=admin_email,
+            context={
+                "display_name": user.nickname or user.username,
+                "username": user.username,
+                "registration_email": user.registration_email or "-",
+            },
+            for_admin=True,
+        )
 
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:
-    """
-    Verify Cloudflare Turnstile token with Cloudflare API.
-
-    Args:
-        token: Turnstile token from client
-        secret_key: Turnstile secret key
-
-    Returns:
-        True if verification successful, False otherwise
-    """
     if not token or not secret_key:
         return False
 
@@ -183,17 +216,12 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-                data={
-                    "secret": secret_key,
-                    "response": token,
-                },
+                data={"secret": secret_key, "response": token},
                 timeout=10.0,
             )
 
             if response.status_code != 200:
-                logger.warning(
-                    f"Turnstile verification failed with status {response.status_code}"
-                )
+                logger.warning(f"Turnstile verification failed with status {response.status_code}")
                 return False
 
             result = response.json()
@@ -208,6 +236,112 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
     except Exception as e:
         logger.error(f"Turnstile verification error: {e}")
         return False
+
+
+async def verify_tencent_captcha(
+    ticket: str, randstr: str, user_ip: str, app_id: str, secret_key: str
+) -> bool:
+    if not ticket or not randstr or not app_id or not secret_key:
+        return False
+
+    try:
+        import json
+        import hmac
+        import hashlib
+        from datetime import datetime, timezone
+
+        service = "captcha"
+        host = "captcha.intl.tencentcloudapi.com"
+        action = "DescribeCaptchaResult"
+        version = "2019-07-22"
+        region = "ap-guangzhou"
+
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        payload = json.dumps({
+            "CaptchaAppId": int(app_id),
+            "CaptchaType": 9,
+            "NeedGetCaptchaTime": 1,
+            "Randstr": randstr,
+            "UserIp": user_ip,
+            "Ticket": ticket,
+            "AppSecretKey": secret_key,
+        })
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"https://{host}/",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-TC-Action": action,
+                    "X-TC-Version": version,
+                    "X-TC-Timestamp": str(timestamp),
+                    "X-TC-Region": region,
+                },
+                content=payload,
+            )
+
+            if response.status_code != 200:
+                logger.warning(f"Tencent captcha verification failed: HTTP {response.status_code}")
+                return False
+
+            result = response.json()
+            error = result.get("Response", {}).get("Error")
+            if error:
+                logger.warning(f"Tencent captcha error: {error}")
+                return False
+
+            captcha_result = result.get("Response", {}).get("CaptchaCode", 0)
+            return captcha_result == 1
+
+    except Exception as e:
+        logger.error(f"Tencent captcha verification error: {e}")
+        return False
+
+
+async def verify_captcha(
+    request,
+    turnstile_token: Optional[str],
+    tencent_ticket: Optional[str],
+    tencent_randstr: Optional[str],
+) -> tuple[bool, Optional[str]]:
+    settings = Config.get_global_settings()
+    client_ip = get_client_ip(request)
+    is_china = await is_mainland_china_ip(client_ip)
+
+    tencent_enabled = settings.get("tencent_captcha_enabled", False)
+    turnstile_enabled = settings.get("turnstile_enabled", False)
+
+    if is_china and tencent_enabled:
+        expected_provider = "tencent"
+    elif turnstile_enabled:
+        expected_provider = "turnstile"
+    else:
+        return True, None
+
+    if expected_provider == "turnstile":
+        if not turnstile_token:
+            return False, "TURNSTILE_TOKEN_REQUIRED"
+        secret_key = settings.get("turnstile_secret_key", "")
+        valid = await verify_turnstile(turnstile_token, secret_key)
+        if not valid:
+            return False, "TURNSTILE_VERIFICATION_FAILED"
+        return True, None
+
+    if expected_provider == "tencent":
+        if not tencent_ticket or not tencent_randstr:
+            return False, "TENCENT_CAPTCHA_REQUIRED"
+        secret_key = settings.get("tencent_captcha_secret_key", "")
+        app_id = settings.get("tencent_captcha_app_id", "")
+        valid = await verify_tencent_captcha(
+            tencent_ticket, tencent_randstr, client_ip, app_id, secret_key
+        )
+        if not valid:
+            return False, "TENCENT_CAPTCHA_VERIFICATION_FAILED"
+        return True, None
+
+    return True, None
 
 
 # Create main auth router
@@ -230,23 +364,34 @@ router.include_router(
 )
 
 
-# Custom register endpoint (replaces FastAPI-Users default to allow non-email usernames)
 @router.post("/auth/register", response_model=UserRead, tags=["Authentication"])
-async def register_user(
-    user_create: UserCreate,
+async def register_user():
+    """Direct public registration is disabled; use request-access instead."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="REGISTER_ENDPOINT_DISABLED_USE_REQUEST_ACCESS",
+    )
+
+
+@router.post("/auth/users", response_model=UserReadAdmin, tags=["User Management"])
+async def create_user(
+    user_create: AdminUserCreate,
+    admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Register a new non-admin user.
-
-    Unlike the default FastAPI-Users register, this allows non-email usernames.
-    Public registration cannot create admin or superuser accounts.
-    """
+    """Create an active user account (admin only)."""
     from fastapi_users.password import PasswordHelper
     import uuid as uuid_module
+    from datetime import datetime, timezone
 
-    # Check if username already exists
-    result = await db.execute(select(User).where(User.email == user_create.email))
+    username = user_create.username
+    if len(user_create.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_PASSWORD_TOO_SHORT",
+        )
+
+    result = await db.execute(select(User).where(User.username == username))
     existing_user = result.scalar_one_or_none()
     if existing_user:
         raise HTTPException(
@@ -254,29 +399,25 @@ async def register_user(
             detail="REGISTER_USER_ALREADY_EXISTS",
         )
 
-    # Hash password (bcrypt for storage, SHA256 for secure login)
     password_helper = PasswordHelper()
     hashed_password = password_helper.hash(user_create.password)
-
-    # Also store SHA256 hash for secure login verification
     password_sha256 = hashlib.sha256(user_create.password.encode()).hexdigest()
 
-    # Create user
     user = User(
         id=uuid_module.uuid4(),
-        email=user_create.email,
+        username=username,
+        email=None,
         hashed_password=hashed_password,
-        password_sha256=password_sha256,  # For secure login
+        password_sha256=password_sha256,
         is_active=True,
         is_superuser=False,
-        is_verified=True,  # Auto-verify since we don't use email verification
-        role=user_create.role or "guest",
+        is_verified=True,
+        role=user_create.role,
         nickname=user_create.nickname,
         registration_email=user_create.registration_email,
+        first_activated_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
-    # Race-condition safe: catch IntegrityError if concurrent registration
-    # with same email passes the existence check above (PostgreSQL READ COMMITTED)
     try:
         db.add(user)
         await db.commit()
@@ -288,7 +429,9 @@ async def register_user(
             detail="REGISTER_USER_ALREADY_EXISTS",
         )
 
-    logger.info(f"New user registered: {user.email} (role={user.role})")
+    logger.info(
+        f"Admin {admin.username} created user {user.username} (role={user.role})"
+    )
     return user
 
 
@@ -314,24 +457,17 @@ async def request_access(
             detail="REGISTRATION_EMAIL_NOT_EDUCATIONAL",
         )
 
-    # Verify Cloudflare Turnstile if enabled
-    _reg_settings = Config.get_global_settings()
-    if _reg_settings.get("turnstile_enabled") and _reg_settings.get(
-        "turnstile_secret_key"
-    ):
-        if not request.turnstile_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_TOKEN_REQUIRED",
-            )
-        _turnstile_valid = await verify_turnstile(
-            request.turnstile_token, _reg_settings["turnstile_secret_key"]
+    captcha_valid, error_code = await verify_captcha(
+        request,
+        request.turnstile_token,
+        request.tencent_captcha_token,
+        request.tencent_captcha_randstr,
+    )
+    if not captcha_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_code,
         )
-        if not _turnstile_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_VERIFICATION_FAILED",
-            )
 
     # Normalise inputs
     username = request.username.strip()
@@ -349,7 +485,7 @@ async def request_access(
         )
 
     # Check username uniqueness
-    result = await db.execute(select(User).where(User.email == username))
+    result = await db.execute(select(User).where(User.username == username))
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -363,7 +499,8 @@ async def request_access(
 
     user = User(
         id=uuid_module.uuid4(),
-        email=username,  # username stored in email field
+        username=username,
+        email=reg_email,
         hashed_password=hashed_password,
         password_sha256=password_sha256,
         is_active=False,  # inactive until admin approves
@@ -386,7 +523,7 @@ async def request_access(
         )
 
     logger.info(
-        f"Access request submitted: username={user.email}, "
+        f"Access request submitted: username={user.username}, "
         f"registration_email={user.registration_email}"
     )
     asyncio.create_task(_send_application_received_email(user))
@@ -400,51 +537,18 @@ async def secure_login(
     request: SecureLoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Secure login with client-side hashed password.
-
-    Security features:
-    - Password is never transmitted in plaintext
-    - Client sends: SHA256(SHA256(password) + timestamp + APP_SALT)
-    - Timestamp validation prevents replay attacks (5 minute window)
-    - Rainbow table attacks are mitigated by timestamp + salt
-
-    Request body:
-    - username: User's username
-    - hashed_password: SHA256(SHA256(password) + timestamp + APP_SALT)
-    - timestamp: Unix timestamp in milliseconds when hash was created
-
-    Returns:
-    - access_token: JWT token for authentication
-    - token_type: "bearer"
-    """
-    # Verify Cloudflare Turnstile if enabled
-    settings = Config.get_global_settings()
-    turnstile_enabled = settings.get("turnstile_enabled", False)
-    turnstile_secret_key = settings.get("turnstile_secret_key", "")
-
-    if turnstile_enabled and turnstile_secret_key:
-        if not request.turnstile_token:
-            logger.warning(
-                f"Login attempt without Turnstile token for user {request.username}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_TOKEN_REQUIRED",
-            )
-
-        # Verify Turnstile token
-        turnstile_valid = await verify_turnstile(
-            request.turnstile_token, turnstile_secret_key
+    captcha_valid, error_code = await verify_captcha(
+        request,
+        request.turnstile_token,
+        request.tencent_captcha_token,
+        request.tencent_captcha_randstr,
+    )
+    if not captcha_valid:
+        logger.warning(f"Login captcha verification failed for user {request.username}: {error_code}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_code,
         )
-        if not turnstile_valid:
-            logger.warning(
-                f"Login attempt with invalid Turnstile token for user {request.username}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_VERIFICATION_FAILED",
-            )
 
     # Validate timestamp (prevent replay attacks)
     current_time_ms = int(time.time() * 1000)
@@ -459,7 +563,7 @@ async def secure_login(
         )
 
     # Find user by username
-    result = await db.execute(select(User).where(User.email == request.username))
+    result = await db.execute(select(User).where(User.username == request.username))
     user = result.scalar_one_or_none()
 
     if not user:
@@ -531,7 +635,7 @@ async def secure_login(
     jwt_strategy = get_jwt_strategy()
     token = await jwt_strategy.write_token(user)
 
-    logger.info(f"User {user.email} logged in securely (role={user.role})")
+    logger.info(f"User {user.username} logged in securely (role={user.role})")
 
     return {"access_token": token, "token_type": "bearer"}
 
@@ -553,7 +657,7 @@ async def list_users(
         select(User).offset(skip).limit(limit).order_by(User.created_at.desc())
     )
     users = result.scalars().all()
-    logger.info(f"Admin {admin.email} listed {len(users)} users")
+    logger.info(f"Admin {admin.username} listed {len(users)} users")
     return users
 
 
@@ -583,7 +687,7 @@ async def list_users_paged(
         pattern = f"%{normalized_search}%"
         filters.append(
             or_(
-                User.email.ilike(pattern),
+                User.username.ilike(pattern),
                 User.nickname.ilike(pattern),
             )
         )
@@ -609,7 +713,7 @@ async def list_users_paged(
     )
 
     logger.info(
-        f"Admin {admin.email} listed {len(users)} users "
+        f"Admin {admin.username} listed {len(users)} users "
         f"(paged, page={page}, page_size={page_size}, "
         f"search={normalized_search or None}, exclude_admin={exclude_admin})"
     )
@@ -690,7 +794,9 @@ async def update_user(
             user.hashed_password = password_helper.hash(password)
             # Also update SHA256 hash for secure login
             user.password_sha256 = hashlib.sha256(password.encode()).hexdigest()
-            logger.info(f"Admin {admin.email} changed password for user {user.email}")
+            logger.info(
+                f"Admin {admin.username} changed password for user {user.username}"
+            )
 
     # Update other fields
     for field, value in update_data.items():
@@ -710,7 +816,7 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
 
-    logger.info(f"Admin {admin.email} updated user {user.email}")
+    logger.info(f"Admin {admin.username} updated user {user.username}")
     if not was_active and user.is_active and is_first_activation:
         asyncio.create_task(_send_activation_email(user))
     return user
@@ -754,8 +860,8 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
 
-    logger.info(f"Admin {admin.email} deleted user {user.email}")
-    return {"success": True, "message": f"User {user.email} deleted"}
+    logger.info(f"Admin {admin.username} deleted user {user.username}")
+    return {"success": True, "message": f"User {user.username} deleted"}
 
 
 @router.post("/auth/accept-agreement", response_model=UserRead, tags=["Authentication"])
@@ -780,7 +886,7 @@ async def accept_agreement(
     await db.refresh(user)
 
     logger.info(
-        f"User {user.email} accepted the agreement from IP: {request.ip if request else 'unknown'}"
+        f"User {user.username} accepted the agreement from IP: {request.ip if request else 'unknown'}"
     )
     return user
 
@@ -818,7 +924,7 @@ async def revoke_user_agreement(
     await db.commit()
     await db.refresh(user)
 
-    logger.info(f"Admin {admin.email} revoked agreement for user {user.email}")
+    logger.info(f"Admin {admin.username} revoked agreement for user {user.username}")
     return user
 
 
@@ -858,7 +964,7 @@ async def batch_activate_users(
             updated += 1
 
     await db.commit()
-    logger.info(f"Admin {admin.email} batch activated {updated} users")
+    logger.info(f"Admin {admin.username} batch activated {updated} users")
     for _u in activated_users:
         asyncio.create_task(_send_activation_email(_u))
     return {"updated": updated}
@@ -892,7 +998,7 @@ async def batch_deactivate_users(
             updated += 1
 
     await db.commit()
-    logger.info(f"Admin {admin.email} batch deactivated {updated} users")
+    logger.info(f"Admin {admin.username} batch deactivated {updated} users")
     return {"updated": updated}
 
 
@@ -923,7 +1029,7 @@ async def batch_delete_users(
             deleted += 1
 
     await db.commit()
-    logger.info(f"Admin {admin.email} batch deleted {deleted} users")
+    logger.info(f"Admin {admin.username} batch deleted {deleted} users")
     return {"deleted": deleted}
 
 
@@ -955,7 +1061,7 @@ async def set_maintenance_mode(
     if request.enabled:
         if previous_enabled:
             logger.info(
-                f"Admin {admin.email} requested maintenance mode enable, but it is already enabled"
+                f"Admin {admin.username} requested maintenance mode enable, but it is already enabled"
             )
             return {"enabled": True, "affected_users": 0}
 
@@ -974,13 +1080,13 @@ async def set_maintenance_mode(
         Config.set_maintenance_mode(True)
         await db.commit()
         logger.info(
-            f"Admin {admin.email} enabled maintenance mode, deactivated {affected_users} users"
+            f"Admin {admin.username} enabled maintenance mode, deactivated {affected_users} users"
         )
     else:
         if not previous_enabled:
             Config.set_maintenance_mode(False)
             logger.info(
-                f"Admin {admin.email} requested maintenance mode disable, but it is already disabled"
+                f"Admin {admin.username} requested maintenance mode disable, but it is already disabled"
             )
             return {"enabled": False, "affected_users": 0}
 
@@ -1001,7 +1107,7 @@ async def set_maintenance_mode(
         Config.set_maintenance_mode(False)
         await db.commit()
         logger.info(
-            f"Admin {admin.email} disabled maintenance mode, restored {affected_users} users"
+            f"Admin {admin.username} disabled maintenance mode, restored {affected_users} users"
         )
 
     return {"enabled": request.enabled, "affected_users": affected_users}
@@ -1076,7 +1182,7 @@ async def set_maintenance_notice(
     result = Config.set_maintenance_notice(request.message)
     if result:
         logger.info(
-            f"Admin {admin.email} set maintenance notice: {request.message[:50]}..."
+            f"Admin {admin.username} set maintenance notice: {request.message[:50]}..."
         )
         return {
             "active": True,
@@ -1084,7 +1190,7 @@ async def set_maintenance_notice(
             "updated_at": result["updated_at"],
         }
     else:
-        logger.info(f"Admin {admin.email} cleared maintenance notice")
+        logger.info(f"Admin {admin.username} cleared maintenance notice")
         return {"active": False, "message": None}
 
 
@@ -1104,7 +1210,7 @@ async def acknowledge_notice(
     user.notice_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
     await db.refresh(user)
-    logger.info(f"User {user.email} acknowledged maintenance notice")
+    logger.info(f"User {user.username} acknowledged maintenance notice")
     if user.avatar_path:
         user.avatar_url = (
             f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
@@ -1131,7 +1237,7 @@ async def change_my_password(
         )
 
     if request.current_password_sha256 != user.password_sha256:
-        logger.warning(f"User {user.email} provided incorrect current password")
+        logger.warning(f"User {user.username} provided incorrect current password")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="CURRENT_PASSWORD_INCORRECT",
@@ -1149,7 +1255,7 @@ async def change_my_password(
             f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
         )
 
-    logger.info(f"User {user.email} changed their own password")
+    logger.info(f"User {user.username} changed their own password")
     return user
 
 
@@ -1177,13 +1283,7 @@ async def update_me(
     update_data = user_update.model_dump(exclude_unset=True)
 
     new_email = update_data.pop("email", None)
-    if new_email is not None and new_email != user.email:
-        result = await db.execute(select(User).where(User.email == new_email))
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="UPDATE_USER_EMAIL_ALREADY_EXISTS",
-            )
+    if new_email is not None:
         user.email = new_email
 
     new_password = update_data.pop("password", None)
@@ -1210,7 +1310,7 @@ async def update_me(
             f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
         )
 
-    logger.info(f"User {user.email} updated their own profile")
+    logger.info(f"User {user.username} updated their own profile")
     return user
 
 
@@ -1262,7 +1362,7 @@ async def upload_avatar(
     # Populate avatar_url for response
     user.avatar_url = f"/avatars/{filename}?t={int(user.updated_at.timestamp())}"
 
-    logger.info(f"User {user.email} uploaded a new avatar")
+    logger.info(f"User {user.username} uploaded a new avatar")
     return user
 
 
@@ -1287,7 +1387,7 @@ async def delete_avatar(
         await db.commit()
         await db.refresh(user)
 
-    logger.info(f"User {user.email} deleted their avatar")
+    logger.info(f"User {user.username} deleted their avatar")
     return user
 
 

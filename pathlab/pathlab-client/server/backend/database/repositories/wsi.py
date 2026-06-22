@@ -5,7 +5,7 @@ WSIRepository - Data Access Layer
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select, update, delete, func, asc, desc, and_, or_
+from sqlalchemy import select, update, delete, func, asc, desc, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 
@@ -18,7 +18,47 @@ from backend.common.file_types import (
     TIF_EXTENSIONS,
     SIZE_THRESHOLD,
 )
+from backend.ai.task_taxonomy import (
+    is_canonical_task_type,
+    is_segmentation_task,
+    normalize_task_type,
+)
+from backend.services.dataset_splits import DatasetSplitService
 from .base import BaseRepository
+
+
+def _canonical_task_type_for_response(
+    task_type: Optional[str], data_type: Optional[str]
+) -> str:
+    raw_task_type = (task_type or "").strip().lower()
+    response_data_type = (data_type or "wsi").strip().lower()
+    if not raw_task_type:
+        # Default: infer from data_type
+        return "patch_classification" if response_data_type == "patch" else "wsi_classification"
+    if is_canonical_task_type(raw_task_type):
+        return raw_task_type
+    try:
+        return normalize_task_type(task_type=raw_task_type, data_type=response_data_type)
+    except ValueError:
+        raise
+
+
+def _canonical_task_type_for_filter(
+    task_type: Optional[str], data_type: Optional[str]
+) -> Optional[str]:
+    if not task_type:
+        return None
+    try:
+        if data_type in {"wsi", "patch"}:
+            return normalize_task_type(task_type=task_type, data_type=data_type)
+        raw = task_type.strip().lower()
+        if raw == "segmentation":
+            return normalize_task_type(task_type=raw, data_type="patch")
+        if raw == "survival":
+            return normalize_task_type(task_type=raw, data_type="wsi")
+        return normalize_task_type(task_type=task_type)
+    except ValueError:
+        return task_type
 
 
 def _dataset_with_group_loader():
@@ -96,21 +136,8 @@ class WSIRepository(BaseRepository[WSISlide]):
 
     @staticmethod
     def _build_file_level_data_type_conditions():
-        tif_path_filter = WSIRepository._build_path_extension_filter(TIF_EXTENSIONS)
-        is_wsi = or_(
-            WSIRepository._build_path_extension_filter(WSI_EXTENSIONS),
-            and_(tif_path_filter, WSISlide.file_size >= SIZE_THRESHOLD),
-        )
-        is_patch = or_(
-            WSIRepository._build_path_extension_filter(PATCH_EXTENSIONS),
-            and_(
-                tif_path_filter,
-                or_(
-                    WSISlide.file_size < SIZE_THRESHOLD,
-                    WSISlide.file_size.is_(None),
-                ),
-            ),
-        )
+        is_wsi = WSISlide.data_type == "wsi"
+        is_patch = WSISlide.data_type == "patch"
         return is_wsi, is_patch
 
     @staticmethod
@@ -497,14 +524,6 @@ class WSIRepository(BaseRepository[WSISlide]):
         # Build data_type case expressions
         is_wsi_case = case((is_wsi, 1), else_=0)
         is_patch_case = case((is_patch, 1), else_=0)
-        split_unit_identifier = case(
-            (
-                DataGroup.aggregation_level == "case",
-                func.coalesce(WSISlide.case_id, WSISlide.wsi_id),
-            ),
-            else_=WSISlide.wsi_id,
-        )
-
         datasets_query = (
             select(
                 Dataset.dataset_id,
@@ -538,6 +557,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             DataGroup.aggregation_level,
         ).order_by(Dataset.name)
         datasets_result = await db.execute(datasets_query)
+        dataset_rows = datasets_result.all()
 
         # Get labels per dataset
         labels_per_dataset_query = (
@@ -597,72 +617,26 @@ class WSIRepository(BaseRepository[WSISlide]):
         for row in survival_per_dataset_result.all():
             dataset_survival_map[row.dataset_id] = row.survival_count
 
-        # Get split counts per dataset (train/val/test)
-        splits_per_dataset_query = (
+        from ..models import SegmentationAnnotation
+
+        seg_per_dataset_query = (
             select(
-                Dataset.dataset_id,
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                func.lower(WSISlide.split) == "train",
-                                split_unit_identifier,
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_train_count"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                or_(
-                                    func.lower(WSISlide.split) == "val",
-                                    func.lower(WSISlide.split) == "validation",
-                                ),
-                                split_unit_identifier,
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_val_count"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                func.lower(WSISlide.split) == "test",
-                                split_unit_identifier,
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_test_count"),
+                SegmentationAnnotation.source_dataset_id.label("dataset_id"),
+                func.count(SegmentationAnnotation.id).label("annot_count"),
             )
-            .select_from(WSISlide)
-            .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
-            .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
+            .where(SegmentationAnnotation.source_dataset_id.isnot(None))
+            .where(SegmentationAnnotation.source != "viewer")
+            .group_by(SegmentationAnnotation.source_dataset_id)
         )
+        seg_per_dataset_result = await db.execute(seg_per_dataset_query)
+        dataset_seg_annotation_map: Dict[str, int] = {
+            row.dataset_id: row.annot_count for row in seg_per_dataset_result.all()
+        }
 
-        if dataset_visibility_filter is not None:
-            splits_per_dataset_query = splits_per_dataset_query.where(
-                dataset_visibility_filter
-            )
-
-        splits_per_dataset_query = splits_per_dataset_query.group_by(Dataset.dataset_id)
-        splits_per_dataset_result = await db.execute(splits_per_dataset_query)
-
-        # Build splits map per dataset_id
-        dataset_splits_map = {}
-        for row in splits_per_dataset_result.all():
-            train_count = row.split_train_count or 0
-            val_count = row.split_val_count or 0
-            test_count = row.split_test_count or 0
-            dataset_splits_map[row.dataset_id] = {
-                "has_predefined_splits": (train_count + val_count + test_count) > 0,
-                "train": train_count,
-                "val": val_count,
-                "test": test_count,
-            }
+        dataset_ids_for_split_summary = [row.dataset_id for row in dataset_rows if row.dataset_id]
+        split_summaries = await DatasetSplitService.summarize_many(
+            db, dataset_ids_for_split_summary
+        )
 
         # Get event_status distribution per dataset (for survival prediction)
         event_status_per_dataset_query = (
@@ -703,7 +677,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 dataset_event_status_map[ds_id]["censored"] = row.count
 
         datasets = []
-        for row in datasets_result.all():
+        for row in dataset_rows:
             group_data_type = (
                 row.group_data_type if row.group_data_type in {"wsi", "patch"} else None
             )
@@ -711,10 +685,24 @@ class WSIRepository(BaseRepository[WSISlide]):
 
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)
-            splits_info = dataset_splits_map.get(
-                row.dataset_id,
-                {"has_predefined_splits": False, "train": 0, "val": 0, "test": 0},
+            canonical_group_task_type = _canonical_task_type_for_response(
+                row.group_task_type, group_data_type
             )
+            if is_segmentation_task(canonical_group_task_type):
+                is_unlabeled = dataset_seg_annotation_map.get(row.dataset_id, 0) == 0
+            elif "survival" in canonical_group_task_type:
+                is_unlabeled = survival_count == 0
+            else:
+                is_unlabeled = len(ds_labels) == 0
+            split_summary = split_summaries.get(row.dataset_id)
+            if split_summary is not None:
+                has_predefined_splits = split_summary.has_predefined_splits
+                split_counts = split_summary.predefined_split_counts
+                predefined_split_unit = split_summary.predefined_split_unit
+            else:
+                has_predefined_splits = False
+                split_counts = {"train": 0, "val": 0, "test": 0}
+                predefined_split_unit = "files"
             event_status_dist = dataset_event_status_map.get(row.dataset_id, {})
 
             if (
@@ -743,19 +731,17 @@ class WSIRepository(BaseRepository[WSISlide]):
                     "source_organ": row.source_organ or None,
                     "file_count": row.file_count,
                     "data_type": data_type,
-                    "group_task_type": row.group_task_type,
+                    "group_task_type": canonical_group_task_type,
                     "aggregation_level": row.aggregation_level or "file",
                     "labels": ds_labels,
                     "survival_count": survival_count,
                     "event_status": event_status_dist,
-                    "has_predefined_splits": splits_info["has_predefined_splits"],
-                    "predefined_split_counts": {
-                        "train": splits_info["train"],
-                        "val": splits_info["val"],
-                        "test": splits_info["test"],
-                    },
+                    "has_predefined_splits": has_predefined_splits,
+                    "predefined_split_counts": split_counts,
+                    "predefined_split_unit": predefined_split_unit,
                     "is_public": bool(row.is_public or False),
                     "access_type": access_type,
+                    "is_unlabeled": is_unlabeled,
                 }
             )
 
@@ -813,6 +799,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
     ):
         from ..models import DatasetStats
 
@@ -861,8 +848,9 @@ class WSIRepository(BaseRepository[WSISlide]):
         if dataset_id:
             query = query.where(Dataset.dataset_id == dataset_id)
 
-        if task_type:
-            query = query.where(DataGroup.task_type == task_type)
+        canonical_task_type = _canonical_task_type_for_filter(task_type, data_type)
+        if canonical_task_type:
+            query = query.where(DataGroup.task_type == canonical_task_type)
 
         if aggregation_level:
             query = query.where(DataGroup.aggregation_level == aggregation_level)
@@ -874,6 +862,9 @@ class WSIRepository(BaseRepository[WSISlide]):
                     func.nullif(func.trim(Dataset.source_organ), ""), "__unknown__"
                 )
                 query = query.where(source_expr == normalized_source)
+
+        if is_public is not None:
+            query = query.where(Dataset.is_public.is_(is_public))
 
         return query
 
@@ -888,6 +879,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
     ) -> int:
         subq = WSIRepository._build_dataset_summary_query(
             data_type=data_type,
@@ -898,6 +890,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             task_type=task_type,
             aggregation_level=aggregation_level,
             source_organ=source_organ,
+            is_public=is_public,
         ).subquery("ds_count")
         result = await db.execute(select(func.count()).select_from(subq))
         return result.scalar() or 0
@@ -913,6 +906,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
         skip: int = 0,
         limit: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -941,6 +935,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             task_type=task_type,
             aggregation_level=aggregation_level,
             source_organ=source_organ,
+            is_public=is_public,
         ).order_by(Dataset.name)
 
         if skip > 0:
@@ -952,19 +947,33 @@ class WSIRepository(BaseRepository[WSISlide]):
         rows = result.all()
 
         seg_ids = [
-            r.dataset_id for r in rows if r.task_type == "segmentation" and r.dataset_id
+            r.dataset_id
+            for r in rows
+            if is_segmentation_task(_canonical_task_type_for_response(r.task_type, r.data_type))
+            and r.dataset_id
         ]
         coco_map: Dict[str, List[Dict[str, Any]]] = {}
         if seg_ids:
             coco_map = await WSIRepository._get_coco_categories_batch(db, seg_ids)
 
+        dataset_ids = [r.dataset_id for r in rows if r.dataset_id]
+        split_summaries = await DatasetSplitService.summarize_many(db, dataset_ids)
+
         datasets = []
         for row in rows:
-            train_count = row.split_train_count or 0
-            val_count = row.split_val_count or 0
-            test_count = row.split_test_count or 0
-            has_predefined_splits = (train_count + val_count + test_count) > 0
+            summary = split_summaries.get(row.dataset_id)
+            if summary is not None:
+                has_predefined_splits = summary.has_predefined_splits
+                split_counts = summary.predefined_split_counts
+                split_unit = summary.predefined_split_unit
+            else:
+                has_predefined_splits = False
+                split_counts = {"train": 0, "val": 0, "test": 0}
+                split_unit = "cases" if row.aggregation_level == "case" else "files"
 
+            canonical_task_type = _canonical_task_type_for_response(
+                row.task_type, row.data_type
+            )
             dataset_dict = {
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name or "Uncategorized",
@@ -972,7 +981,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 "group_id": row.group_id,
                 "data_type": row.data_type,
                 "aggregation_level": row.aggregation_level,
-                "task_type": row.task_type or "classification",
+                "task_type": canonical_task_type,
                 "source_organ": row.source_organ,
                 "is_public": bool(row.is_public),
                 "parent_dataset_id": row.parent_dataset_id,
@@ -980,17 +989,11 @@ class WSIRepository(BaseRepository[WSISlide]):
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "has_predefined_splits": has_predefined_splits,
-                "predefined_split_unit": "cases"
-                if row.aggregation_level == "case"
-                else "files",
-                "predefined_split_counts": {
-                    "train": train_count,
-                    "val": val_count,
-                    "test": test_count,
-                },
+                "predefined_split_unit": split_unit,
+                "predefined_split_counts": split_counts,
             }
 
-            if row.task_type == "segmentation" and row.dataset_id:
+            if is_segmentation_task(canonical_task_type) and row.dataset_id:
                 coco_categories = coco_map.get(row.dataset_id, [])
                 if coco_categories:
                     dataset_dict["coco_categories"] = coco_categories
@@ -1087,6 +1090,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
         skip: int = 0,
         limit: int = 0,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -1104,6 +1108,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             task_type=task_type,
             aggregation_level=aggregation_level,
             source_organ=source_organ,
+            is_public=is_public,
         ).subquery("ds")
         total_col = func.count().over().label("_total_count")
         query = select(base_subq, total_col).order_by(base_subq.c.dataset_name)
@@ -1120,17 +1125,33 @@ class WSIRepository(BaseRepository[WSISlide]):
         total = int(rows[0]._total_count)
 
         seg_ids = [
-            r.dataset_id for r in rows if r.task_type == "segmentation" and r.dataset_id
+            r.dataset_id
+            for r in rows
+            if is_segmentation_task(_canonical_task_type_for_response(r.task_type, r.data_type))
+            and r.dataset_id
         ]
         coco_map: Dict[str, List[Dict[str, Any]]] = {}
         if seg_ids:
             coco_map = await WSIRepository._get_coco_categories_batch(db, seg_ids)
 
+        dataset_ids = [r.dataset_id for r in rows if r.dataset_id]
+        split_summaries = await DatasetSplitService.summarize_many(db, dataset_ids)
+
         datasets: List[Dict[str, Any]] = []
         for row in rows:
-            train_count = row.split_train_count or 0
-            val_count = row.split_val_count or 0
-            test_count = row.split_test_count or 0
+            summary = split_summaries.get(row.dataset_id)
+            if summary is not None:
+                has_predefined_splits = summary.has_predefined_splits
+                split_counts = summary.predefined_split_counts
+                split_unit = summary.predefined_split_unit
+            else:
+                has_predefined_splits = False
+                split_counts = {"train": 0, "val": 0, "test": 0}
+                split_unit = "cases" if row.aggregation_level == "case" else "files"
+
+            canonical_task_type = _canonical_task_type_for_response(
+                row.task_type, row.data_type
+            )
             dataset_dict = {
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name or "Uncategorized",
@@ -1138,24 +1159,18 @@ class WSIRepository(BaseRepository[WSISlide]):
                 "group_id": row.group_id,
                 "data_type": row.data_type,
                 "aggregation_level": row.aggregation_level,
-                "task_type": row.task_type or "classification",
+                "task_type": canonical_task_type,
                 "source_organ": row.source_organ,
                 "is_public": bool(row.is_public),
                 "parent_dataset_id": row.parent_dataset_id,
                 "parent_dataset_name": row.parent_dataset_name,
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
-                "has_predefined_splits": (train_count + val_count + test_count) > 0,
-                "predefined_split_unit": "cases"
-                if row.aggregation_level == "case"
-                else "files",
-                "predefined_split_counts": {
-                    "train": train_count,
-                    "val": val_count,
-                    "test": test_count,
-                },
+                "has_predefined_splits": has_predefined_splits,
+                "predefined_split_unit": split_unit,
+                "predefined_split_counts": split_counts,
             }
-            if row.task_type == "segmentation" and row.dataset_id:
+            if is_segmentation_task(canonical_task_type) and row.dataset_id:
                 coco_categories = coco_map.get(row.dataset_id, [])
                 if coco_categories:
                     dataset_dict["coco_categories"] = coco_categories
@@ -1165,6 +1180,50 @@ class WSIRepository(BaseRepository[WSISlide]):
             datasets.append(dataset_dict)
 
         return datasets, total
+
+    @staticmethod
+    async def get_dataset_source_options(
+        db: AsyncSession,
+        data_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+        task_type: Optional[str] = None,
+        aggregation_level: Optional[str] = None,
+        is_public: Optional[bool] = None,
+    ) -> List[str]:
+        """Return distinct visible dataset source organs without loading datasets or WSIs."""
+        source_expr = func.coalesce(
+            func.nullif(func.trim(Dataset.source_organ), ""), "__unknown__"
+        ).label("source_organ")
+
+        query = (
+            select(source_expr)
+            .select_from(Dataset)
+            .join(DataGroup, Dataset.group_id == DataGroup.group_id)
+            .distinct()
+        )
+
+        if user_id is not None:
+            conditions = [Dataset.user_id == user_id, Dataset.is_public.is_(True)]
+            if elevated_dataset_ids:
+                conditions.append(Dataset.dataset_id.in_(elevated_dataset_ids))
+            query = query.where(or_(*conditions))
+
+        if data_type in {"wsi", "patch"}:
+            query = query.where(DataGroup.data_type == data_type)
+
+        canonical_task_type = _canonical_task_type_for_filter(task_type, data_type)
+        if canonical_task_type:
+            query = query.where(DataGroup.task_type == canonical_task_type)
+
+        if aggregation_level:
+            query = query.where(DataGroup.aggregation_level == aggregation_level)
+
+        if is_public is not None:
+            query = query.where(Dataset.is_public.is_(is_public))
+
+        result = await db.execute(query.order_by(source_expr))
+        return [row.source_organ for row in result.all()]
 
     @staticmethod
     async def get_by_filename_in_dataset(
@@ -1282,6 +1341,20 @@ class WSIRepository(BaseRepository[WSISlide]):
 
         result = await db.execute(query)
         return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def get_original_filenames_by_dataset(
+        db: AsyncSession, dataset_id: str, filenames: List[str]
+    ) -> set[str]:
+        """Return existing original filenames in a dataset for the given candidates."""
+        if not filenames:
+            return set()
+        result = await db.execute(
+            select(WSISlide.original_filename)
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.original_filename.in_(list(dict.fromkeys(filenames))))
+        )
+        return {row[0] for row in result.all() if row[0] is not None}
 
     @staticmethod
     async def count_by_dataset(

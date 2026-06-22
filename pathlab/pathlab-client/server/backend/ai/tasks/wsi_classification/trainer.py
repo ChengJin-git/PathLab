@@ -42,8 +42,8 @@ from backend.ai.schemas import (
     TrainResponse,
     FeatureExtractionResponse,
 )
+from backend.common.coords_cache import compute_params_hash
 from backend.ai.tasks.feature_cache import (
-    compute_params_hash,
     find_cached_features,
     get_cache_save_path,
     create_symlink_to_cache,
@@ -75,18 +75,22 @@ from backend.ai.tasks.training_utils import (
     is_kfold_splits,
     get_num_folds,
     calculate_kfold_classification_metrics,
+    classification_metrics_from_fold_results,
     calculate_progress_update_interval,
     interpolate_progress,
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
     check_training_interruption,
+    should_load_resume_checkpoint,
+    save_ai_result_artifacts,
+    finalize_ai_result_artifacts,
 )
 import logging
 
 # Minimum number of patches required for a WSI to be considered valid.
 # WSIs with fewer patches are skipped during feature extraction and training
 # to avoid low-quality inputs that would degrade model performance.
-MIN_PATCHES_THRESHOLD = 100
+MIN_PATCHES_THRESHOLD = 5
 
 # Throttle WSI-classification result persistence to reduce end-of-training I/O spikes.
 SAVE_FILE_IO_MAX_WORKERS = 4
@@ -1166,20 +1170,21 @@ class WSIClassificationTrainer(BaseTrainer):
                 _ckpt = torch.load(
                     resume_checkpoint_path, map_location="cpu", weights_only=False
                 )
-                model.load_state_dict(_ckpt["model_state_dict"])
-                optimizer.load_state_dict(_ckpt["optimizer_state_dict"])
-                scheduler.load_state_dict(_ckpt["scheduler_state_dict"])
-                history = _ckpt["history"]
-                best_val_loss = _ckpt["best_val_loss"]
-                best_val_auc = _ckpt["best_val_auc"]
-                best_state_dict = _ckpt["best_state_dict"]
-                epochs_without_improvement = _ckpt["epochs_without_improvement"]
-                start_epoch = _ckpt["epoch"] + 1
-                prefix = f"{run_name} " if run_name else ""
-                await logger.info(
-                    f"{prefix}Resumed training from epoch {_ckpt['epoch']}",
-                    metadata={"resumed_from_epoch": _ckpt["epoch"]},
-                )
+                if should_load_resume_checkpoint(_ckpt, fold_idx=fold_idx):
+                    model.load_state_dict(_ckpt["model_state_dict"])
+                    optimizer.load_state_dict(_ckpt["optimizer_state_dict"])
+                    scheduler.load_state_dict(_ckpt["scheduler_state_dict"])
+                    history = _ckpt["history"]
+                    best_val_loss = _ckpt["best_val_loss"]
+                    best_val_auc = _ckpt["best_val_auc"]
+                    best_state_dict = _ckpt["best_state_dict"]
+                    epochs_without_improvement = _ckpt["epochs_without_improvement"]
+                    start_epoch = _ckpt["epoch"] + 1
+                    prefix = f"{run_name} " if run_name else ""
+                    await logger.info(
+                        f"{prefix}Resumed training from epoch {_ckpt['epoch']}",
+                        metadata={"resumed_from_epoch": _ckpt["epoch"]},
+                    )
             except Exception as _e:
                 prefix = f"{run_name} " if run_name else ""
                 await logger.info(
@@ -1844,7 +1849,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_ids=train_ids,
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
             val_dataset = (
@@ -1853,7 +1858,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=val_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if val_ids
@@ -1865,7 +1870,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=test_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if test_ids
@@ -1876,7 +1881,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 features_dir=features_dir,
                 wsi_ids=train_ids,
                 labels=labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
             val_dataset = (
@@ -1884,7 +1889,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     features_dir=features_dir,
                     wsi_ids=val_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if val_ids
@@ -1895,7 +1900,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     features_dir=features_dir,
                     wsi_ids=test_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if test_ids
@@ -2000,7 +2005,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_ids=all_sample_ids,
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
         else:
@@ -2008,7 +2013,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 features_dir=features_dir,
                 wsi_ids=all_sample_ids,
                 labels=labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
 
@@ -2090,8 +2095,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
                 if _ckpt.get("type") == "kfold":
                     fold_results = _ckpt.get("completed_fold_results", {})
-                    all_val_metrics = _ckpt.get(
-                        "completed_val_metrics", all_val_metrics
+                    all_val_metrics = classification_metrics_from_fold_results(
+                        fold_results
                     )
                     await logger.info(
                         f"Resumed kfold: {len(fold_results)} folds already completed",
@@ -2135,7 +2140,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=train_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 val_dataset = CaseFeatureDataset(
@@ -2143,7 +2148,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=val_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
             else:
@@ -2151,14 +2156,14 @@ class WSIClassificationTrainer(BaseTrainer):
                     features_dir=features_dir,
                     wsi_ids=train_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 val_dataset = WSIFeatureDataset(
                     features_dir=features_dir,
                     wsi_ids=val_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
 
@@ -2195,6 +2200,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     "type": "kfold",
                     "completed_fold_results": fold_results,
                     "completed_val_metrics": all_val_metrics,
+                    "fold_idx": fold_idx + 1,
                 },
             )
 
@@ -2418,9 +2424,8 @@ class WSIClassificationTrainer(BaseTrainer):
         - Probabilities (probs): probability distribution over classes
         - Attention weights: per-patch attention scores
 
-        Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
-        - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
+        Results are saved to the task-level AI result bundle, including result
+        metadata and attention arrays when available.
         """
         import concurrent.futures
         from functools import partial
@@ -2483,7 +2488,6 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         model.eval()
-        ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, "forward_with_raw_attention")
         num_classes = len(classes)
 
@@ -2595,7 +2599,6 @@ class WSIClassificationTrainer(BaseTrainer):
                         )
 
                         for wid in slide_wsi_ids:
-                            wsi_result_dir = ai_results_root / wid
                             slide_attn = slide_attentions.get(wid)
                             slide_raw_attn = slide_raw_attentions.get(wid)
 
@@ -2638,23 +2641,9 @@ class WSIClassificationTrainer(BaseTrainer):
                                     result_data,
                                     slide_attn,
                                     slide_raw_attn,
-                                    wsi_result_dir,
                                 )
                             )
 
-                            # Prepare database record
-                            result_file = (
-                                wsi_result_dir
-                                / f"train_{task_id}{fold_suffix}_result.json"
-                            )
-                            attention_file_path = (
-                                str(
-                                    wsi_result_dir
-                                    / f"train_{task_id}{fold_suffix}_attention.npy"
-                                )
-                                if slide_attn is not None
-                                else None
-                            )
                             db_records.append(
                                 {
                                     "wsi_id": wid,
@@ -2670,8 +2659,8 @@ class WSIClassificationTrainer(BaseTrainer):
                                         "attention_type": attention_type,
                                         "attention_shape": attention_shape,
                                         "fold_key": fold_key,
-                                        "result_file": str(result_file),
-                                        "attention_file": attention_file_path,
+                                        "result_file": None,
+                                        "attention_file": None,
                                         "aggregation_level": "case",
                                     },
                                 }
@@ -2680,7 +2669,6 @@ class WSIClassificationTrainer(BaseTrainer):
                     else:
                         # Slide-level: original behavior
                         wsi_id = sample_id
-                        wsi_result_dir = ai_results_root / wsi_id
 
                         attention_shape = (
                             list(attention_np.shape)
@@ -2714,22 +2702,9 @@ class WSIClassificationTrainer(BaseTrainer):
                                 result_data,
                                 attention_np,
                                 raw_attention_np,
-                                wsi_result_dir,
                             )
                         )
 
-                        # Prepare database record
-                        result_file = (
-                            wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                        )
-                        attention_file_path = (
-                            str(
-                                wsi_result_dir
-                                / f"train_{task_id}{fold_suffix}_attention.npy"
-                            )
-                            if attention_np is not None
-                            else None
-                        )
                         db_records.append(
                             {
                                 "wsi_id": wsi_id,
@@ -2744,8 +2719,8 @@ class WSIClassificationTrainer(BaseTrainer):
                                     "attention_type": attention_type,
                                     "attention_shape": attention_shape,
                                     "fold_key": fold_key,
-                                    "result_file": str(result_file),
-                                    "attention_file": attention_file_path,
+                                    "result_file": None,
+                                    "attention_file": None,
                                 },
                             }
                         )
@@ -2819,27 +2794,24 @@ class WSIClassificationTrainer(BaseTrainer):
 
         def save_single_wsi_files(item, fold_suffix: str, task_id: str):
             """Synchronous function to save files for a single WSI."""
-            wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir = item
-            wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-            with open(result_file, "w", encoding="utf-8") as f:
-                json.dump(result_data, f, ensure_ascii=False)
-
+            wsi_id, result_data, attention_np, raw_attention_np = item
+            arrays = {}
             if attention_np is not None:
-                attention_file = (
-                    wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
-                )
-                np.save(attention_file, attention_np)
-                ensure_recommendation_preview_cache(
-                    wsi_id, attention_file, Config.get_uploads_dir()
-                )
+                arrays["attention"] = attention_np
 
             if raw_attention_np is not None:
-                raw_attention_file = (
-                    wsi_result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
-                )
-                np.save(raw_attention_file, raw_attention_np)
+                arrays["attention_raw"] = raw_attention_np
+
+            save_ai_result_artifacts(
+                Config.get_uploads_dir(),
+                task_id,
+                wsi_id,
+                result_data,
+                arrays=arrays or None,
+                fold_suffix=fold_suffix,
+                finalize=False,
+                update_index=False,
+            )
 
             return wsi_id
 
@@ -2907,6 +2879,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 ]
                 await asyncio.gather(*tasks)
                 await asyncio.sleep(0)
+
+        finalize_ai_result_artifacts(Config.get_uploads_dir(), task_id)
 
         # Phase 3: Batch database insert
         await _safe_update_progress(

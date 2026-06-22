@@ -5,6 +5,7 @@ import { Badge } from '../ui/badge'
 import { Tooltip } from '../ui/tooltip'
 import { Layers, ChevronDown, CheckCircle2, History, Trash2 } from 'lucide-react'
 import { formatClasses } from './utils'
+import { isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 interface TaskSelectorCardProps {
   availableHeatmaps: AvailableHeatmap[]
@@ -50,16 +51,13 @@ export function TaskSelectorCard({
     ?? selectedTaskEntries[0]
     ?? availableHeatmaps.find(h => h.task_id === selectedTaskId)
   const segmentationTask = selectedTaskEntries.find(
-    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+    h => isSegmentationTask(h.task_type)
   )
   const currentTaskType = heatmapData?.task_type
     ?? segmentationTask?.task_type
     ?? selectedTask?.task_type
-    ?? (segmentationTask?.data_type === 'patch_segmentation' || selectedTask?.data_type === 'patch_segmentation'
-      ? 'patch_segmentation'
-      : undefined)
-  const isSurvivalTask = currentTaskType === 'survival'
-  const isSegmentationTask = !!segmentationTask || currentTaskType === 'segmentation' || currentTaskType === 'patch_segmentation'
+  const isSurvival = isSurvivalTask(currentTaskType)
+  const isSegmentation = !!segmentationTask || isSegmentationTask(currentTaskType)
   const displayPrediction = isPatchLevel ? (patchCAMData?.prediction ?? selectedTask?.prediction) : (heatmapData?.prediction ?? selectedTask?.prediction)
   const displayProbs = isPatchLevel ? (patchCAMData?.probs ?? selectedTask?.probs) : (heatmapData?.probs ?? selectedTask?.probs)
   const displayClasses = segmentationTask?.classes ?? selectedTask?.classes ?? patchCAMData?.classes ?? heatmapData?.classes ?? []
@@ -227,20 +225,20 @@ export function TaskSelectorCard({
         )}
 
         {/* Selected task info - supports heatmap, patch CAM, and segmentation mask tasks */}
-        {(heatmapData || patchCAMData || (selectedTask && isSegmentationTask)) && (
-          <div className={`mt-3 p-3 rounded-lg border ${isSurvivalTask
+        {(heatmapData || patchCAMData || (selectedTask && isSegmentation)) && (
+          <div className={`mt-3 p-3 rounded-lg border ${isSurvival
             ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border-emerald-200'
-            : isSegmentationTask
+            : isSegmentation
               ? 'bg-gradient-to-br from-violet-50 to-purple-50 border-violet-200'
               : 'bg-gradient-to-br from-indigo-50 to-blue-50 border-indigo-200'
             }`}>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
-                <span className={`text-xs font-semibold uppercase tracking-wider ${isSurvivalTask ? 'text-emerald-700' : isSegmentationTask ? 'text-violet-700' : 'text-indigo-700'
+                <span className={`text-xs font-semibold uppercase tracking-wider ${isSurvival ? 'text-emerald-700' : isSegmentation ? 'text-violet-700' : 'text-indigo-700'
                   }`}>
-                  {isSurvivalTask
+                  {isSurvival
                     ? t('wsiViewerComponents.taskSelector.riskGroup')
-                    : isSegmentationTask
+                    : isSegmentation
                       ? t('wsiViewerComponents.taskSelector.classes')
                       : t('wsiViewerComponents.taskSelector.prediction')}
                 </span>
@@ -253,7 +251,7 @@ export function TaskSelectorCard({
               </div>
               {isPatchLevel ? (
                 <Badge variant="secondary" className="bg-orange-50 text-orange-700 text-[10px]">
-                  {isSegmentationTask
+                  {isSegmentation
                     ? t('wsiViewerComponents.taskSelector.predictionMask')
                     : t('wsiViewerComponents.taskSelector.patchHeatmap')}
                 </Badge>
@@ -262,7 +260,7 @@ export function TaskSelectorCard({
               )}
             </div>
             {/* Survival task: show risk group and risk score */}
-            {isSurvivalTask ? (
+            {isSurvival ? (
               <>
                 <div className={`text-lg font-bold ${heatmapData?.risk_group === 'High Risk' ? 'text-red-600' : 'text-emerald-600'
                   }`}>
@@ -276,7 +274,7 @@ export function TaskSelectorCard({
                   </div>
                 )}
               </>
-            ) : isSegmentationTask ? (
+            ) : isSegmentation ? (
               <>
                 <div className="text-lg font-bold text-violet-700">
                   {formatClasses(displayClasses, 99) || t('wsiViewerComponents.taskSelector.noClasses')}
@@ -323,7 +321,7 @@ export function TaskSelectorCard({
                 )}
               </>
             )}
-            {isSurvivalTask && (wsiEventStatus != null) && (
+            {isSurvival && (wsiEventStatus != null) && (
               <div className="mt-2 pt-2 border-t border-emerald-100 flex items-center gap-1.5">
                 <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">GT</span>
                 <span className={`text-xs font-medium ${wsiEventStatus === 1 ? 'text-red-600' : 'text-emerald-600'}`}>
@@ -337,4 +335,3 @@ export function TaskSelectorCard({
     </Card>
   )
 }
-

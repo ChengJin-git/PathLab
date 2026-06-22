@@ -6,10 +6,11 @@ PathLab Python Sidecar - Unified Entry Point
 This script is the main entry point for the Python backend,
 started by Electron's sidecar-manager.
 
-It launches ALL three services:
+It launches ALL four services:
 - Gateway (6100) - Main API gateway
 - Preprocessing (6101) - WSI processing, tile serving
 - AI (6102) - Model training and inference
+- TaskWorker - Background task execution
 
 Modes:
 - Debug mode (PATHLAB_DEBUG=1): Fixed ports 6100, 6101, 6102
@@ -88,6 +89,16 @@ def _detect_and_exclude_bad_gpus() -> list[int]:
         print(f"[GPUCheck] All {num_gpus} GPU(s) passed health check.", flush=True)
 
     return bad
+
+
+def run_task_worker():
+    import asyncio
+    from importlib import import_module
+
+    task_worker_main = import_module("task_worker.main").main
+
+    print("[TaskWorker] Starting background task worker...", flush=True)
+    asyncio.run(task_worker_main())
 
 
 def run_service(
@@ -174,7 +185,7 @@ def main():
     os.environ["AI_SERVICE_URL"] = f"http://127.0.0.1:{ai_port}"
 
     print(
-        f"[Services] Gateway: {gateway_port}, Preprocessing: {preprocessing_port}, AI: {ai_port}",
+        f"[Services] Gateway: {gateway_port}, Preprocessing: {preprocessing_port}, AI: {ai_port}, TaskWorker",
         flush=True,
     )
 
@@ -230,7 +241,7 @@ def main():
     # NOTE: daemon=False allows AI service to spawn DataLoader workers (num_workers > 0)
     # Daemon processes cannot have children due to Python multiprocessing restrictions
     # Preprocessing uses multiple workers to handle concurrent tile requests
-    # Note: slide_cache/dzg_cache are process-local and won't be shared across workers
+    # Each worker owns its own SlideCacheManager; cached slide handles are not shared.
     preprocessing_workers = int(os.environ.get("PREPROCESSING_WORKERS", "4"))
     # Recycle preprocessing workers every 500 requests to release C library memory leaks
     # (SdpcSlide SDK accumulates internal buffers that are not fully freed on close).
@@ -263,6 +274,14 @@ def main():
     )
     ai_proc.start()
     processes.append(ai_proc)
+
+    task_worker_proc = multiprocessing.Process(
+        target=run_task_worker,
+        name="TaskWorker",
+        daemon=False,
+    )
+    task_worker_proc.start()
+    processes.append(task_worker_proc)
 
     # Start Gateway service in subprocess (instead of main process)
     # This keeps the main process free for signal handling

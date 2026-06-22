@@ -33,7 +33,7 @@ export interface AvailableHeatmap {
   created_at: number
   attention_file: string
   patch_size?: number | null
-  data_type?: 'wsi' | 'patch' | 'patch_segmentation'  // WSI-level attention, patch-level CAM, or patch segmentation mask
+  data_type?: 'wsi' | 'patch'  // WSI-level attention or patch-level CAM/segmentation mask
   cam_size?: [number, number]   // CAM size for patch-level
   is_best_fold?: boolean | null  // Whether this is the best fold (for k-fold training)
   is_kfold?: boolean  // Whether this task was trained with K-Fold cross-validation
@@ -348,4 +348,3 @@ export function getRecommendationThumbnailUrl(wsi_id: string, size: number = 160
     preset: 'recommendation',
   })
 }
-
