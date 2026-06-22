@@ -547,7 +547,7 @@ async def compute_patches(
     ),
     mthresh: int = Query(7, description="Median filter kernel size"),
     close: int = Query(4, description="Morphological closing kernel size"),
-    use_otsu: bool = Query(False, description="Use Otsu auto-thresholding"),
+    use_otsu: bool = Query(True, description="Use Otsu auto-thresholding"),
     contour_fn: str = Query(
         "four_pt", description="Contour check function (four_pt, center, basic)"
     ),

@@ -129,7 +129,7 @@ describe('TaskConfigCard split CSV upload state/navigation', () => {
   })
 
   it('shows custom/manual split option when selected dataset has predefined splits', async () => {
-    vi.spyOn(wsiApi, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(wsiApi, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'ds-1',
@@ -167,7 +167,7 @@ describe('TaskConfigCard split CSV upload state/navigation', () => {
   })
 
   it('navigates to /register with datasetId and datasetName when upload prompt is clicked', async () => {
-    vi.spyOn(wsiApi, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(wsiApi, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'ds-2',

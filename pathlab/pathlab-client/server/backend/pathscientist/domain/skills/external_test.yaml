@@ -1,0 +1,86 @@
+name: external_test
+coarse_task_type: evaluation
+description: >
+  External testing for a fixed PathScientist model artifact. The coding agent
+  loads this skill after training or as a standalone evaluation task, adapts
+  the model/dataset adapter if needed, and reports metrics on an external
+  feature dataset without changing model weights.
+
+template: external_test_template.py
+template_files:
+  external_test.py: external_test_template.py
+
+task_types: [external_test, external_validation, evaluation]
+
+modifiable_zones:
+  - model_loading
+  - dataset_adapter
+  - metrics
+  - reporting
+
+environment:
+  extra_packages: []
+
+inputs:
+  datasets: $PATHSCIENTIST_EXTERNAL_DATASETS
+  external_task_type: $PATHSCIENTIST_EXTERNAL_TASK_TYPE
+  model_path: $PATHSCIENTIST_MODEL_PATH
+  model_metadata_path: $PATHSCIENTIST_MODEL_METADATA_PATH
+  external_wsi_dir: $EXTERNAL_WSI_DIR
+  external_features_dir: $EXTERNAL_FEATURES_DIR
+  external_images_dir: $EXTERNAL_IMAGES_DIR
+  external_masks_dir: $EXTERNAL_MASKS_DIR
+  external_predictions_dir: $EXTERNAL_PREDICTIONS_DIR
+  external_splits_file: $EXTERNAL_SPLITS_FILE
+  external_labels_file: $EXTERNAL_LABELS_FILE
+  external_pathlab_uploads_dir: $EXTERNAL_PATHLAB_UPLOADS_DIR
+  external_pathlab_wsi_files_dir: $EXTERNAL_PATHLAB_WSI_FILES_DIR
+  external_pathlab_global_features_dir: $EXTERNAL_PATHLAB_GLOBAL_FEATURES_DIR
+  external_pathlab_training_dir: $EXTERNAL_PATHLAB_TRAINING_DIR
+  external_pathlab_coordinates_dir: $EXTERNAL_PATHLAB_COORDINATES_DIR
+  external_pathlab_metadata_dir: $EXTERNAL_PATHLAB_METADATA_DIR
+  external_pathlab_ai_results_dir: $EXTERNAL_PATHLAB_AI_RESULTS_DIR
+  external_pathlab_models_dir: $EXTERNAL_PATHLAB_MODELS_DIR
+  external_pathlab_masks_dir: $EXTERNAL_PATHLAB_MASKS_DIR
+  external_pathlab_progress_dir: $EXTERNAL_PATHLAB_PROGRESS_DIR
+  external_pathlab_logs_dir: $EXTERNAL_PATHLAB_LOGS_DIR
+
+outputs:
+  metrics: $OUTPUT_DIR/metrics.json
+  predictions: $OUTPUT_DIR/predictions.csv
+  report: $OUTPUT_DIR/external_test_report.json
+
+evaluation:
+  primary_metric: auc
+  secondary_metrics: [accuracy, f1, precision, recall]
+
+constraints:
+  - "Do NOT train, fine-tune, or update model weights."
+  - "Use model.eval() and torch.no_grad() for all inference."
+  - "Fail hard if model_path or external data paths are missing."
+  - "Set external_task_type to one of: mil_classification, patch_classification, survival, segmentation."
+  - "Do NOT use train/val/test samples from the original training dataset as external data."
+  - "Write metrics only to OUTPUT_DIR/metrics.json."
+  - "Include dataset coverage: n_external_total, n_external_evaluated, missing_features."
+  - "Save one prediction row per evaluated sample to OUTPUT_DIR/predictions.csv."
+  - "For survival analysis, report c_index and survival coverage without updating model weights."
+  - "For segmentation, report dice and IoU; use EXTERNAL_PREDICTIONS_DIR unless the agent implements a model inference adapter."
+  - "Use run_experiment with run_kind=external_test; run quick_check=true before the full external test."
+  - "PathLab uploads layout: when EXTERNAL_PATHLAB_UPLOADS_DIR is set, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/<params_hash>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/<params_hash>/{wsi_id}_coords.h5, slide metadata in metadata/{wsi_id}.json, masks in masks/, progress in progress/, and logs in logs/."
+
+dataset:
+  format: task_specific_external_validation
+  structure:
+    features: "{wsi_id}.pt"
+    wsis: "{wsi_id}.{svs,ndpi,tif,tiff,mrxs}"
+    images: "{patch_id}.{png,jpg,tif}"
+    masks: "{sample_id}.{png,npy,pt}"
+    predictions: "{sample_id}.{png,npy,pt}"
+    splits: "splits.json"
+  splits_schema:
+    classification_required_keys: [test, labels]
+    survival_required_keys: [test, survival_times, event_status]
+    segmentation_required_keys: [test]
+    labels_type: "int_or_string"
+
+knowhow_tags: [external_validation, external_test, evaluation, MIL, WSI, patch_classification, survival, segmentation]

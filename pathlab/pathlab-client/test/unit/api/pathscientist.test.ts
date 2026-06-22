@@ -1,0 +1,131 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ok } from '../../helpers/apiHelpers'
+import { clearAuthToken, setAuthToken } from '@renderer/api/client'
+
+vi.mock('@renderer/config', () => ({
+  API_BASE: 'http://localhost:6100',
+}))
+
+import {
+  deletePathScientistSession,
+  getPathScientistEventsUrl,
+  getPathScientistSession,
+  getPathScientistSessionDownloadUrl,
+  getPathScientistSessionShareUrl,
+  listPathScientistSessions,
+  listPathScientistSkills,
+  startPathScientistSession,
+  stopPathScientistSession,
+} from '@renderer/api/pathscientist'
+
+const mockFetch = vi.mocked(fetch)
+
+beforeEach(() => {
+  mockFetch.mockReset()
+  clearAuthToken()
+})
+
+describe('pathscientist api', () => {
+  it('lists skills', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [{ id: 'mil_classification', name: 'MIL' }] }))
+
+    const result = await listPathScientistSkills()
+
+    expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:6100/pathscientist/skills')
+    expect(result.items[0].id).toBe('mil_classification')
+  })
+
+  it('starts a session with gpt-5.5 default when model is omitted', async () => {
+    setAuthToken('session-token')
+    mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', conversation_id: '', model: 'gpt-5.5', status: 'queued' }))
+
+    await startPathScientistSession({ question: 'hello' })
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('http://localhost:6100/pathscientist/sessions')
+    expect(opts?.method).toBe('POST')
+    expect(new Headers(opts?.headers).get('Authorization')).toBe('Bearer session-token')
+    expect(JSON.parse(opts?.body as string).model).toBe('gpt-5.5')
+  })
+
+  it('lists and fetches sessions', async () => {
+    setAuthToken('session-token')
+    mockFetch.mockResolvedValueOnce(ok({ items: [{ session_id: 'abc' }] }))
+
+    await listPathScientistSessions()
+
+    const [listUrl, listOpts] = mockFetch.mock.calls[0]
+    expect(listUrl).toBe('http://localhost:6100/pathscientist/sessions')
+    expect(new Headers(listOpts?.headers).get('Authorization')).toBe('Bearer session-token')
+
+    mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', events: [] }))
+
+    await getPathScientistSession('abc')
+
+    const [detailUrl, detailOpts] = mockFetch.mock.calls[1]
+    expect(detailUrl).toBe('http://localhost:6100/pathscientist/sessions/abc')
+    expect(new Headers(detailOpts?.headers).get('Authorization')).toBe('Bearer session-token')
+  })
+
+  it('builds an EventSource URL with a scoped access token', async () => {
+    setAuthToken('stream-token')
+    mockFetch.mockResolvedValueOnce(ok({
+      token: 'scoped-stream-token',
+      token_type: 'pathscientist_access',
+      purpose: 'events',
+      session_id: 'abc',
+      run_id: '',
+      expires_in: 300,
+    }))
+
+    await expect(getPathScientistEventsUrl('abc')).resolves.toBe(
+      'http://localhost:6100/pathscientist/sessions/abc/events?token=scoped-stream-token',
+    )
+    expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:6100/pathscientist/sessions/abc/access-token')
+    expect(JSON.parse(mockFetch.mock.calls[0][1]?.body as string)).toEqual({
+      purpose: 'events',
+      run_id: '',
+    })
+  })
+
+  it('stops a running session', async () => {
+    setAuthToken('session-token')
+    mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', status: 'interrupted' }))
+
+    await stopPathScientistSession('abc')
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('http://localhost:6100/pathscientist/sessions/abc/stop')
+    expect(opts?.method).toBe('POST')
+    expect(new Headers(opts?.headers).get('Authorization')).toBe('Bearer session-token')
+  })
+
+  it('deletes a session', async () => {
+    setAuthToken('session-token')
+    mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', deleted: true }))
+
+    await deletePathScientistSession('abc')
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toBe('http://localhost:6100/pathscientist/sessions/abc')
+    expect(opts?.method).toBe('DELETE')
+    expect(new Headers(opts?.headers).get('Authorization')).toBe('Bearer session-token')
+  })
+
+  it('builds session download URL with a scoped access token and share URL', async () => {
+    setAuthToken('download-token')
+    mockFetch.mockResolvedValueOnce(ok({
+      token: 'scoped-download-token',
+      token_type: 'pathscientist_access',
+      purpose: 'session_download',
+      session_id: 'abc',
+      run_id: '',
+      expires_in: 300,
+    }))
+
+    await expect(getPathScientistSessionDownloadUrl('abc')).resolves.toBe(
+      'http://localhost:6100/pathscientist/sessions/abc/download?token=scoped-download-token',
+    )
+    expect(getPathScientistSessionShareUrl('abc')).toContain('/pathscientist/sessions/abc')
+  })
+})

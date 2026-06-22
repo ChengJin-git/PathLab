@@ -88,7 +88,7 @@
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config": "^1.0.2",
-    "@electron-toolkit/tsconfig": "^1.0.2",
+    "@electron-toolkit/tsconfig": "^1.0.1",
     "@tailwindcss/postcss": "^4.1.16",
     "@tailwindcss/typography": "^0.5.15",
     "@testing-library/jest-dom": "^6.9.1",

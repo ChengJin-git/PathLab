@@ -129,7 +129,7 @@ class TissueSegmenter:
         self.close = close
         self.use_otsu = use_otsu
 
-        # Default filter parameters (CLAM defaults)
+        # Default filter parameters (PrePATH/CLAM TCGA preset)
         self.filter_params = filter_params or {
             "a_t": 5,  # Min tissue area (in 512x512 patches)
             "a_h": 16,  # Min hole area

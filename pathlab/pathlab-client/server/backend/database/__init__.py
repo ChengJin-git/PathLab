@@ -17,6 +17,7 @@ from .models import (
     ChatConversation,
     ChatMessage,
     AnalysisRun,
+    KnowhowEntry,
 )
 
 __all__ = [
@@ -35,4 +36,5 @@ __all__ = [
     "ChatConversation",
     "ChatMessage",
     "AnalysisRun",
+    "KnowhowEntry",
 ]

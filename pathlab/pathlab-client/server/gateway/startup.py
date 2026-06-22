@@ -22,6 +22,7 @@ from .chat.context_cache import (
 )
 from .chat.context_builder import build_chat_context_for_user
 from .dependencies import AI_SERVICE_URL, PREPROCESSING_SERVICE_URL, logger
+from . import pathscientist_persistence
 from .routes.asr import startup_prewarm_local_asr
 from .routes.chat_pdf_vectorstore import prewarm_embedding_model
 from .routes.chat_training_recommendation import (
@@ -162,6 +163,7 @@ async def initialize_gateway_runtime(
     app: object,
 ) -> tuple[asyncio.Task[None], asyncio.Task[None]]:
     Config.ensure_directories()
+    pathscientist_persistence.configure_loop(asyncio.get_running_loop())
 
     logger.info("Initializing database...")
     await init_db()
@@ -195,6 +197,7 @@ async def shutdown_gateway_runtime(
     await cancel_background_task(training_rag_prewarm_task)
     await cancel_background_task(chat_context_prewarm_task)
     await shutdown_runtime_clients(app)
+    await pathscientist_persistence.drain_persistence_queue(timeout=5.0)
 
     logger.info("Closing database connections...")
     await close_db()

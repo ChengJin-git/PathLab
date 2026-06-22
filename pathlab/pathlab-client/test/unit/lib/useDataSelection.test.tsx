@@ -15,7 +15,7 @@ describe('useDataSelection predefined splits', () => {
   })
 
   it('sets hasPreDefinedSplits and predefinedSplitCounts when selecting a dataset with predefined splits', async () => {
-    vi.spyOn(wsiApi, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(wsiApi, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-1',
@@ -52,7 +52,7 @@ describe('useDataSelection predefined splits', () => {
   })
 
   it('clears split state when selecting null dataset', async () => {
-    vi.spyOn(wsiApi, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(wsiApi, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-1',

@@ -7,6 +7,7 @@ Following industry best practices from Cytomine and DSA platforms.
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import (
+    ARRAY,
     Column,
     Integer,
     BigInteger,
@@ -59,9 +60,7 @@ class DataGroup(TimestampMixin, Base):
 
     __tablename__ = "data_groups"
 
-    group_id = Column(
-        String(255), unique=True, nullable=False, index=True
-    )  # UUID for API
+    group_id = Column(String(255), nullable=False)  # UUID for API
     name = Column(
         String(255), nullable=False
     )  # Display name (e.g., "WSI Case-level Classification")
@@ -84,6 +83,7 @@ class DataGroup(TimestampMixin, Base):
 
     # Unique constraint: only one group per combination
     __table_args__ = (
+        UniqueConstraint("group_id", name="uq_data_groups_group_id"),
         Index(
             "idx_data_group_unique",
             "data_type",
@@ -817,6 +817,10 @@ class TrainingTask(TimestampMixin, Base):
         "TrainedModel", back_populates="training_task", cascade="all, delete-orphan"
     )
 
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_training_tasks_task_id"),
+    )
+
     def to_dict(self):
         """Convert to dictionary for API responses"""
         return {
@@ -1328,4 +1332,194 @@ class PermissionAuditLog(Base):
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,
+        }
+
+
+# =============================================================================
+# Auto Research Agent Tables
+# =============================================================================
+
+class AutoResearchSession(Base):
+    """Tracks an automated research session from question to final report."""
+    __tablename__ = "auto_research_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(255), nullable=False)
+    user_id = Column(String(255), nullable=False, index=True)
+    research_question = Column(Text, nullable=False)
+    phase = Column(String(50), nullable=False, default="literature")
+    status = Column(String(20), nullable=False, default="running")
+    thread_id = Column(String(255), unique=True, nullable=False)
+    conversation_id = Column(String(255), nullable=True, index=True)
+    persistence_dir = Column(Text, nullable=True)
+    workspace_path = Column(Text, nullable=True)
+    resume_available = Column(Boolean, nullable=False, default=False)
+    event_source_version = Column(String(50), nullable=False, default="gateway-v1")
+    recovery_metadata = Column(JSON, nullable=True)
+    experiment_plan = Column(JSON, nullable=True)
+    best_metric = Column(Float, nullable=True)
+    best_metric_name = Column(String(50), default="auc")
+    best_experiment = Column(JSON, nullable=True)
+    comparison_results = Column(JSON, nullable=True)
+    final_report = Column(Text, nullable=True)
+    current_iteration = Column(Integer, default=0)
+    max_iterations = Column(Integer, default=3)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    experiments = relationship("AutoResearchExperiment", back_populates="session",
+                               cascade="all, delete-orphan")
+    events = relationship("AutoResearchEvent", back_populates="session",
+                           cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_auto_research_sessions_session_id"),
+        Index("idx_ar_session_user_status", "user_id", "status"),
+    )
+
+    def to_dict(self):
+        return {
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "research_question": self.research_question,
+            "phase": self.phase,
+            "status": self.status,
+            "conversation_id": self.conversation_id,
+            "persistence_dir": self.persistence_dir,
+            "workspace_path": self.workspace_path,
+            "resume_available": self.resume_available,
+            "event_source_version": self.event_source_version,
+            "recovery_metadata": self.recovery_metadata,
+            "best_metric": self.best_metric,
+            "best_metric_name": self.best_metric_name,
+            "current_iteration": self.current_iteration,
+            "max_iterations": self.max_iterations,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
+        }
+
+
+class AutoResearchExperiment(Base):
+    """Tracks individual experiments within a research session."""
+    __tablename__ = "auto_research_experiments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(255), ForeignKey("auto_research_sessions.session_id",
+                        ondelete="CASCADE"), nullable=False, index=True)
+    experiment_name = Column(String(500))
+    training_task_id = Column(String(255), index=True)
+    dataset_id = Column(String(255))
+    feature_extractor = Column(String(100))
+    aggregator = Column(String(100))
+    hyperparams = Column(JSON, nullable=True)
+    status = Column(String(20), default="pending")
+    metrics = Column(JSON, nullable=True)
+    analysis_id = Column(String(255), nullable=True)
+    iteration = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    session = relationship("AutoResearchSession", back_populates="experiments")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "experiment_name": self.experiment_name,
+            "training_task_id": self.training_task_id,
+            "feature_extractor": self.feature_extractor,
+            "aggregator": self.aggregator,
+            "status": self.status,
+            "metrics": self.metrics,
+            "iteration": self.iteration,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+        }
+
+
+class AutoResearchEvent(Base):
+    """SSE events for auto-research sessions with cursor-based replay."""
+    __tablename__ = "auto_research_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    session_id = Column(String(255), ForeignKey("auto_research_sessions.session_id",
+                        ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False)
+    event_data = Column(JSON, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    session = relationship("AutoResearchSession", back_populates="events")
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "sequence", name="uq_auto_research_events_session_seq"),
+        Index("idx_ar_events_session_seq", "session_id", "sequence"),
+    )
+
+
+# =============================================================================
+# Know-How Experience Store (Phase 2.2)
+# =============================================================================
+
+class KnowhowEntry(Base):
+    """
+    Structured domain knowledge entry for experiment planning.
+
+    Three sources:
+    - curated:    expert-curated best practices (bootstrapped at startup)
+    - experiment: auto-ingested from completed auto-research experiments
+    - literature: auto-extracted from literature review findings
+    """
+    __tablename__ = "knowhow_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # What task
+    task_type = Column(String(50), index=True)           # classification / survival / segmentation
+    organ = Column(String(100), index=True)              # colorectal / breast / lung / ...
+    keywords = Column(ARRAY(String), default=[])         # ['MSI', 'microsatellite'] for overlap query
+
+    # What method
+    feature_extractor = Column(String(100))
+    aggregator = Column(String(100))
+    hyperparams = Column(JSON, default={})
+
+    # What result
+    metric_name = Column(String(50))                     # auc / c_index
+    metric_value = Column(Float)
+    all_metrics = Column(JSON, default={})
+
+    # Where it came from
+    source_type = Column(String(20), index=True)         # curated / experiment / literature
+    source_ref = Column(String(500))                     # session_id or paper URL
+    evidence = Column(Text)                              # recommendation rationale or paper summary
+
+    # Optional dataset info
+    dataset_id = Column(String(255), nullable=True)
+    dataset_name = Column(String(255), nullable=True)
+
+    # Ranking
+    confidence = Column(Float, default=0.5)              # curated=1.0, experiment=metric, literature=0.6
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_knowhow_task_organ", "task_type", "organ"),
+        Index("idx_knowhow_source", "source_type"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "task_type": self.task_type,
+            "organ": self.organ,
+            "keywords": self.keywords or [],
+            "feature_extractor": self.feature_extractor,
+            "aggregator": self.aggregator,
+            "hyperparams": self.hyperparams or {},
+            "metric_name": self.metric_name,
+            "metric_value": self.metric_value,
+            "all_metrics": self.all_metrics or {},
+            "source_type": self.source_type,
+            "source_ref": self.source_ref,
+            "evidence": self.evidence,
+            "confidence": self.confidence,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }

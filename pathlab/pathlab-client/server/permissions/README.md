@@ -347,7 +347,7 @@ Self-service registration and administrator account creation are intentionally s
 
 Only admin can create or elevate a user to `pathologist` or `admin` role (via `POST /auth/users` or `AdminUserUpdate`).
 
-Default admin account: created on first run when no users exist (`backend/database/database.py:327`). Password is taken from `DEFAULT_ADMIN_PASSWORD` env var; if unset, a random password is generated and printed once to logs at `CRITICAL` level. There is no hardcoded fallback password.
+Default admin account: created on first run when no users exist (`backend/database/database.py:327`). Password is taken from `DEFAULT_ADMIN_PASSWORD` env var. The unified backend launcher (`server/main.py`) defaults that env var to `admin` unless the operator provides a different value.
 
 **Email notifications** (triggered by `gateway/email_notifications.py` via `send_templated_email`):
 

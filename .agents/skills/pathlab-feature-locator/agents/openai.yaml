@@ -1,0 +1,7 @@
+interface:
+  display_name: "PathLab Feature Locator"
+  short_description: "Find PathLab modules for feature work"
+  default_prompt: "Use $pathlab-feature-locator to identify the PathLab files, symbols, and tests needed for this feature."
+
+policy:
+  allow_implicit_invocation: true

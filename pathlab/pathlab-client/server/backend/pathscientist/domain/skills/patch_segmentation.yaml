@@ -1,0 +1,72 @@
+name: patch_segmentation
+coarse_task_type: segmentation
+description: >
+  Patch-level semantic segmentation using UNet-style architectures.
+  Input: image + mask pairs. Output: pixel-level predictions.
+  Supports AMP, gradient accumulation, and multiple backbones.
+  Matches PathLab's SegmentationTrainer.
+
+template: patch_segmentation_template.py
+
+task_types: [segmentation]
+
+modifiable_zones:
+  - model       # UNet architecture, backbone, decoder
+  - loss        # DiceLoss, JaccardLoss, combined
+  - hyperparams # lr, epochs, batch_size, scheduler, AMP settings
+
+environment:
+  extra_packages:
+    - segmentation-models-pytorch
+
+dataset:
+  format: image_mask_pairs
+  structure:
+    images: "{image_id}.png"
+    masks: "{image_id}_mask.png"
+    splits: "splits.json"
+    annotations: "coco_annotations.json"   # optional COCO format
+  splits_schema:
+    required_keys: [train, val, test]
+    labels_type: "none"                     # labels are in masks, not splits
+    split_strategy: "random"
+    default_ratios: {train: 0.7, val: 0.15, test: 0.15}
+  csv_format:
+    required_columns: [filename]
+    optional_columns: [split, case_id]
+    example: |
+      filename,split
+      image_001.png,train
+      image_002.png,val
+  mock_generator:
+    n_samples: 50
+    image_size: [512, 512]
+    n_classes: 2
+
+inputs:
+  images_dir: /data/images
+  masks_dir: /data/masks
+  splits_file: /data/splits.json
+
+outputs:
+  metrics: /results/metrics.json
+  model: /results/best_model.pth
+
+evaluation:
+  primary_metric: iou
+  secondary_metrics: [dice, accuracy, precision, recall]
+
+constraints:
+  - "Model must accept (B, 3, H, W) input and return (B, C, H, W) logits"
+  - "H, W are patch dimensions (typically 512x512)"
+  - "C is number of segmentation classes"
+  - "Use AMP (torch.cuda.amp) for mixed precision training"
+  - "Use gradient accumulation if batch_size is large"
+  - "Do NOT modify FIXED zones"
+  - "Do NOT generate synthetic/mock/demo/dummy images, masks, labels, or metrics when data is missing; fail with a data-readiness error instead."
+
+reference_code:
+  trainer: server/backend/ai/tasks/patch_segmentation/trainer.py
+  dataset: server/backend/ai/utils/segmentation_dataset.py
+
+knowhow_tags: [segmentation, UNet, patch, pixel, mask, dice, iou]

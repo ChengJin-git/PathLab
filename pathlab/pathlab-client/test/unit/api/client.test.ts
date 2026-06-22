@@ -386,20 +386,36 @@ describe('apiFetch', () => {
     setAuthToken('expired_token')
     mockFetch.mockResolvedValue(makeJsonResponse({ detail: 'Unauthorized' }, 401))
     const events: Event[] = []
-    window.addEventListener(SESSION_EXPIRED_EVENT, (e) => events.push(e))
+    const handleSessionExpired = (e: Event) => events.push(e)
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
     await expect(apiFetch('http://api.local/protected')).rejects.toMatchObject({ status: 401 })
     expect(getAuthToken()).toBeNull()
     expect(events).toHaveLength(1)
-    window.removeEventListener(SESSION_EXPIRED_EVENT, (e) => events.push(e))
+    window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
   })
 
   it('does not dispatch SESSION_EXPIRED_EVENT on 401 without a token', async () => {
     mockFetch.mockResolvedValue(makeJsonResponse({ detail: 'Unauthorized' }, 401))
     const events: Event[] = []
-    window.addEventListener(SESSION_EXPIRED_EVENT, (e) => events.push(e))
+    const handleSessionExpired = (e: Event) => events.push(e)
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
     await expect(apiFetch('http://api.local/protected')).rejects.toMatchObject({ status: 401 })
     expect(events).toHaveLength(0)
-    window.removeEventListener(SESSION_EXPIRED_EVENT, (e) => events.push(e))
+    window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
+  })
+
+  it('does not dispatch SESSION_EXPIRED_EVENT for skipAuth requests', async () => {
+    setAuthToken('current_token')
+    mockFetch.mockResolvedValue(makeJsonResponse({ detail: 'Unauthorized' }, 401))
+    const events: Event[] = []
+    const handleSessionExpired = (e: Event) => events.push(e)
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
+    await expect(apiFetch('http://api.local/public', undefined, 'Public call', true)).rejects.toMatchObject({
+      status: 401,
+    })
+    expect(getAuthToken()).toBe('current_token')
+    expect(events).toHaveLength(0)
+    window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
   })
 
   it('handles 204 No Content as undefined', async () => {

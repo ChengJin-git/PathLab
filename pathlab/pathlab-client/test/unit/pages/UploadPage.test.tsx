@@ -50,7 +50,7 @@ describe('UploadPage', () => {
       warning: toastWarningMock,
     } as unknown as ReturnType<typeof toastModule.useToast>)
 
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({ items: [], total: 0 } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({ items: [], total: 0 } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
     vi.spyOn(apiModule, 'checkDuplicateFilenames').mockResolvedValue({ duplicates: [], new: [] })
     vi.spyOn(apiModule, 'downloadCSVTemplate').mockResolvedValue(undefined)
     vi.spyOn(apiModule, 'uploadDatasetSplits').mockResolvedValue({ message: '', updated_count: 0, auto_val_count: 0, not_found_count: 0, not_found_files: [] } as unknown as Awaited<ReturnType<typeof apiModule.uploadDatasetSplits>>)
@@ -450,7 +450,7 @@ describe('UploadPage', () => {
 
   it('locks dataset source to the original source when appending to an existing dataset', async () => {
     const updateDatasetSourceSpy = vi.spyOn(apiModule, 'updateDatasetSource')
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-1',
@@ -465,7 +465,7 @@ describe('UploadPage', () => {
         },
       ],
       total: 1,
-    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
 
     const queryClient = new QueryClient({
       defaultOptions: {
@@ -495,7 +495,7 @@ describe('UploadPage', () => {
   })
 
   it('accepts JSON-only drops when appending to an existing canonical segmentation dataset', async () => {
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-jiangxi',
@@ -510,7 +510,7 @@ describe('UploadPage', () => {
         },
       ],
       total: 1,
-    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
 
     vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
       items: [],
@@ -564,7 +564,7 @@ describe('UploadPage', () => {
     let resolveFirstCollection: ((result: uploadModule.CollectionResult) => void) | undefined
     let resolveSecondCollection: ((result: uploadModule.CollectionResult) => void) | undefined
 
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-jiangxi',
@@ -579,7 +579,7 @@ describe('UploadPage', () => {
         },
       ],
       total: 1,
-    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
 
     vi.spyOn(uploadModule, 'collectItemsFromDataTransfer')
       .mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
@@ -679,7 +679,7 @@ describe('UploadPage', () => {
     let resolveFirstCollection: ((result: uploadModule.CollectionResult) => void) | undefined
     let resolveSecondCollection: ((result: uploadModule.CollectionResult) => void) | undefined
 
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-jiangxi',
@@ -694,7 +694,7 @@ describe('UploadPage', () => {
         },
       ],
       total: 1,
-    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
 
     vi.spyOn(uploadModule, 'collectItemsFromDataTransfer')
       .mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
@@ -789,7 +789,7 @@ describe('UploadPage', () => {
   it('allows mixed image+JSON drops on segmentation append', async () => {
     let resolveCollection: ((result: uploadModule.CollectionResult) => void) | undefined
 
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-jiangxi',
@@ -804,7 +804,7 @@ describe('UploadPage', () => {
         },
       ],
       total: 1,
-    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
 
     vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
       return await new Promise<uploadModule.CollectionResult>(resolve => {
@@ -1070,7 +1070,7 @@ describe('UploadPage', () => {
 
     it('binds CSV labels only to newly appended files for existing datasets', async () => {
       const uploadDatasetSplitsSpy = vi.spyOn(apiModule, 'uploadDatasetSplits')
-      vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+      vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({
         items: [
           {
             dataset_id: 'dataset-append',
@@ -1085,7 +1085,7 @@ describe('UploadPage', () => {
           },
         ],
         total: 1,
-      } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+      } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
 
       const items: uploadModule.LocalItem[] = [
         { key: 'append-a', name: 'append-a.png', file: new File(['a'], 'append-a.png'), type: 'standard' },
@@ -1301,7 +1301,7 @@ describe('UploadPage', () => {
       }),
     )
 
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+    vi.spyOn(apiModule, 'fetchAllDatasets').mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-split',
@@ -1316,7 +1316,7 @@ describe('UploadPage', () => {
         },
       ],
       total: 1,
-    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchAllDatasets>>)
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

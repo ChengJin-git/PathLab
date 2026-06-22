@@ -3,6 +3,12 @@ import re
 import httpx
 
 from ..dependencies import logger
+from backend.common.net_guard import (
+    EgressDeniedError,
+    guarded_get,
+    guarded_head,
+    validate_external_url,
+)
 
 
 def get_arxiv_pdf_url(url: str) -> str:
@@ -121,8 +127,9 @@ async def _follow_doi_redirect(doi: str, pmid: str | None = None) -> str:
     doi_url = f"https://doi.org/{doi}"
     label = f"PMID {pmid}" if pmid else f"DOI {doi}"
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            head_resp = await client.head(
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            head_resp = await guarded_head(
+                client,
                 doi_url,
                 headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -131,7 +138,7 @@ async def _follow_doi_redirect(doi: str, pmid: str | None = None) -> str:
                     "Accept": "text/html,application/xhtml+xml,*/*",
                 },
             )
-            final_url = str(head_resp.url)
+            final_url = validate_external_url(str(head_resp.url))
             if final_url and final_url != doi_url:
                 logger.info(f"{label} → DOI redirect → {final_url}")
                 return final_url
@@ -338,7 +345,7 @@ async def _try_unpaywall_download(url: str, doi: str | None = None) -> bytes | N
         return None
     try:
         api_url = f"https://api.unpaywall.org/v2/{doi}?email=cjinag@connect.ust.hk"
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
             resp = await client.get(api_url)
             if resp.status_code != 200:
                 logger.info(f"Unpaywall API returned {resp.status_code} for DOI {doi}")
@@ -356,7 +363,7 @@ async def _try_unpaywall_download(url: str, doi: str | None = None) -> bytes | N
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/pdf,*/*",
             }
-            pdf_resp = await client.get(pdf_url, headers=headers)
+            pdf_resp = await guarded_get(client, pdf_url, headers=headers)
             if pdf_resp.status_code == 200:
                 content = pdf_resp.content
                 if (
@@ -380,7 +387,7 @@ async def _try_semantic_scholar_download(
         return None
     try:
         api_url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=openAccessPdf"
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
             resp = await client.get(api_url)
             if resp.status_code != 200:
                 return None
@@ -394,7 +401,7 @@ async def _try_semantic_scholar_download(
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/pdf,*/*",
             }
-            pdf_resp = await client.get(pdf_url, headers=headers)
+            pdf_resp = await guarded_get(client, pdf_url, headers=headers)
             if pdf_resp.status_code == 200:
                 content = pdf_resp.content
                 if (
@@ -416,9 +423,7 @@ _MAX_PDF_DOWNLOAD_BYTES = 50 * 1024 * 1024
 
 async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
-        if not url.startswith(("http://", "https://")):
-            logger.warning(f"Invalid URL scheme (not http/https): {url}")
-            return None
+        url = validate_external_url(url)
 
         if "pubmed.ncbi.nlm.nih.gov" in url:
             url = await _resolve_pubmed_to_pdf_url(url)
@@ -476,8 +481,8 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
         }
 
         try_oa_fallback = False
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            response = await guarded_get(client, url, headers=headers)
 
             if response.status_code == 200:
                 content = response.content
@@ -530,6 +535,9 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
         return None
     except httpx.TimeoutException as e:
         logger.error(f"Download timed out for PDF from {url}: {e}")
+        return None
+    except EgressDeniedError as e:
+        logger.warning(f"Blocked PDF download URL {url}: {e}")
         return None
     except Exception as e:
         logger.error(f"Error downloading PDF from {url}: {e}")

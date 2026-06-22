@@ -315,7 +315,11 @@ async function ensureSuccessfulResponse(response: Response, context?: string): P
   throw new ApiError(errorMessage, response.status, code, detail)
 }
 
-async function runApiRequest<T>(operation: () => Promise<T>, context?: string): Promise<T> {
+async function runApiRequest<T>(
+  operation: () => Promise<T>,
+  context?: string,
+  handleSessionExpiry: boolean = true
+): Promise<T> {
   const hadToken = !!_getAuthToken()
 
   try {
@@ -323,7 +327,7 @@ async function runApiRequest<T>(operation: () => Promise<T>, context?: string): 
   } catch (error) {
     // If it's already an ApiError, check for session expiry (401 while authenticated)
     if (error instanceof ApiError) {
-      if (error.status === 401 && hadToken) {
+      if (handleSessionExpiry && error.status === 401 && hadToken) {
         clearAuthToken()
         window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
       }
@@ -382,7 +386,7 @@ export async function apiFetch<T>(
   return runApiRequest(async () => {
     const response = await fetchWithAuth(url, options, skipAuth)
     return handleResponse<T>(response, context)
-  }, context)
+  }, context, !skipAuth)
 }
 
 /**
@@ -398,7 +402,7 @@ export async function apiFetchBlob(
     const response = await fetchWithAuth(url, options, skipAuth)
     const okResponse = await ensureSuccessfulResponse(response, context)
     return okResponse.blob()
-  }, context)
+  }, context, !skipAuth)
 }
 
 export interface DownloadApiFileResult {
@@ -429,7 +433,7 @@ export async function downloadApiFile(
       filename,
       headers: okResponse.headers
     }
-  }, context)
+  }, context, !skipAuth)
 }
 
 /**
@@ -476,4 +480,3 @@ export interface DeleteResponse {
   message: string
   deleted?: boolean
 }
-
