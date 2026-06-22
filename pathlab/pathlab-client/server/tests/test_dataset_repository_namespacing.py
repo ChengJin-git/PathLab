@@ -392,6 +392,49 @@ async def test_external_wsi_path_refs_filters_upload_root_in_database(monkeypatc
         await engine.dispose()
 
 
+@pytest.mark.asyncio
+async def test_original_filenames_by_dataset_filters_candidates_in_database():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with session_factory() as db:
+            await db.execute(
+                WSISlide.__table__.insert(),
+                [
+                    {
+                        "wsi_id": "target-a",
+                        "dataset_id": "ds-1",
+                        "original_filename": "a.svs",
+                        "wsi_path": "/mnt/external/a.svs",
+                    },
+                    {
+                        "wsi_id": "target-b",
+                        "dataset_id": "ds-1",
+                        "original_filename": "b.svs",
+                        "wsi_path": "/mnt/external/b.svs",
+                    },
+                    {
+                        "wsi_id": "other-dataset",
+                        "dataset_id": "ds-2",
+                        "original_filename": "a.svs",
+                        "wsi_path": "/mnt/external/other.svs",
+                    },
+                ],
+            )
+            await db.commit()
+
+            existing = await WSIRepository.get_original_filenames_by_dataset(
+                db, "ds-1", ["a.svs", "missing.svs"]
+            )
+
+        assert existing == {"a.svs"}
+    finally:
+        await engine.dispose()
+
+
 def test_startup_ddl_creates_case_pagination_indexes_for_existing_tables():
     database_source = (
         Path(__file__).parents[1] / "backend" / "database" / "database.py"

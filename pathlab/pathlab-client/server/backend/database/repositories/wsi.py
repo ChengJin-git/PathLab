@@ -1343,6 +1343,20 @@ class WSIRepository(BaseRepository[WSISlide]):
         return [row[0] for row in result.all()]
 
     @staticmethod
+    async def get_original_filenames_by_dataset(
+        db: AsyncSession, dataset_id: str, filenames: List[str]
+    ) -> set[str]:
+        """Return existing original filenames in a dataset for the given candidates."""
+        if not filenames:
+            return set()
+        result = await db.execute(
+            select(WSISlide.original_filename)
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.original_filename.in_(list(dict.fromkeys(filenames))))
+        )
+        return {row[0] for row in result.all() if row[0] is not None}
+
+    @staticmethod
     async def count_by_dataset(
         db: AsyncSession,
         dataset_id: str,
