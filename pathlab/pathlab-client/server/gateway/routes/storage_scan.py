@@ -757,17 +757,10 @@ async def start_unbind_dataset_task(
     Progress can be monitored via SSE at /storage/tasks/stream
     """
     try:
-        uploads_dir = str(Config.get_uploads_dir())
-
-        # Get all WSI records in this dataset
-        wsi_list = await WSIRepository.get_by_dataset(db, dataset_id, limit=0)
-
-        # Filter to only external files (use wsi_id, not database id)
-        external_wsi_ids = [
-            str(wsi.wsi_id)
-            for wsi in wsi_list
-            if not _is_under_uploads_dir(str(wsi.wsi_path), uploads_dir)
-        ]
+        external_refs = await DatasetRepository.get_external_wsi_path_refs_batch(
+            db, [dataset_id]
+        )
+        external_wsi_ids = [str(ref["wsi_id"]) for ref in external_refs[dataset_id]]
 
         if not external_wsi_ids:
             raise HTTPException(

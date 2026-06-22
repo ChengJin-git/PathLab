@@ -197,3 +197,73 @@ async def test_scan_directory_task_preserves_user_cancel_after_scan_finishes(mon
     assert scanned is True
     assert "cancelled" in statuses
     assert "completed" not in statuses
+
+
+@pytest.mark.asyncio
+async def test_start_unbind_dataset_task_uses_external_sql_lookup(monkeypatch):
+    created = {}
+    scheduled = {}
+
+    async def _fake_get_external_refs(_db, dataset_ids):
+        assert dataset_ids == ["dataset-1"]
+        return {
+            "dataset-1": [
+                {"wsi_id": "external-1", "wsi_path": "/mnt/a.svs"},
+                {"wsi_id": "external-2", "wsi_path": "/mnt/b.svs"},
+            ]
+        }
+
+    async def _fake_create(_db, **kwargs):
+        created.update(kwargs)
+        return types.SimpleNamespace(task_id=kwargs["task_id"])
+
+    async def _fake_get_by_id(_db, _dataset_id):
+        return types.SimpleNamespace(name="External Dataset")
+
+    def _fake_add_task(func, *args, **kwargs):
+        scheduled["func"] = func
+        scheduled["args"] = args
+        scheduled["kwargs"] = kwargs
+
+    monkeypatch.setattr(
+        storage_scan.DatasetRepository,
+        "get_external_wsi_path_refs_batch",
+        _fake_get_external_refs,
+    )
+    monkeypatch.setattr(
+        storage_scan.WSIRepository,
+        "get_by_dataset",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("must not load the whole dataset")
+        ),
+    )
+    monkeypatch.setattr(
+        storage_scan.DatasetRepository,
+        "get_by_id",
+        _fake_get_by_id,
+    )
+    monkeypatch.setattr(storage_scan.StorageTaskRepository, "create", _fake_create)
+    monkeypatch.setattr(
+        storage_scan.uuid, "uuid4", lambda: types.SimpleNamespace(hex="abc123")
+    )
+    background_tasks = BackgroundTasks()
+    monkeypatch.setattr(background_tasks, "add_task", _fake_add_task)
+
+    result = await storage_scan.start_unbind_dataset_task(
+        "dataset-1",
+        background_tasks=background_tasks,
+        user=types.SimpleNamespace(id="admin-1"),
+        db=FakeSession(),
+    )
+
+    assert result["task_id"] == "unbind_abc123"
+    assert result["total_files"] == 2
+    assert created["task_type"] == "unbind_dataset"
+    assert created["total_items"] == 2
+    assert created["params"]["wsi_ids"] == ["external-1", "external-2"]
+    assert scheduled["func"] is storage_tasks._run_delete_external_task
+    assert scheduled["args"] == (
+        "unbind_abc123",
+        "admin-1",
+        ["external-1", "external-2"],
+    )
