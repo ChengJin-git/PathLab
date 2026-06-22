@@ -4,12 +4,12 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { DatasetRegistrationCard } from '@renderer/components/chat/DatasetRegistrationCard'
 
 const {
-  fetchDatasetsMock,
+  fetchAllDatasetsMock,
   downloadCSVTemplateMock,
   addUploadTaskMock,
   collectItemsFromDataTransferMock,
 } = vi.hoisted(() => ({
-  fetchDatasetsMock: vi.fn(),
+  fetchAllDatasetsMock: vi.fn(),
   downloadCSVTemplateMock: vi.fn(),
   addUploadTaskMock: vi.fn(),
   collectItemsFromDataTransferMock: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock('react-i18next', () => ({
 }))
 
 vi.mock('@renderer/api', () => ({
-  fetchDatasets: fetchDatasetsMock,
+  fetchAllDatasets: fetchAllDatasetsMock,
   downloadCSVTemplate: downloadCSVTemplateMock,
 }))
 
@@ -34,7 +34,7 @@ vi.mock('@renderer/components/upload', () => ({
 
 describe('DatasetRegistrationCard', () => {
   beforeEach(() => {
-    fetchDatasetsMock.mockResolvedValue({ items: [] })
+    fetchAllDatasetsMock.mockResolvedValue({ items: [] })
     downloadCSVTemplateMock.mockReset()
     addUploadTaskMock.mockReset()
     collectItemsFromDataTransferMock.mockReset()
@@ -126,7 +126,7 @@ describe('DatasetRegistrationCard', () => {
   })
 
   it('downloads exact canonical task_type for existing dataset without backward compat mapping', async () => {
-    fetchDatasetsMock.mockResolvedValue({
+    fetchAllDatasetsMock.mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-1',
@@ -147,7 +147,7 @@ describe('DatasetRegistrationCard', () => {
     )
 
     await waitFor(() => {
-      expect(fetchDatasetsMock).toHaveBeenCalled()
+      expect(fetchAllDatasetsMock).toHaveBeenCalled()
     })
 
     const selectButton = screen.getByRole('button', { name: /chatComponents\.datasetRegistration\.chooseDataset/ })
@@ -164,7 +164,7 @@ describe('DatasetRegistrationCard', () => {
 
   it('surfaces error when existing dataset has non-canonical task_type instead of mapping', async () => {
     const onErrorMock = vi.fn()
-    fetchDatasetsMock.mockResolvedValue({
+    fetchAllDatasetsMock.mockResolvedValue({
       items: [
         {
           dataset_id: 'dataset-legacy',
@@ -186,7 +186,7 @@ describe('DatasetRegistrationCard', () => {
     )
 
     await waitFor(() => {
-      expect(fetchDatasetsMock).toHaveBeenCalled()
+      expect(fetchAllDatasetsMock).toHaveBeenCalled()
     })
 
     const selectButton = screen.getByRole('button', { name: /chatComponents\.datasetRegistration\.chooseDataset/ })

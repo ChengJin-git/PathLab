@@ -1,5 +1,6 @@
+import type React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Routes, Route, Link } from 'react-router-dom'
+import { Routes, Route, Link, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import { ProtectedRoute } from './components/ProtectedRoute'
 import IntroductionPage from './pages/IntroductionPage'
@@ -15,6 +16,12 @@ import RegisterPage from './pages/UploadPage'
 import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
 import ToolsPage from './pages/ToolsPage'
+import PathScientistLayout from './components/pathscientist/PathScientistLayout'
+import PathScientistSessionsPage from './pages/PathScientistSessionsPage'
+import PathScientistWorkspaceLayout from './components/pathscientist/PathScientistWorkspaceLayout'
+import PathScientistNewSessionPage from './pages/PathScientistNewSessionPage'
+import PathScientistSessionPage from './pages/PathScientistSessionPage'
+import { isPathScientistStandaloneMode } from './lib/pathscientistStandalone'
 
 function NotFoundPage() {
   const { t } = useTranslation()
@@ -28,7 +35,45 @@ function NotFoundPage() {
   )
 }
 
-export default function App() {
+interface AppProps {
+  pathScientistStandalone?: boolean
+}
+
+function pathScientistRouteElements(useMainLayout: boolean) {
+  const workspace = <PathScientistWorkspaceLayout />
+  const shell = useMainLayout ? (
+    <ProtectedRoute>
+      <Layout>{workspace}</Layout>
+    </ProtectedRoute>
+  ) : (
+    <PathScientistLayout>{workspace}</PathScientistLayout>
+  )
+
+  return (
+    <Route path="/pathscientist" element={shell}>
+      <Route index element={<Navigate to="new" replace />} />
+      <Route path="new" element={<PathScientistNewSessionPage />} />
+      <Route path="sessions/:id" element={<PathScientistSessionPage />} />
+    </Route>
+  )
+}
+
+export default function App({ pathScientistStandalone }: AppProps = {}) {
+  const standalone = pathScientistStandalone ?? isPathScientistStandaloneMode({
+    isElectron: !!(window as any).electron || window.location.protocol === 'file:',
+  })
+
+  if (standalone) {
+    return (
+      <Routes>
+        <Route path="/" element={<Navigate to="/pathscientist/new" replace />} />
+        <Route path="/login" element={<Navigate to="/pathscientist/new" replace />} />
+        {pathScientistRouteElements(false)}
+        <Route path="*" element={<Navigate to="/pathscientist/new" replace />} />
+      </Routes>
+    )
+  }
+
   return (
     <Routes>
       {/* Public Routes */}
@@ -36,6 +81,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
 
       {/* Protected Routes - Require Authentication */}
+      {pathScientistRouteElements(true)}
       <Route path="/dashboard" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/dashboard/:conversationId" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><Layout><ToolsPage /></Layout></ProtectedRoute>} />
@@ -62,4 +108,3 @@ export default function App() {
     </Routes>
   )
 }
-

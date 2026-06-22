@@ -1,4 +1,5 @@
 import {
+	Beaker,
 	Bot,
 	ChevronDown,
 	ChevronLeft,
@@ -3431,6 +3432,20 @@ export default function AIChatPage() {
 									{t("aiChat.sidebar.analysisLab")}
 								</span>
 								<ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all" />
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									navigate("/pathscientist/new");
+									setShowHistory(false);
+								}}
+								className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-amber-50 hover:text-amber-700 transition-colors group"
+							>
+								<Beaker className="w-4 h-4 text-amber-500 group-hover:text-amber-600" />
+								<span className="flex-1 text-left">
+									{t("aiChat.sidebar.autoExperiment")}
+								</span>
+								<ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-amber-400 opacity-0 group-hover:opacity-100 transition-all" />
 							</button>
 							<button
 								type="button"

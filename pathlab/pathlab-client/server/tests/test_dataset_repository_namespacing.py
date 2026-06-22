@@ -61,15 +61,7 @@ async def test_get_or_create_scopes_lookup_to_user_namespace(monkeypatch):
         return None
 
     async def _fake_create(_db, **kwargs):
-        create_calls.append(
-            {
-                "group_id": kwargs.get("group_id"),
-                "user_id": kwargs.get("user_id"),
-                "source_organ": kwargs.get("source_organ"),
-                "parent_dataset_id": kwargs.get("parent_dataset_id"),
-                "is_public": kwargs.get("is_public", False),
-            }
-        )
+        create_calls.append(kwargs)
         return created_for_target_user
 
     async def _fake_get_by_id(_db, _dataset_id):
@@ -100,6 +92,9 @@ async def test_get_or_create_scopes_lookup_to_user_namespace(monkeypatch):
 
     assert lookup_user_ids == ["user-b"]
     assert len(create_calls) == 1
+    assert create_calls[0]["name"] == "Shared Dataset"
+    assert create_calls[0]["group_id"] == "group-1"
+    assert create_calls[0]["user_id"] == "user-b"
     assert result.user_id == "user-b"
 
 

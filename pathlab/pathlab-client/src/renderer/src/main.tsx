@@ -12,16 +12,42 @@ import { initializeApiConfig, updateApiBase } from './config'
 import './i18n'
 import { queryClient } from './lib/queryClient'
 import { bootstrapTrainingOptions } from './constants/trainingOptionsBootstrap'
+import { isPathScientistStandaloneMode } from './lib/pathscientistStandalone'
 
 // Use the base URL from Vite config
 const basename = import.meta.env.BASE_URL
 
 // Detect if running in Electron (file:// protocol or electron window object)
 const isElectron = !!(window as any).electron || window.location.protocol === 'file:'
+const isPathScientistStandalone = isPathScientistStandaloneMode({ isElectron })
+
+async function unregisterServiceWorkersAndCaches(): Promise<void> {
+  if (!('serviceWorker' in navigator)) return
+
+  try {
+    const registrations = await navigator.serviceWorker.getRegistrations()
+    await Promise.all(registrations.map((registration) => registration.unregister()))
+  } catch {
+    // Best effort: stale service workers should not block the PathScientist dev page.
+  }
+
+  if ('caches' in window) {
+    try {
+      const names = await window.caches.keys()
+      await Promise.all(names.map((name) => window.caches.delete(name)))
+    } catch {
+      // Best effort only.
+    }
+  }
+}
 
 // Register Service Worker for PWA support
 // Only register in browser environment (not in Electron)
-if ('serviceWorker' in navigator && !isElectron) {
+if ('serviceWorker' in navigator && !isElectron && (import.meta.env.DEV || isPathScientistStandalone)) {
+  window.addEventListener('load', () => {
+    void unregisterServiceWorkersAndCaches()
+  })
+} else if ('serviceWorker' in navigator && !isElectron) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .then((registration) => {
@@ -71,16 +97,22 @@ async function bootstrap(): Promise<void> {
   await bootstrapTrainingOptions()
   console.log('[Main] API configuration initialized')
 
+  const app = isPathScientistStandalone
+    ? <App pathScientistStandalone />
+    : (
+      <AuthProvider>
+        <BackgroundTaskProvider>
+          <App />
+        </BackgroundTaskProvider>
+      </AuthProvider>
+    )
+
   createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider delayDuration={400} skipDelayDuration={200}>
         <Router basename={isElectron ? undefined : basename}>
           <ToastProvider>
-            <AuthProvider>
-              <BackgroundTaskProvider>
-                <App />
-              </BackgroundTaskProvider>
-            </AuthProvider>
+            {app}
           </ToastProvider>
         </Router>
       </TooltipProvider>

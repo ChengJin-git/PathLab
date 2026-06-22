@@ -137,8 +137,14 @@ async def test_initialize_gateway_runtime_runs_startup_sequence(monkeypatch):
     cleanup_expired_permissions = AsyncMock()
     start_background = MagicMock(return_value=(training_task, chat_task))
     initialize_runtime_clients = AsyncMock()
+    configure_pathscientist_loop = MagicMock()
 
     monkeypatch.setattr(startup.Config, "ensure_directories", ensure_directories)
+    monkeypatch.setattr(
+        startup.pathscientist_persistence,
+        "configure_loop",
+        configure_pathscientist_loop,
+    )
     monkeypatch.setattr(startup, "init_db", init_db, raising=False)
     monkeypatch.setattr(
         startup, "apply_gateway_schema_migration", apply_schema_migration, raising=False
@@ -183,6 +189,7 @@ async def test_initialize_gateway_runtime_runs_startup_sequence(monkeypatch):
 
     assert result == (training_task, chat_task)
     ensure_directories.assert_called_once_with()
+    configure_pathscientist_loop.assert_called_once_with(asyncio.get_running_loop())
     init_db.assert_awaited_once()
     apply_schema_migration.assert_awaited_once()
     initialize_redis.assert_awaited_once()
@@ -206,6 +213,7 @@ async def test_shutdown_gateway_runtime_runs_shutdown_sequence():
 
     cancel_background_task = AsyncMock()
     shutdown_runtime_clients = AsyncMock()
+    drain_pathscientist_queue = AsyncMock()
     shutdown_task_queue = AsyncMock()
     close_db = AsyncMock()
     close_redis_connections = AsyncMock()
@@ -213,6 +221,11 @@ async def test_shutdown_gateway_runtime_runs_shutdown_sequence():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(startup, "cancel_background_task", cancel_background_task)
     monkeypatch.setattr(startup, "shutdown_runtime_clients", shutdown_runtime_clients)
+    monkeypatch.setattr(
+        startup.pathscientist_persistence,
+        "drain_persistence_queue",
+        drain_pathscientist_queue,
+    )
     monkeypatch.setattr(startup, "shutdown_task_queue", shutdown_task_queue, raising=False)
     monkeypatch.setattr(startup, "close_db", close_db)
     monkeypatch.setattr(startup, "close_redis_connections", close_redis_connections)
@@ -225,6 +238,7 @@ async def test_shutdown_gateway_runtime_runs_shutdown_sequence():
     cancel_background_task.assert_any_await(training_task)
     cancel_background_task.assert_any_await(chat_task)
     shutdown_runtime_clients.assert_awaited_once_with(app)
+    drain_pathscientist_queue.assert_awaited_once_with(timeout=5.0)
     shutdown_task_queue.assert_not_awaited()
     close_db.assert_awaited_once()
     close_redis_connections.assert_awaited_once()

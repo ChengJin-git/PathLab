@@ -1,0 +1,4 @@
+# Optional high-quality PDF parsing stack.
+# Install only in a dedicated PDF parsing environment; marker-pdf 1.10.x
+# currently conflicts with the PathScientist/OpenHands OpenAI 2.x stack.
+marker-pdf>=1.10.2

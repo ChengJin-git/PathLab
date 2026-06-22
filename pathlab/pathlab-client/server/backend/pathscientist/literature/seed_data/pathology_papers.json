@@ -1,0 +1,560 @@
+[
+  {
+    "paper_id": "ilse2018abmil",
+    "title": "Attention-based Deep Multiple Instance Learning",
+    "authors": [
+      "Ilse et al."
+    ],
+    "year": 2018,
+    "abstract": "Proposes gated attention pooling over patch embeddings for MIL classification of whole slide images.",
+    "venue": "ICML",
+    "source": "local",
+    "url": "https://arxiv.org/abs/1802.04712",
+    "methods": [
+      "ABMIL",
+      "attention pooling"
+    ],
+    "datasets": [
+      "Camelyon16",
+      "BRACS"
+    ],
+    "baselines": [
+      {
+        "method": "ABMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.82,
+        "dataset": "BRACS",
+        "context": "ABMIL achieves 0.82 AUC on BRACS with UNI features"
+      },
+      {
+        "method": "ABMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.87,
+        "dataset": "Camelyon16",
+        "context": "ABMIL baseline on Camelyon16"
+      }
+    ],
+    "organ": "breast",
+    "task_type": "classification",
+    "tags": [
+      "MIL",
+      "attention",
+      "WSI"
+    ],
+    "canonical_id": "arxiv:1802.04712",
+    "aliases": [
+      "curated:ilse2018abmil"
+    ]
+  },
+  {
+    "paper_id": "lu2021clam",
+    "title": "Data-efficient and weakly supervised computational pathology on whole-slide images",
+    "authors": [
+      "Lu et al."
+    ],
+    "year": 2021,
+    "abstract": "CLAM uses clustering-constrained attention with instance-level and bag-level supervision for WSI classification.",
+    "venue": "Nature Biomedical Engineering",
+    "source": "local",
+    "url": "https://doi.org/10.1038/s41551-020-00682-w",
+    "methods": [
+      "CLAM",
+      "CLAM-SB",
+      "CLAM-MB"
+    ],
+    "datasets": [
+      "Camelyon16",
+      "TCGA-LUNG",
+      "TCGA-RCC",
+      "BRACS"
+    ],
+    "baselines": [
+      {
+        "method": "CLAM-SB",
+        "metric_name": "AUC",
+        "metric_value": 0.83,
+        "dataset": "BRACS",
+        "context": "CLAM-SB achieves 0.83 AUC on BRACS"
+      },
+      {
+        "method": "CLAM-SB",
+        "metric_name": "AUC",
+        "metric_value": 0.94,
+        "dataset": "Camelyon16",
+        "context": "CLAM-SB on Camelyon16"
+      },
+      {
+        "method": "CLAM-MB",
+        "metric_name": "AUC",
+        "metric_value": 0.88,
+        "dataset": "TCGA-LUNG",
+        "context": "CLAM multi-branch on TCGA-LUNG"
+      }
+    ],
+    "organ": "multi-organ",
+    "task_type": "classification",
+    "tags": [
+      "MIL",
+      "CLAM",
+      "weakly supervised",
+      "WSI"
+    ],
+    "canonical_id": "doi:10.1038/s41551-020-00682-w",
+    "aliases": [
+      "curated:lu2021clam"
+    ]
+  },
+  {
+    "paper_id": "shao2021transmil",
+    "title": "TransMIL: Transformer based Correlated Multiple Instance Learning for Whole Slide Image Classification",
+    "authors": [
+      "Shao et al."
+    ],
+    "year": 2021,
+    "abstract": "Transformer with PPEG for position encoding, captures long-range morphological correlations in WSI bags.",
+    "venue": "NeurIPS",
+    "source": "local",
+    "url": "https://arxiv.org/abs/2106.00908",
+    "methods": [
+      "TransMIL"
+    ],
+    "datasets": [
+      "Camelyon16",
+      "TCGA-LUNG",
+      "BRACS"
+    ],
+    "baselines": [
+      {
+        "method": "TransMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.85,
+        "dataset": "BRACS",
+        "context": "TransMIL achieves 0.85 AUC on BRACS"
+      },
+      {
+        "method": "TransMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.93,
+        "dataset": "Camelyon16",
+        "context": "TransMIL on Camelyon16"
+      }
+    ],
+    "organ": "multi-organ",
+    "task_type": "classification",
+    "tags": [
+      "MIL",
+      "transformer",
+      "WSI",
+      "positional encoding"
+    ],
+    "canonical_id": "arxiv:2106.00908",
+    "aliases": [
+      "curated:shao2021transmil"
+    ]
+  },
+  {
+    "paper_id": "li2021dsmil",
+    "title": "Dual-stream Multiple Instance Learning Network for Whole Slide Image Classification with Self-supervised Contrastive Learning",
+    "authors": [
+      "Li et al."
+    ],
+    "year": 2021,
+    "abstract": "DSMIL uses dual-stream with max-pooling and attention for critical instance and context instance branches.",
+    "venue": "CVPR",
+    "source": "local",
+    "url": "https://arxiv.org/abs/2011.08939",
+    "methods": [
+      "DSMIL"
+    ],
+    "datasets": [
+      "Camelyon16",
+      "TCGA-LUNG"
+    ],
+    "baselines": [
+      {
+        "method": "DSMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.89,
+        "dataset": "Camelyon16",
+        "context": "DSMIL on Camelyon16"
+      },
+      {
+        "method": "DSMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.96,
+        "dataset": "TCGA-LUNG",
+        "context": "DSMIL on TCGA-LUNG"
+      }
+    ],
+    "organ": "multi-organ",
+    "task_type": "classification",
+    "tags": [
+      "MIL",
+      "dual-stream",
+      "contrastive learning"
+    ],
+    "canonical_id": "arxiv:2011.08939",
+    "aliases": [
+      "curated:li2021dsmil"
+    ]
+  },
+  {
+    "paper_id": "zhang2022dtfd",
+    "title": "DTFD-MIL: Double-Tier Feature Distillation Multiple Instance Learning for Histopathology Whole Slide Image Classification",
+    "authors": [
+      "Zhang et al."
+    ],
+    "year": 2022,
+    "abstract": "Double-tier feature distillation with pseudo-bag augmentation for small datasets.",
+    "venue": "CVPR",
+    "source": "local",
+    "url": "https://arxiv.org/abs/2203.12081",
+    "methods": [
+      "DTFD-MIL"
+    ],
+    "datasets": [
+      "Camelyon16",
+      "BRACS"
+    ],
+    "baselines": [
+      {
+        "method": "DTFD-MIL",
+        "metric_name": "AUC",
+        "metric_value": 0.86,
+        "dataset": "BRACS",
+        "context": "DTFD-MIL on BRACS"
+      },
+      {
+        "method": "DTFD-MIL",
+        "metric_name": "AUC",
+        "metric_value": 0.95,
+        "dataset": "Camelyon16",
+        "context": "DTFD-MIL on Camelyon16"
+      }
+    ],
+    "organ": "breast",
+    "task_type": "classification",
+    "tags": [
+      "MIL",
+      "feature distillation",
+      "pseudo-bag"
+    ],
+    "canonical_id": "arxiv:2203.12081",
+    "aliases": [
+      "curated:zhang2022dtfd"
+    ]
+  },
+  {
+    "paper_id": "chen2024uni",
+    "title": "Towards a General-Purpose Foundation Model for Computational Pathology",
+    "authors": [
+      "Chen et al."
+    ],
+    "year": 2024,
+    "abstract": "UNI is a ViT-L/16 pathology foundation model pretrained on over 100k slides using DINOv2.",
+    "venue": "Nature Medicine",
+    "source": "local",
+    "url": "https://doi.org/10.1038/s41591-024-02857-3",
+    "methods": [
+      "UNI"
+    ],
+    "datasets": [
+      "TCGA",
+      "BRACS",
+      "Camelyon16"
+    ],
+    "baselines": [
+      {
+        "method": "UNI+ABMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.88,
+        "dataset": "BRACS",
+        "context": "UNI features with ABMIL on BRACS"
+      },
+      {
+        "method": "UNI+ABMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.95,
+        "dataset": "Camelyon16",
+        "context": "UNI with ABMIL on Camelyon16"
+      }
+    ],
+    "organ": "multi-organ",
+    "task_type": "feature_extraction",
+    "tags": [
+      "foundation model",
+      "UNI",
+      "DINOv2",
+      "ViT-L",
+      "pathology"
+    ],
+    "canonical_id": "doi:10.1038/s41591-024-02857-3",
+    "aliases": [
+      "curated:chen2024uni"
+    ]
+  },
+  {
+    "paper_id": "lu2024conch",
+    "title": "A Visual-Language Foundation Model for Computational Pathology",
+    "authors": [
+      "Lu et al."
+    ],
+    "year": 2024,
+    "abstract": "CONCH is a vision-language foundation model for pathology using CLIP-style pretraining.",
+    "venue": "Nature Medicine",
+    "source": "local",
+    "url": "https://doi.org/10.1038/s41591-024-02856-4",
+    "methods": [
+      "CONCH"
+    ],
+    "datasets": [
+      "TCGA",
+      "BRACS"
+    ],
+    "baselines": [
+      {
+        "method": "CONCH+ABMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.86,
+        "dataset": "BRACS",
+        "context": "CONCH features with ABMIL on BRACS"
+      }
+    ],
+    "organ": "multi-organ",
+    "task_type": "feature_extraction",
+    "tags": [
+      "foundation model",
+      "CONCH",
+      "CLIP",
+      "vision-language",
+      "pathology"
+    ],
+    "canonical_id": "doi:10.1038/s41591-024-02856-4",
+    "aliases": [
+      "curated:lu2024conch"
+    ]
+  },
+  {
+    "paper_id": "vorontsov2024virchow",
+    "title": "Virchow: A Million-Slide Digital Pathology Foundation Model",
+    "authors": [
+      "Vorontsov et al."
+    ],
+    "year": 2024,
+    "abstract": "Virchow is a DINOv2-based ViT-H/14 foundation model pretrained on 1.5M pathology slides.",
+    "venue": "Nature Medicine",
+    "source": "local",
+    "url": "",
+    "methods": [
+      "Virchow"
+    ],
+    "datasets": [
+      "TCGA"
+    ],
+    "baselines": [
+      {
+        "method": "Virchow+ABMIL",
+        "metric_name": "AUC",
+        "metric_value": 0.9,
+        "dataset": "TCGA-LUNG",
+        "context": "Virchow features with ABMIL on TCGA-LUNG"
+      }
+    ],
+    "organ": "multi-organ",
+    "task_type": "feature_extraction",
+    "tags": [
+      "foundation model",
+      "Virchow",
+      "DINOv2",
+      "ViT-H",
+      "pathology"
+    ],
+    "canonical_id": "curated:vorontsov2024virchow"
+  },
+  {
+    "paper_id": "filiot2023phikon",
+    "title": "Scaling Self-Supervised Learning for Histopathology with Masked Image Modeling",
+    "authors": [
+      "Filiot et al."
+    ],
+    "year": 2023,
+    "abstract": "Phikon uses iBOT self-supervised learning on pathology patches for a ViT-B/16 encoder.",
+    "venue": "MedIA",
+    "source": "local",
+    "url": "",
+    "methods": [
+      "Phikon"
+    ],
+    "datasets": [
+      "TCGA",
+      "Camelyon16"
+    ],
+    "baselines": [],
+    "organ": "multi-organ",
+    "task_type": "feature_extraction",
+    "tags": [
+      "foundation model",
+      "Phikon",
+      "iBOT",
+      "self-supervised"
+    ],
+    "canonical_id": "curated:filiot2023phikon"
+  },
+  {
+    "paper_id": "katzman2018deepsurv",
+    "title": "DeepSurv: Personalized Treatment Recommender System Using a Cox Proportional Hazards Deep Neural Network",
+    "authors": [
+      "Katzman et al."
+    ],
+    "year": 2018,
+    "abstract": "Cox proportional hazards with neural network for survival prediction.",
+    "venue": "BMC Medical Research Methodology",
+    "source": "local",
+    "url": "",
+    "methods": [
+      "DeepSurv",
+      "Cox"
+    ],
+    "datasets": [
+      "TCGA"
+    ],
+    "baselines": [
+      {
+        "method": "DeepSurv",
+        "metric_name": "C-index",
+        "metric_value": 0.65,
+        "dataset": "TCGA-BRCA",
+        "context": "DeepSurv baseline C-index on TCGA-BRCA"
+      }
+    ],
+    "organ": "breast",
+    "task_type": "survival",
+    "tags": [
+      "survival",
+      "Cox",
+      "deep learning"
+    ],
+    "canonical_id": "curated:katzman2018deepsurv"
+  },
+  {
+    "paper_id": "chen2021patchgcn",
+    "title": "Whole Slide Images are 2D Point Clouds: Context-Aware Survival Prediction using Patch-based Graph Convolutional Networks",
+    "authors": [
+      "Chen et al."
+    ],
+    "year": 2021,
+    "abstract": "Graph neural network on WSI patches for survival prediction using spatial context.",
+    "venue": "MICCAI",
+    "source": "local",
+    "url": "",
+    "methods": [
+      "Patch-GCN"
+    ],
+    "datasets": [
+      "TCGA-BRCA",
+      "TCGA-LUNG"
+    ],
+    "baselines": [
+      {
+        "method": "Patch-GCN",
+        "metric_name": "C-index",
+        "metric_value": 0.68,
+        "dataset": "TCGA-BRCA",
+        "context": "Patch-GCN achieves 0.68 C-index on TCGA-BRCA"
+      },
+      {
+        "method": "Patch-GCN",
+        "metric_name": "C-index",
+        "metric_value": 0.64,
+        "dataset": "TCGA-LUNG",
+        "context": "Patch-GCN on TCGA-LUNG"
+      }
+    ],
+    "organ": "multi-organ",
+    "task_type": "survival",
+    "tags": [
+      "survival",
+      "GNN",
+      "graph",
+      "spatial"
+    ],
+    "canonical_id": "curated:chen2021patchgcn"
+  },
+  {
+    "paper_id": "brancati2022bracs",
+    "title": "BRACS: A Dataset for BReAst Carcinoma Subtyping in H&E Histology Images",
+    "authors": [
+      "Brancati et al."
+    ],
+    "year": 2022,
+    "abstract": "BRACS is a breast cancer ROI dataset with 7 classes and ~500 WSIs for subtyping.",
+    "venue": "Database",
+    "source": "local",
+    "url": "",
+    "methods": [],
+    "datasets": [
+      "BRACS"
+    ],
+    "baselines": [],
+    "organ": "breast",
+    "task_type": "classification",
+    "tags": [
+      "dataset",
+      "BRACS",
+      "breast cancer",
+      "subtyping"
+    ],
+    "canonical_id": "curated:brancati2022bracs"
+  },
+  {
+    "paper_id": "bejnordi2017camelyon16",
+    "title": "Diagnostic Assessment of Deep Learning Algorithms for Detection of Lymph Node Metastases in Women With Breast Cancer",
+    "authors": [
+      "Bejnordi et al."
+    ],
+    "year": 2017,
+    "abstract": "Camelyon16 challenge for detection of lymph node metastases in breast cancer WSIs.",
+    "venue": "JAMA",
+    "source": "local",
+    "url": "",
+    "methods": [],
+    "datasets": [
+      "Camelyon16"
+    ],
+    "baselines": [],
+    "organ": "breast",
+    "task_type": "classification",
+    "tags": [
+      "dataset",
+      "Camelyon16",
+      "metastasis detection"
+    ],
+    "canonical_id": "curated:bejnordi2017camelyon16"
+  },
+  {
+    "paper_id": "bulten2022panda",
+    "title": "Artificial intelligence for diagnosis and Gleason grading of prostate cancer: the PANDA challenge",
+    "authors": [
+      "Bulten et al."
+    ],
+    "year": 2022,
+    "abstract": "PANDA is a prostate cancer grading challenge with 6 Gleason grades.",
+    "venue": "Nature Medicine",
+    "source": "local",
+    "url": "",
+    "methods": [],
+    "datasets": [
+      "PANDA"
+    ],
+    "baselines": [],
+    "organ": "prostate",
+    "task_type": "classification",
+    "tags": [
+      "dataset",
+      "PANDA",
+      "prostate cancer",
+      "grading"
+    ],
+    "canonical_id": "curated:bulten2022panda"
+  }
+]

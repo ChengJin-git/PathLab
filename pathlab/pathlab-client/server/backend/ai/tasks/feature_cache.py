@@ -197,7 +197,6 @@ def get_lock_path(
     lock_dir = uploads_root / "features" / ".locks" / extractor_name / params_hash
     return lock_dir / f"{wsi_id}.lock"
 
-
 def get_cached_features_path(
     uploads_root: Path,
     extractor_name: str,

@@ -27,6 +27,10 @@ from .dependencies import (
     get_current_user_id,
     get_user_from_token_param,
     get_user_from_header_or_param,
+    create_pathscientist_access_token,
+    get_pathscientist_access_token_claims,
+    get_pathscientist_header_or_access_token_claims,
+    PATHSCIENTIST_ACCESS_TOKEN_SECRET,
 )
 
 __all__ = [
@@ -51,5 +55,8 @@ __all__ = [
     "get_current_user_id",
     "get_user_from_token_param",
     "get_user_from_header_or_param",
+    "create_pathscientist_access_token",
+    "get_pathscientist_access_token_claims",
+    "get_pathscientist_header_or_access_token_claims",
+    "PATHSCIENTIST_ACCESS_TOKEN_SECRET",
 ]
-

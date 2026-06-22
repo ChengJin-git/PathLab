@@ -14,6 +14,7 @@ import os
 import logging
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from datetime import datetime
+from sqlalchemy.exc import DBAPIError, InterfaceError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from sqlalchemy import text
@@ -142,6 +143,37 @@ from contextlib import asynccontextmanager
 import anyio
 
 
+async def _invalidate_session_connection(session: AsyncSession) -> None:
+    """Drop a broken DBAPI connection so the pool opens a fresh one next time."""
+    try:
+        await session.invalidate()
+    except Exception:
+        logger.debug("Unable to invalidate broken database connection", exc_info=True)
+
+
+async def _rollback_safely(session: AsyncSession, *, context: str) -> None:
+    try:
+        with anyio.CancelScope(shield=True):
+            await session.rollback()
+    except (InterfaceError, DBAPIError) as exc:
+        logger.warning(
+            "Ignoring rollback failure after database connection closed (%s): %s",
+            context,
+            exc,
+        )
+        await _invalidate_session_connection(session)
+    except SQLAlchemyError:
+        logger.exception("Database rollback failed (%s)", context)
+
+
+async def _close_safely(session: AsyncSession, *, context: str) -> None:
+    try:
+        with anyio.CancelScope(shield=True):
+            await session.close()
+    except SQLAlchemyError:
+        logger.exception("Database session close failed (%s)", context)
+
+
 @asynccontextmanager
 async def safe_session() -> AsyncGenerator[AsyncSession, None]:
     """
@@ -167,14 +199,12 @@ async def safe_session() -> AsyncGenerator[AsyncSession, None]:
     except Exception:
         # Rollback on any exception (including CancelledError)
         # Use anyio cancel scope shield to protect against uvicorn/starlette cancellation
-        with anyio.CancelScope(shield=True):
-            await session.rollback()
+        await _rollback_safely(session, context="safe_session exception")
         raise
     finally:
         # Shield the close operation to ensure connection is returned to pool
         # even if the coroutine is cancelled by anyio cancel scope
-        with anyio.CancelScope(shield=True):
-            await session.close()
+        await _close_safely(session, context="safe_session")
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -190,9 +220,18 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with async_session() as session:
         try:
             yield session
-            await session.commit()
+            with anyio.CancelScope(shield=True):
+                await session.commit()
+        except (InterfaceError, DBAPIError) as exc:
+            logger.warning(
+                "Database dependency transaction ended on a closed/broken connection: %s",
+                exc,
+            )
+            await _invalidate_session_connection(session)
+            await _rollback_safely(session, context="get_db broken connection")
+            raise
         except Exception:
-            await session.rollback()
+            await _rollback_safely(session, context="get_db exception")
             raise
         finally:
             # Shield the close operation to ensure connection is returned to pool
@@ -200,8 +239,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             # Use anyio.CancelScope(shield=True) because uvicorn/starlette uses anyio's
             # cancel scope for cancellation. asyncio.shield() does NOT protect against
             # anyio cancel scope cancellation. See SQLAlchemy issue #8145.
-            with anyio.CancelScope(shield=True):
-                await session.close()
+            await _close_safely(session, context="get_db")
 
 
 async def init_db():
@@ -577,6 +615,65 @@ async def init_db():
         logger.info(
             "users.session_nonces column ensured and backfilled from session_nonce"
         )
+
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS conversation_id VARCHAR(255)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS persistence_dir TEXT"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS workspace_path TEXT"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS resume_available BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS event_source_version VARCHAR(50) NOT NULL DEFAULT 'gateway-v1'"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS recovery_metadata JSONB"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_auto_research_sessions_conversation_id "
+                "ON auto_research_sessions (conversation_id)"
+            )
+        )
+        await conn.execute(
+            text(
+                "DELETE FROM auto_research_events newer "
+                "USING auto_research_events older "
+                "WHERE newer.session_id = older.session_id "
+                "AND newer.sequence = older.sequence "
+                "AND newer.id > older.id"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_research_events_session_seq "
+                "ON auto_research_events (session_id, sequence)"
+            )
+        )
+        logger.info("auto_research PathScientist recovery columns and event index ensured")
 
     await _enforce_data_group_task_taxonomy_constraint()
     await _create_default_admin()

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 MARKER_CACHE_SUFFIX = ".marker.md"
 STRUCTURED_CACHE_SUFFIX = ".structured.json"
 PDF_PARSE_METHOD_MARKER = "marker"
+PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 
 _marker_gpu_queue_override: contextvars.ContextVar[bool | None] = (
     contextvars.ContextVar(

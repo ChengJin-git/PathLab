@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const devGatewayTarget = process.env.VITE_DEV_GATEWAY_TARGET || 'http://127.0.0.1:6100'
+
 // Standalone Vite config for web-only build (no Electron)
 // Usage: cd src/renderer && npx vite build
 export default defineConfig({
@@ -60,6 +62,13 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 5173
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: devGatewayTarget,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
   }
 })

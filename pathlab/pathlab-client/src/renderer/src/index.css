@@ -110,6 +110,11 @@ body {
 }
 
 /* Custom scrollbar */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db #f3f4f6;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -138,6 +143,15 @@ body {
 .scrollbar-hide {
   -ms-overflow-style: none; /* IE and Edge */
   scrollbar-width: none; /* Firefox */
+}
+
+/* PathScientist clinical console: show ~3 stage cards, scroll for the rest */
+.pathscientist-steps-scroll {
+  --pathscientist-step-height: 5.75rem;
+  --pathscientist-step-gap: 0.75rem;
+  height: calc(3 * var(--pathscientist-step-height) + 2 * var(--pathscientist-step-gap));
+  max-height: calc(3 * var(--pathscientist-step-height) + 2 * var(--pathscientist-step-gap));
+  flex-shrink: 0;
 }
 
 /* ── Prose table responsive design ── */

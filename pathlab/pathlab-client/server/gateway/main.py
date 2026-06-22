@@ -5,7 +5,6 @@ Main entry point that registers all route modules.
 Most route logic has been moved to separate files in routes/ directory.
 """
 
-import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +15,7 @@ from .startup import (
     initialize_gateway_runtime,
     shutdown_gateway_runtime,
 )
+from backend.common.log_redaction import install_query_token_log_redaction
 from backend.common.config import Config
 
 # Ensure required upload directories exist at import time so that the
@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app with lifespan
 app = FastAPI(title="PathLab Gateway", lifespan=lifespan)
+install_query_token_log_redaction()
 
 # Enable CORS for dev and on-prem SPA
 app.add_middleware(

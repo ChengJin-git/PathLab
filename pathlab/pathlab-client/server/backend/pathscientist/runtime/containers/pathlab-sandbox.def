@@ -1,0 +1,97 @@
+Bootstrap: docker
+From: pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
+
+%labels
+    Author PathLab
+    Description "PathScientist runtime sandbox for WSI feature extraction and MIL training"
+    Version "2026-06-18"
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export PYTHONNOUSERSITE=1
+    export XFORMERS_DISABLED=1
+    export TORCH_CUDNN_V8_API_DISABLED=1
+    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+    export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-8}
+    export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
+    export KAGGLE_CONFIG_DIR=${KAGGLE_CONFIG_DIR:-/kaggle}
+    export MPLCONFIGDIR=${MPLCONFIGDIR:-/tmp/matplotlib}
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        libglib2.0-0 \
+        libgl1 \
+        libgomp1 \
+        libjpeg-turbo8 \
+        libopenjp2-7 \
+        libopenslide0 \
+        openslide-tools \
+        openssh-client \
+        rsync \
+        wget
+    rm -rf /var/lib/apt/lists/*
+
+    python -m pip install --upgrade --no-cache-dir pip setuptools wheel
+    python -m pip install --no-cache-dir \
+        'numpy==1.26.4' \
+        'pillow>=12.1.0' \
+        'opencv-python-headless>=4.11.0,<4.12.0' \
+        'openslide-python>=1.4.2' \
+        'tifffile>=2023.4.12' \
+        'h5py>=3.11.0' \
+        'pandas>=2.2.2' \
+        'scikit-learn>=1.5.1' \
+        'scipy>=1.13.1' \
+        'tqdm>=4.66.5' \
+        'timm>=1.0.24' \
+        'transformers>=4.57.0' \
+        'huggingface-hub>=0.36.0' \
+        'safetensors>=0.5.3' \
+        'einops>=0.8.1' \
+        'einops-exts>=0.0.4' \
+        'nystrom-attention>=0.0.10' \
+        'torchmetrics>=1.0.0' \
+        'omegaconf>=2.3.0' \
+        'open_clip_torch>=2.32.0' \
+        'lifelines>=0.30.0' \
+        'kaggle>=1.7.4' \
+        'requests>=2.31.0' \
+        'python-dotenv>=1.0.0' \
+        'nvidia-ml-py>=12.560.30' \
+        'segmentation-models-pytorch>=0.5.0'
+
+    python -m pip install --no-cache-dir --no-deps \
+        'git+https://github.com/Mahmoodlab/CONCH.git@main#egg=conch'
+
+    python -m pip install --no-cache-dir \
+        'git+https://github.com/MrPeterJin/Aslide.git@main#egg=Aslide' || true
+
+    mkdir -p /workspace /results /data /kaggle /tmp/matplotlib
+    chmod 1777 /workspace /results /data /tmp/matplotlib
+
+%runscript
+    exec python "$@"
+
+%test
+    python - <<'PY'
+import importlib
+import torch
+mods = [
+    'numpy', 'PIL', 'cv2', 'openslide', 'tifffile', 'h5py', 'pandas',
+    'sklearn', 'scipy', 'tqdm', 'timm', 'transformers', 'huggingface_hub',
+    'safetensors', 'einops', 'torchmetrics', 'omegaconf', 'open_clip'
+]
+for mod in mods:
+    importlib.import_module(mod)
+assert importlib.util.find_spec('kaggle') is not None
+print('torch', torch.__version__)
+print('cuda_available', torch.cuda.is_available())
+print('imports_ok')
+PY

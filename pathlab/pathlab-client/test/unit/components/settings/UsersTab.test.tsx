@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { UsersTab } from "@renderer/components/settings/UsersTab";
 import { TooltipProvider } from "@renderer/components/ui/tooltip";
@@ -121,10 +121,10 @@ describe("UsersTab", () => {
     const nicknameInput = screen.getByPlaceholderText("settings.createUserModal.displayNameOptional");
     const emailInput = screen.getByPlaceholderText("settings.createUserModal.emailPlaceholder");
 
-    await user.type(usernameInput, "newpath");
-    await user.type(passwordInput, "secure123");
-    await user.type(nicknameInput, "New Pathologist");
-    await user.type(emailInput, "newpath@hospital.com");
+    fireEvent.change(usernameInput, { target: { value: "newpath" } });
+    fireEvent.change(passwordInput, { target: { value: "secure123" } });
+    fireEvent.change(nicknameInput, { target: { value: "New Pathologist" } });
+    fireEvent.change(emailInput, { target: { value: "newpath@hospital.com" } });
 
     const submitButton = screen.getByRole("button", { name: /settings.createUserModal.createUser/i });
     await user.click(submitButton);
