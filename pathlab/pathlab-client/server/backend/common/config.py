@@ -133,6 +133,14 @@ class Config:
         return _get_app_data_dir() / "uploads"
 
     @classmethod
+    def get_autoresearch_dir(cls) -> Path:
+        return cls.get_uploads_dir() / "autoresearch"
+
+    @classmethod
+    def get_autoresearch_sessions_dir(cls) -> Path:
+        return cls.get_autoresearch_dir() / "autoresearch_sessions"
+
+    @classmethod
     def get_uploads_dir_source(cls) -> str:
         if os.environ.get("PATHLAB_UPLOADS_DIR"):
             return "env"
@@ -325,6 +333,11 @@ class Config:
         (uploads_dir / "progress").mkdir(
             exist_ok=True
         )  # Shared progress files (AI ↔ Gateway)
+        autoresearch_dir = cls.get_autoresearch_dir()
+        autoresearch_dir.mkdir(exist_ok=True)
+        cls.get_autoresearch_sessions_dir().mkdir(exist_ok=True)
+        (autoresearch_dir / "dataset_cache").mkdir(exist_ok=True)
+        (autoresearch_dir / "pathlab_datasets").mkdir(exist_ok=True)
 
     # ========== Maintenance Mode ==========
     @classmethod

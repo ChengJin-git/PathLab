@@ -234,3 +234,13 @@ class TestUploadsDirConfig:
         target = isolated_config.set_uploads_dir(str(tmp_path / "storage"))
         assert target == (tmp_path / "storage").resolve()
         assert isolated_config.get_uploads_dir() == target
+
+    def test_ensure_directories_creates_autoresearch_roots(
+        self, isolated_config, tmp_path
+    ):
+        target = isolated_config.set_uploads_dir(str(tmp_path / "storage"))
+
+        isolated_config.ensure_directories()
+
+        assert (target / "autoresearch").is_dir()
+        assert (target / "autoresearch" / "autoresearch_sessions").is_dir()
