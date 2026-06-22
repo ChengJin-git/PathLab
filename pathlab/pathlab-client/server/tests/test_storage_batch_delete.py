@@ -505,6 +505,91 @@ async def test_delete_dataset_task_uses_bulk_delete_once():
 
 
 @pytest.mark.asyncio
+async def test_delete_external_task_uses_bulk_delete_once():
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    wsis = [
+        SimpleNamespace(
+            wsi_id="wsi_1",
+            wsi_path="/mnt/external/wsi_1.svs",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        ),
+        SimpleNamespace(
+            wsi_id="wsi_2",
+            wsi_path="/mnt/external/wsi_2.svs",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        ),
+    ]
+    cleanup_items = [
+        storage_tasks.WSICleanupItem(w.wsi_id, w.wsi_path, w.dataset_id, w.user_id)
+        for w in wsis
+    ]
+    cleanup_results = [
+        {"wsi_id": "wsi_1", "status": "deleted", "message": "cleanup ok"},
+        {"wsi_id": "wsi_2", "status": "deleted", "message": "cleanup ok"},
+    ]
+
+    class SessionFactory:
+        async def __aenter__(self):
+            return db
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    with (
+        patch.object(storage_tasks, "async_session", return_value=SessionFactory()),
+        patch.object(
+            storage_tasks.WSIRepository,
+            "get_by_ids",
+            new=AsyncMock(return_value={"wsi_1": wsis[0], "wsi_2": wsis[1]}),
+        ) as get_by_ids,
+        patch.object(
+            storage_tasks,
+            "_bulk_delete_wsi_records",
+            new=AsyncMock(return_value=cleanup_items),
+        ) as bulk_delete,
+        patch.object(
+            storage_tasks,
+            "_delete_wsi_record_and_files",
+            new=AsyncMock(side_effect=AssertionError("must not delete one row at a time")),
+        ) as per_row_delete,
+        patch.object(
+            storage_tasks,
+            "_cleanup_deleted_wsi_files",
+            new=AsyncMock(return_value=(cleanup_results, 2, 0)),
+        ) as cleanup_files,
+        patch.object(
+            storage_tasks,
+            "_cleanup_empty_dataset_record",
+            new=AsyncMock(return_value=False),
+        ),
+        patch.object(
+            storage_tasks.StorageTaskRepository, "update_status", new=AsyncMock()
+        ) as update_status,
+        patch.object(storage_tasks, "is_storage_task_cancelled", return_value=False),
+    ):
+        await storage_tasks._run_delete_external_task(
+            "task_1", "user_1", ["wsi_1", "wsi_2"]
+        )
+
+    get_by_ids.assert_awaited_once_with(db, ["wsi_1", "wsi_2"])
+    bulk_delete.assert_awaited_once_with(
+        db, wsis, task_id="task_1", commit_batches=True
+    )
+    cleanup_files.assert_awaited_once()
+    cleanup_arg_items = cleanup_files.await_args.args[2]
+    assert [item.wsi_path for item in cleanup_arg_items] == ["", ""]
+    final_update = update_status.await_args
+    assert final_update.kwargs["success_count"] == 2
+    assert final_update.kwargs["failed_count"] == 0
+    assert final_update.kwargs["results"] == cleanup_results
+    per_row_delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_start_delete_dataset_task_does_not_materialize_wsi_ids_before_returning():
     from gateway.models import DeletionMode, StartDeleteDatasetRequest
     from gateway.routes import storage_tasks

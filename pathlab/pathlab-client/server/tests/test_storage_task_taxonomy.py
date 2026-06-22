@@ -1,4 +1,5 @@
 import types
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -217,8 +218,8 @@ async def test_batch_import_task_maps_default_classification_to_patch_classifica
         captured["align"] = kwargs
         return dataset
 
-    async def _fake_get_by_dataset(_db, dataset_id, **kwargs):
-        return []
+    async def _fake_get_original_filenames_by_dataset(_db, dataset_id, filenames):
+        return set()
 
     async def _fake_create_wsi(_db, **kwargs):
         captured["wsi"] = kwargs
@@ -232,7 +233,11 @@ async def test_batch_import_task_maps_default_classification_to_patch_classifica
     monkeypatch.setattr(storage_tasks.DataGroupRepository, "get_or_create", _fake_get_or_create_data_group)
     monkeypatch.setattr(storage_tasks.DatasetRepository, "get_or_create", _fake_get_or_create_dataset)
     monkeypatch.setattr(storage_tasks, "align_dataset_data_type_for_file", _fake_align_dataset_data_type_for_file)
-    monkeypatch.setattr(storage_tasks.WSIRepository, "get_by_dataset", _fake_get_by_dataset)
+    monkeypatch.setattr(
+        storage_tasks.WSIRepository,
+        "get_original_filenames_by_dataset",
+        _fake_get_original_filenames_by_dataset,
+    )
     monkeypatch.setattr(storage_tasks.WSIRepository, "create", _fake_create_wsi)
     monkeypatch.setattr(storage_tasks.DatasetStatsRepository, "recompute", _fake_recompute)
     monkeypatch.setattr(storage_tasks.storage_manager, "save_wsi_metadata", lambda *_args, **_kwargs: None)
@@ -321,8 +326,8 @@ async def test_batch_import_task_accepts_all_canonical_task_terms(
         captured.setdefault("align", []).append(kwargs)
         return dataset
 
-    async def _fake_get_by_dataset(_db, dataset_id, **kwargs):
-        return []
+    async def _fake_get_original_filenames_by_dataset(_db, dataset_id, filenames):
+        return set()
 
     async def _fake_create_wsi(_db, **kwargs):
         captured["wsi"] = kwargs
@@ -349,7 +354,11 @@ async def test_batch_import_task_accepts_all_canonical_task_terms(
     monkeypatch.setattr(storage_tasks.DataGroupRepository, "get_or_create", _fake_get_or_create_data_group)
     monkeypatch.setattr(storage_tasks.DatasetRepository, "get_or_create", _fake_get_or_create_dataset)
     monkeypatch.setattr(storage_tasks, "align_dataset_data_type_for_file", _fake_align_dataset_data_type_for_file)
-    monkeypatch.setattr(storage_tasks.WSIRepository, "get_by_dataset", _fake_get_by_dataset)
+    monkeypatch.setattr(
+        storage_tasks.WSIRepository,
+        "get_original_filenames_by_dataset",
+        _fake_get_original_filenames_by_dataset,
+    )
     monkeypatch.setattr(storage_tasks.WSIRepository, "create", _fake_create_wsi)
     monkeypatch.setattr(storage_tasks.DatasetStatsRepository, "recompute", _fake_recompute)
     monkeypatch.setattr(storage_tasks.storage_manager, "save_wsi_metadata", lambda *_args, **_kwargs: None)
@@ -387,3 +396,110 @@ async def test_batch_import_task_accepts_all_canonical_task_terms(
         assert captured["wsi"]["event_status"] == 1
     if task_type == "patch_segmentation":
         assert captured["annotation"]["source_dataset_id"] == "dataset-canonical"
+
+
+@pytest.mark.asyncio
+async def test_batch_import_recomputes_dataset_stats_once_after_batch(monkeypatch, tmp_path):
+    from gateway.routes import storage_tasks
+
+    file_paths = []
+    for index in range(2):
+        file_path = tmp_path / f"slide-{index}.svs"
+        file_path.write_bytes(b"slide")
+        file_paths.append(file_path)
+
+    recomputed = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def commit(self):
+            return None
+
+    async def _fake_update_status(_db, *_args, **_kwargs):
+        return True
+
+    async def _fake_get_or_create_data_group(_db, **kwargs):
+        return types.SimpleNamespace(group_id="group-wsi", **kwargs)
+
+    async def _fake_get_or_create_dataset(_db, dataset_name, **kwargs):
+        return types.SimpleNamespace(
+            dataset_id="dataset-import",
+            name=dataset_name,
+            user_id=kwargs.get("user_id"),
+            data_group=types.SimpleNamespace(
+                data_type="wsi",
+                aggregation_level="case",
+                task_type="wsi_classification",
+            ),
+        )
+
+    async def _fake_align_dataset_data_type_for_file(_db, dataset, **_kwargs):
+        return dataset
+
+    async def _fake_create_wsi(_db, **kwargs):
+        return types.SimpleNamespace(**kwargs)
+
+    async def _fake_recompute(_db, dataset_id):
+        recomputed.append(dataset_id)
+
+    monkeypatch.setattr(storage_tasks, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(
+        storage_tasks.StorageTaskRepository, "update_status", _fake_update_status
+    )
+    monkeypatch.setattr(
+        storage_tasks.DataGroupRepository,
+        "get_or_create",
+        _fake_get_or_create_data_group,
+    )
+    monkeypatch.setattr(
+        storage_tasks.DatasetRepository, "get_or_create", _fake_get_or_create_dataset
+    )
+    monkeypatch.setattr(
+        storage_tasks,
+        "align_dataset_data_type_for_file",
+        _fake_align_dataset_data_type_for_file,
+    )
+    monkeypatch.setattr(
+        storage_tasks.WSIRepository,
+        "get_by_dataset",
+        AsyncMock(side_effect=AssertionError("must not load whole dataset")),
+    )
+    monkeypatch.setattr(
+        storage_tasks.WSIRepository,
+        "get_original_filenames_by_dataset",
+        AsyncMock(return_value=set()),
+    )
+    monkeypatch.setattr(storage_tasks.WSIRepository, "create", _fake_create_wsi)
+    monkeypatch.setattr(storage_tasks.DatasetStatsRepository, "recompute", _fake_recompute)
+    monkeypatch.setattr(
+        storage_tasks.storage_manager,
+        "save_wsi_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        storage_tasks,
+        "resolve_file_data_type_and_properties",
+        lambda _path, **_kwargs: ("wsi", {"file_size": 1}),
+    )
+
+    await storage_tasks._run_batch_import_task(
+        "task-1",
+        "u1",
+        {
+            "files": [
+                {"path": str(file_path), "data_type": "wsi", "valid": True}
+                for file_path in file_paths
+            ],
+            "dataset_name": "Import Dataset",
+            "task_type": "wsi_classification",
+            "aggregation_level": "case",
+            "default_label": "tumor",
+        },
+    )
+
+    assert recomputed == ["dataset-import"]

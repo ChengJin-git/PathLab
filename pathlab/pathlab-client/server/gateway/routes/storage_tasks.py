@@ -445,7 +445,7 @@ async def _run_batch_import_task(
             skipped_count = 0
 
             # Resolve or create dataset
-            resolved_dataset_id = None
+            resolved_dataset_id: str | None = None
             resolved_dataset_name = None
             target_dataset = None
 
@@ -483,7 +483,7 @@ async def _run_batch_import_task(
                     await db.commit()
                     return
                 target_dataset = existing_dataset
-                resolved_dataset_id = dataset_id
+                resolved_dataset_id = str(dataset_id)
                 resolved_dataset_name = existing_dataset.name
             elif dataset_name:
                 batch_file_paths = [
@@ -603,7 +603,7 @@ async def _run_batch_import_task(
                     dataset.user_id = user_id
                     await db.flush()
                 target_dataset = dataset
-                resolved_dataset_id = dataset.dataset_id
+                resolved_dataset_id = str(dataset.dataset_id)
                 resolved_dataset_name = dataset.name
             else:
                 await StorageTaskRepository.update_status(
@@ -615,11 +615,15 @@ async def _run_batch_import_task(
                 await db.commit()
                 return
 
-            # Get existing files in dataset to check for duplicates
-            existing_wsi = await WSIRepository.get_by_dataset(
-                db, resolved_dataset_id, limit=10000, skip=0
+            candidate_filenames = [
+                Path(file_info.get("path", "")).name
+                if isinstance(file_info, dict)
+                else Path(file_info.path).name
+                for file_info in files
+            ]
+            existing_set = await WSIRepository.get_original_filenames_by_dataset(
+                db, resolved_dataset_id, candidate_filenames
             )
-            existing_set = {wsi.original_filename for wsi in existing_wsi}
             annotation_index = (
                 build_segmentation_annotation_index(scan_root)
                 if is_segmentation_task(task_type) and scan_root
@@ -847,7 +851,6 @@ async def _run_batch_import_task(
                     )
                     success_count += 1
                     existing_set.add(original_filename)
-                    await DatasetStatsRepository.recompute(db, resolved_dataset_id)
 
                 except Exception as e:
                     results.append(
@@ -878,6 +881,9 @@ async def _run_batch_import_task(
                     skipped_count=skipped_count,
                 )
                 await db.commit()
+
+            if resolved_dataset_id and success_count > 0:
+                await DatasetStatsRepository.recompute(db, resolved_dataset_id)
 
             # Update task with final results
             await StorageTaskRepository.update_status(
@@ -1082,82 +1088,55 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list[An
             await db.commit()
 
             total_items = len(wsi_ids)
-            results = []
-            deleted_count = 0
-            failed_count = 0
-            affected_dataset_ids = set()  # Track datasets that may become empty
+            unique_ids = list(dict.fromkeys(str(wsi_id) for wsi_id in wsi_ids))
+            wsi_map = await WSIRepository.get_by_ids(db, unique_ids)
+            wsis = [wsi_map[wsi_id] for wsi_id in unique_ids if wsi_id in wsi_map]
+            missing_ids = [wsi_id for wsi_id in unique_ids if wsi_id not in wsi_map]
 
-            for i, wsi_id in enumerate(wsi_ids):
-                # Check for cancellation at the start of each iteration
-                if is_storage_task_cancelled(task_id):
-                    logger.info(
-                        f"Delete external task {task_id} cancelled by user at item {i + 1}/{total_items}"
-                    )
-                    clear_storage_task_cancellation(task_id)
-                    # Status already updated by cancel endpoint, just exit
-                    return
+            cleanup_items = await _bulk_delete_wsi_records(
+                db,
+                wsis,
+                task_id=task_id,
+                commit_batches=True,
+            )
+            affected_dataset_ids = {
+                item.dataset_id for item in cleanup_items if item.dataset_id
+            }
+            cleanup_only_items = [
+                WSICleanupItem(
+                    wsi_id=item.wsi_id,
+                    wsi_path="",
+                    dataset_id=item.dataset_id,
+                    user_id=item.user_id,
+                )
+                for item in cleanup_items
+            ]
 
-                try:
-                    # Get WSI to verify it exists and get wsi_path for cache cleanup
-                    wsi = await WSIRepository.get_by_id(db, wsi_id)
-                    if not wsi:
-                        results.append(
-                            {
-                                "wsi_id": wsi_id,
-                                "status": "failed",
-                                "message": "WSI not found",
-                            }
-                        )
-                        failed_count += 1
-                        continue
-
-                    wsi_path = wsi.wsi_path
-                    affected_dataset_id = (
-                        wsi.dataset_id
-                    )  # Track for post-delete cleanup
-                    await _delete_wsi_record_and_files(
-                        db,
-                        wsi,
-                        cleanup_mode="complete",
-                        cleanup_wsi_path=None,
-                    )
-
-                    results.append(
-                        {
-                            "wsi_id": wsi_id,
-                            "status": "deleted",
-                            "message": "Record and cache files deleted successfully",
-                        }
-                    )
-                    deleted_count += 1
-                    if affected_dataset_id:
-                        affected_dataset_ids.add(affected_dataset_id)
-
-                except Exception as e:
-                    await db.rollback()
-                    results.append(
-                        {"wsi_id": wsi_id, "status": "failed", "message": str(e)}
-                    )
-                    failed_count += 1
-                    logger.error(
-                        f"Failed to delete WSI {wsi_id} in task {task_id}: {e}"
-                    )
-
-                # Update progress
-                progress = int(((i + 1) / total_items) * 100)
-                await StorageTaskRepository.update_status(
+            cleanup_results, deleted_count, cleanup_failed_count = (
+                await _cleanup_deleted_wsi_files(
                     db,
                     task_id,
-                    "processing",
-                    progress=progress,
-                    processed_items=i + 1,
-                    success_count=deleted_count,
-                    failed_count=failed_count,
+                    cleanup_only_items,
+                    "complete",
+                    progress_start=100,
+                    progress_span=0,
+                    processed_items_floor=len(cleanup_only_items),
                 )
-                await db.commit()
+            )
+            deleted_count = len(cleanup_items)
+            results = list(cleanup_results)
+            results.extend(
+                {
+                    "wsi_id": wsi_id,
+                    "status": "failed",
+                    "message": "WSI not found",
+                }
+                for wsi_id in missing_ids
+            )
+            failed_count = len(missing_ids) + cleanup_failed_count
 
             # Clean up empty datasets after all deletions
-            if affected_dataset_ids and deleted_count > 0:
+            if affected_dataset_ids and cleanup_items:
                 for ds_id in affected_dataset_ids:
                     try:
                         await _cleanup_empty_dataset_record(db, ds_id)
