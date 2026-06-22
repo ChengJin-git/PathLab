@@ -163,6 +163,13 @@ def disable_persistence(route_module):
     route_module.pathscientist_persistence.delete_session = lambda session_id: None
 
 
+def canonical_workspace(route_module, uploads_dir: Path, session_id: str) -> Path:
+    route_module._resolve_pathscientist_base_dir = lambda: (uploads_dir / "autoresearch").resolve()
+    workspace = uploads_dir / "autoresearch" / "autoresearch_sessions" / f"session_{session_id}"
+    workspace.parent.mkdir(parents=True, exist_ok=True)
+    return workspace
+
+
 def make_app():
     route_module = load_route_module()
     registry_dir = Path(tempfile.mkdtemp(prefix="pathscientist-route-test-"))
@@ -2577,7 +2584,7 @@ def test_delete_session_endpoint_does_not_remove_workspace_outside_base(tmp_path
     data = response.json()
     assert data["deleted"] is True
     assert data["workspace_deleted"] is False
-    assert "outside PathScientist base dir" in data["workspace_delete_reason"]
+    assert data["workspace_delete_reason"] == "No workspace found for this session."
     assert outside_workspace.exists()
 
 
@@ -2607,9 +2614,115 @@ def test_delete_session_endpoint_rejects_running_session():
     assert manager.get("s-delete-running") is record
 
 
+def test_delete_session_resolves_db_record_to_runtime_session_id(monkeypatch):
+    """Deleting by the DB-facing id must resolve to the internal runtime session_id.
+
+    Regression: delete_session loaded a DB record but still called
+    _SESSION_MANAGER.delete with the original route parameter. When the DB
+    record maps to a different runtime session_id, the manager could not
+    find the session and returned 404.
+    """
+    route_module = load_route_module()
+    manager = route_module.PathScientistSessionManager()
+    route_module._SESSION_MANAGER = manager
+
+    runtime_record = route_module.SessionRecord(
+        session_id="runtime-session-id",
+        conversation_id="conv-delete",
+        question="old run",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+    )
+    manager._sessions[runtime_record.session_id] = runtime_record
+
+    db_facing_id = "db-facing-session-id"
+
+    async def fake_load_db_record(session_id, **kwargs):
+        assert session_id == db_facing_id
+        return route_module.SessionRecord(
+            session_id=runtime_record.session_id,
+            conversation_id=runtime_record.conversation_id,
+            question=runtime_record.question,
+            model=runtime_record.model,
+            user_id=runtime_record.user_id,
+            status=runtime_record.status,
+            stage=runtime_record.stage,
+        )
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_load_db_record)
+
+    deleted_ids: list[str] = []
+    original_delete = manager.delete
+
+    def capturing_delete(session_id: str):
+        deleted_ids.append(session_id)
+        return original_delete(session_id)
+
+    monkeypatch.setattr(manager, "delete", capturing_delete)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.delete(f"/pathscientist/sessions/{db_facing_id}")
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+    assert response.json()["session_id"] == runtime_record.session_id
+    assert deleted_ids == [runtime_record.session_id]
+    assert manager.get(runtime_record.session_id) is None
+
+
+def test_delete_session_rejects_running_session_after_db_resolution(monkeypatch):
+    """Queued/running rejection must still apply when the session is resolved from DB."""
+    route_module = load_route_module()
+    manager = route_module.PathScientistSessionManager()
+    route_module._SESSION_MANAGER = manager
+
+    runtime_record = route_module.SessionRecord(
+        session_id="runtime-running-id",
+        conversation_id="conv-running",
+        question="live run",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="running",
+        stage="execution",
+    )
+    manager._sessions[runtime_record.session_id] = runtime_record
+
+    db_facing_id = "db-facing-running-id"
+
+    async def fake_load_db_record(session_id, **kwargs):
+        assert session_id == db_facing_id
+        return route_module.SessionRecord(
+            session_id=runtime_record.session_id,
+            conversation_id=runtime_record.conversation_id,
+            question=runtime_record.question,
+            model=runtime_record.model,
+            user_id=runtime_record.user_id,
+            status=runtime_record.status,
+            stage=runtime_record.stage,
+        )
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_load_db_record)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.delete(f"/pathscientist/sessions/{db_facing_id}")
+
+    assert response.status_code == 409
+    assert manager.get(runtime_record.session_id) is runtime_record
+
+
 def test_session_summary_includes_workspace_disk_usage(tmp_path):
     route_module = load_route_module()
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "workspace-size")
     workspace.mkdir()
     (workspace / "metrics.json").write_bytes(b"12345")
     nested = workspace / "output"
@@ -2637,7 +2750,7 @@ def test_session_summary_includes_workspace_disk_usage(tmp_path):
 
 def test_session_summary_includes_training_progress_from_latest_run_log(tmp_path):
     route_module = load_route_module()
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "training-progress")
     old_run = workspace / "output" / "runs" / "run_old"
     latest_run = workspace / "output" / "runs" / "run_latest"
     old_run.mkdir(parents=True)
@@ -2687,7 +2800,7 @@ def test_session_summary_includes_training_progress_from_latest_run_log(tmp_path
 
 def test_session_summary_marks_quick_check_training_progress(tmp_path):
     route_module = load_route_module()
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "training-progress-quick")
     run_dir = workspace / "output" / "runs" / "run_quick"
     run_dir.mkdir(parents=True)
     log_path = run_dir / "training.log"
@@ -2726,7 +2839,7 @@ def test_session_summary_marks_quick_check_training_progress(tmp_path):
 
 def test_session_summary_marks_quick_check_from_run_metadata_without_history(tmp_path):
     route_module = load_route_module()
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "training-progress-quick-live")
     run_dir = workspace / "output" / "runs" / "run_quick_live"
     run_dir.mkdir(parents=True)
     log_path = run_dir / "training.log"
@@ -2776,7 +2889,7 @@ def test_session_summary_includes_live_iteration_progress():
 
 def test_session_summary_does_not_block_on_uncached_workspace_size(tmp_path, monkeypatch):
     route_module = load_route_module()
-    workspace = tmp_path / "slow-workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "slow-workspace-size")
     workspace.mkdir()
 
     def slow_disk_usage(_workspace):
@@ -2916,25 +3029,43 @@ def test_list_and_detail_include_created_session():
     assert "events" in detail
 
 
-def test_default_pathscientist_base_dir_is_local_writable(monkeypatch):
+def test_default_pathscientist_base_dir_uses_settings_autoresearch_root(monkeypatch, tmp_path):
     monkeypatch.delenv("PATHSCIENTIST_BASE_DIR", raising=False)
+    monkeypatch.delenv("PATHSCIENTIST_PERSISTENCE_DIR", raising=False)
+    monkeypatch.delenv("PATHSCIENTIST_WORKSPACE", raising=False)
+    uploads_dir = tmp_path / "settings-uploads"
+    monkeypatch.setenv("PATHLAB_UPLOADS_DIR", str(uploads_dir))
     route_module = load_route_module()
     from backend.pathscientist.runtime.session import _resolve_base_dir
 
     base_dir = _resolve_base_dir()
 
-    assert str(base_dir).endswith("pathlab-client/uploads/pathscientist")
+    assert base_dir == uploads_dir / "autoresearch"
     assert not str(base_dir).startswith("/project/")
     assert route_module._resolve_pathscientist_base_dir() == base_dir.resolve()
 
 
-def test_list_sessions_uses_default_base_dir_without_env(monkeypatch, tmp_path):
+def test_pathscientist_session_create_uses_autoresearch_sessions_subdir(monkeypatch, tmp_path):
     monkeypatch.delenv("PATHSCIENTIST_BASE_DIR", raising=False)
-    route_module = load_route_module()
-    from backend.pathscientist.runtime import session as runtime_session
+    monkeypatch.delenv("PATHSCIENTIST_PERSISTENCE_DIR", raising=False)
+    uploads_dir = tmp_path / "settings-uploads"
+    monkeypatch.setenv("PATHLAB_UPLOADS_DIR", str(uploads_dir))
+    from backend.pathscientist.runtime.session import PathScientistSession
 
-    default_base_dir = tmp_path / "pathscientist-default"
-    monkeypatch.setattr(runtime_session, "DEFAULT_BASE_DIR", str(default_base_dir))
+    session = PathScientistSession.create(research_question="canonical workspace")
+
+    assert session.workspace_dir.parent == uploads_dir / "autoresearch" / "autoresearch_sessions"
+    assert session.workspace_dir.name.startswith("session_")
+    assert session.output_dir == session.workspace_dir / "output"
+    assert session.persistence_root == uploads_dir / "autoresearch" / "conversations"
+
+
+def test_list_sessions_uses_settings_autoresearch_root_without_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("PATHSCIENTIST_BASE_DIR", raising=False)
+    monkeypatch.delenv("PATHSCIENTIST_PERSISTENCE_DIR", raising=False)
+    uploads_dir = tmp_path / "settings-uploads"
+    monkeypatch.setenv("PATHLAB_UPLOADS_DIR", str(uploads_dir))
+    route_module = load_route_module()
     manager = route_module.PathScientistSessionManager()
     route_module._SESSION_MANAGER = manager
 
@@ -2947,7 +3078,22 @@ def test_list_sessions_uses_default_base_dir_without_env(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.json()["items"] == []
-    assert route_module._resolve_pathscientist_base_dir() == default_base_dir.resolve()
+    assert route_module._resolve_pathscientist_base_dir() == (uploads_dir / "autoresearch").resolve()
+
+
+def test_pathscientist_dataset_roots_stay_under_settings_autoresearch(monkeypatch, tmp_path):
+    monkeypatch.delenv("PATHSCIENTIST_BASE_DIR", raising=False)
+    monkeypatch.delenv("PATHSCIENTIST_DATASET_CACHE_DIR", raising=False)
+    uploads_dir = tmp_path / "settings-uploads"
+    monkeypatch.setenv("PATHLAB_UPLOADS_DIR", str(uploads_dir))
+    route_module = load_route_module()
+
+    assert route_module._default_pathscientist_dataset_cache_dir() == str(
+        uploads_dir / "autoresearch" / "dataset_cache"
+    )
+    assert route_module._pathlab_dataset_view_parent() == (
+        uploads_dir / "autoresearch" / "pathlab_datasets" / "session_inputs"
+    )
 
 
 def test_events_stream_replays_session_events():
@@ -3060,8 +3206,7 @@ def test_gateway_runner_progress_callback_includes_download_progress_sidecar(tmp
     route_module._gateway_session_registry_path = (
         lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
     )
-    route_module._resolve_pathscientist_base_dir = lambda: tmp_path
-    workspace = tmp_path / "session_internal-live"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "internal-live")
     progress_path = workspace / ".dataset" / "download_progress.json"
     progress_path.parent.mkdir(parents=True)
     progress_path.write_text(
@@ -3114,8 +3259,7 @@ def test_gateway_runner_progress_callback_includes_download_progress_sidecar(tmp
 def test_download_progress_poller_emits_state_events(tmp_path):
     route_module = load_route_module()
     route_module.DOWNLOAD_PROGRESS_POLL_SECONDS = 0.01
-    route_module._resolve_pathscientist_base_dir = lambda: tmp_path
-    workspace = tmp_path / "session_poll-live"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "poll-live")
     progress_path = workspace / ".dataset" / "download_progress.json"
     progress_path.parent.mkdir(parents=True)
     progress_path.write_text(
@@ -3225,7 +3369,7 @@ def test_get_session_falls_back_to_db_record(monkeypatch):
 
 def test_get_session_enriches_external_test_from_workspace_artifacts(tmp_path):
     route_module = load_route_module()
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "external-artifact")
     run_dir = workspace / "output" / "runs" / "run_best"
     run_dir.mkdir(parents=True)
     (run_dir / "metrics.json").write_text(
@@ -3315,11 +3459,28 @@ def test_db_running_session_without_recent_updates_is_marked_interrupted(monkeyp
     assert record.state["interrupted_reason"] == record.error
 
 
+def test_workspace_resolution_prefers_canonical_autoresearch_session(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    uploads_dir = tmp_path / "settings-uploads"
+    canonical_workspace = uploads_dir / "autoresearch" / "autoresearch_sessions" / "session_internal-live"
+    stale_workspace = tmp_path / "old-upload-root" / "pathscientist" / "session_internal-live"
+    canonical_workspace.mkdir(parents=True)
+    stale_workspace.mkdir(parents=True)
+    monkeypatch.setattr(route_module.Config, "get_uploads_dir", staticmethod(lambda: uploads_dir))
+
+    workspace = route_module._resolve_workspace_from_state({
+        "session_id": "internal-live",
+        "workspace_path": str(stale_workspace),
+    })
+
+    assert workspace == canonical_workspace.resolve()
+
+
 def test_db_running_session_with_recent_training_log_stays_running(tmp_path, monkeypatch):
     route_module = load_route_module()
     monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
     monkeypatch.setattr(route_module.time, "time", lambda: 2_000.0)
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "live-db-running")
     run_dir = workspace / "output" / "runs" / "run_live"
     run_dir.mkdir(parents=True)
     log_path = run_dir / "training.log"
@@ -3339,7 +3500,7 @@ def test_db_running_session_with_recent_training_log_stays_running(tmp_path, mon
         user_id="user-test",
         experiment_plan={},
         comparison_results={},
-        recovery_metadata={"workspace_path": str(workspace)},
+        recovery_metadata={"session_id": "live-db-running", "workspace_path": str(workspace)},
         best_metric=None,
         best_metric_name="auc",
         best_experiment=None,
@@ -3366,7 +3527,7 @@ def test_gateway_running_session_with_recent_training_log_stays_running(tmp_path
     route_module = load_route_module()
     monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
     monkeypatch.setattr(route_module.time, "time", lambda: 2_000.0)
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "gateway-live-training")
     run_dir = workspace / "output" / "runs" / "run_live"
     run_dir.mkdir(parents=True)
     log_path = run_dir / "training.log"
@@ -3401,7 +3562,7 @@ def test_gateway_running_session_allows_long_epoch_training_log_gap(tmp_path, mo
     monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)
     monkeypatch.setattr(route_module, "TRAINING_LOG_ACTIVE_SECONDS", 7200)
     monkeypatch.setattr(route_module.time, "time", lambda: 3_000.0)
-    workspace = tmp_path / "workspace"
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "gateway-long-epoch")
     run_dir = workspace / "output" / "runs" / "run_live"
     run_dir.mkdir(parents=True)
     log_path = run_dir / "training.log"

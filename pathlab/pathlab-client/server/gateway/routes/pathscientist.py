@@ -1312,20 +1312,34 @@ def _queue_session_title_generation(record: SessionRecord, config: Any | None = 
     thread.start()
 
 
-def _resolve_pathscientist_base_dir() -> Path:
-    """Resolve the PathScientist base dir without importing heavy runtime pieces."""
-    try:
-        from backend.pathscientist.runtime.session import _resolve_base_dir
+def _resolve_autoresearch_root() -> Path:
+    return Config.get_autoresearch_dir().expanduser().resolve()
 
-        return Path(_resolve_base_dir()).expanduser().resolve()
-    except Exception:
-        default_base_dir = Path(__file__).resolve().parents[3] / "uploads" / "pathscientist"
-        return Path(
-            os.environ.get(
-                "PATHSCIENTIST_BASE_DIR",
-                str(default_base_dir),
-            )
-        ).expanduser().resolve()
+
+def _resolve_autoresearch_sessions_root() -> Path:
+    return (_resolve_pathscientist_base_dir() / "autoresearch_sessions").expanduser().resolve()
+
+
+def _canonical_session_workspace_path(session_id: str) -> Path | None:
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return None
+    if session_id.startswith("session_"):
+        name = session_id
+    else:
+        name = f"session_{session_id}"
+    return _resolve_autoresearch_sessions_root() / name
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    resolved_path = path.expanduser().resolve(strict=False)
+    resolved_root = root.expanduser().resolve(strict=False)
+    return resolved_path == resolved_root or resolved_path.is_relative_to(resolved_root)
+
+
+def _resolve_pathscientist_base_dir() -> Path:
+    """Resolve the web PathScientist base dir from the Settings uploads root."""
+    return _resolve_autoresearch_root()
 
 
 def _delete_session_workspace(record: SessionRecord) -> dict[str, Any]:
@@ -1400,6 +1414,7 @@ def _db_runtime_status(session: Any, *, now: float | None = None) -> LegacyRunti
     recovery = getattr(session, "recovery_metadata", None)
     recovery = recovery if isinstance(recovery, dict) else {}
     workspace = _resolve_workspace_from_state({
+        "session_id": recovery.get("session_id"),
         "workspace_path": getattr(session, "workspace_path", None),
         "workspace_dir": getattr(session, "workspace_path", None),
         "recovery_metadata": recovery,
@@ -3475,7 +3490,7 @@ def _apply_pathlab_huggingface_token(config: Any) -> bool:
 
 def _default_pathscientist_dataset_cache_dir() -> str:
     try:
-        return str(Config.get_uploads_dir())
+        return str(_resolve_pathscientist_base_dir() / "dataset_cache")
     except Exception as exc:
         logger.debug("PathLab uploads dir unavailable for PathScientist cache: %s", exc)
         return DEFAULT_DATASET_CACHE_DIR
@@ -3493,6 +3508,8 @@ def _apply_pathscientist_gateway_defaults(config: Any) -> None:
 
     _apply_pathlab_huggingface_token(config)
     _set_env_default("PATHLAB_CKPT_DIR", str(_pathlab_feature_checkpoint_dir()))
+    canonical_base_dir = str(_resolve_pathscientist_base_dir())
+    os.environ["PATHSCIENTIST_BASE_DIR"] = canonical_base_dir
 
     if _set_env_default("PATHSCIENTIST_SANDBOX", "auto"):
         config.sandbox_mode = "auto"
@@ -3639,14 +3656,15 @@ async def delete_session(
     if existing is not None and not _can_access_record(existing, user):
         raise HTTPException(status_code=403, detail="PathScientist session access denied")
     if existing is None:
-        await _load_db_record(
+        existing = await _load_db_record(
             session_id,
             user=user,
             include_events=False,
             register=False,
         )
+    delete_session_id = existing.session_id if existing is not None else session_id
     try:
-        result = _SESSION_MANAGER.delete(session_id)
+        result = _SESSION_MANAGER.delete(delete_session_id)
     except SessionDeleteRejected as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if result is None:
@@ -3926,10 +3944,31 @@ def _record_state_sse_payload(record: SessionRecord) -> dict[str, Any]:
 
 def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
     """Find the workspace associated with a serialized PathScientist state."""
+    recovery = state.get("recovery_metadata")
+    recovery = recovery if isinstance(recovery, dict) else {}
+    summary = state.get("persisted_summary")
+    summary = summary if isinstance(summary, dict) else {}
+    research_session = summary.get("research_session")
+    research_session = research_session if isinstance(research_session, dict) else {}
+
+    internal_session_ids = [
+        state.get("session_id"),
+        recovery.get("session_id"),
+        summary.get("session_id"),
+        research_session.get("session_id"),
+    ]
+    for session_id in internal_session_ids:
+        canonical_workspace = _canonical_session_workspace_path(str(session_id or ""))
+        if canonical_workspace is not None and canonical_workspace.is_dir():
+            return canonical_workspace.resolve()
+
     candidates: list[Any] = [
         state.get("workspace_path"),
         state.get("workspace_dir"),
         state.get("workspace_root"),
+        recovery.get("workspace_path"),
+        recovery.get("workspace_dir"),
+        recovery.get("workspace_root"),
     ]
     grounding = state.get("grounding")
     if isinstance(grounding, dict):
@@ -3938,38 +3977,74 @@ def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
             grounding.get("workspace_dir"),
             grounding.get("workspace_root"),
         ])
-    summary = state.get("persisted_summary")
-    if isinstance(summary, dict):
-        candidates.extend([
-            summary.get("workspace_path"),
-            summary.get("workspace_dir"),
-            (summary.get("research_session") or {}).get("workspace_path")
-            if isinstance(summary.get("research_session"), dict)
-            else "",
-            (summary.get("research_session") or {}).get("workspace_dir")
-            if isinstance(summary.get("research_session"), dict)
-            else "",
-        ])
+    candidates.extend([
+        summary.get("workspace_path"),
+        summary.get("workspace_dir"),
+        research_session.get("workspace_path"),
+        research_session.get("workspace_dir"),
+    ])
+    canonical_root = _resolve_pathscientist_base_dir()
     for candidate in candidates:
         if not candidate:
             continue
         path = Path(str(candidate)).expanduser()
-        if path.is_dir():
+        if not _path_is_under(path, canonical_root):
+            logger.debug("PathScientist workspace path outside canonical root skipped: %s", path)
+            continue
+        try:
+            is_workspace_dir = path.is_dir()
+        except OSError as exc:
+            logger.debug("PathScientist workspace probe skipped for %s: %s", path, exc)
+            continue
+        if is_workspace_dir:
             return path.resolve()
 
     # Web-created sessions store the internal PathScientist session_id in
-    # research state. Default workspaces live at <base>/session_<session_id>.
-    internal_session_id = str(state.get("session_id") or "").strip()
-    if internal_session_id:
-        path = _resolve_pathscientist_base_dir() / f"session_{internal_session_id}"
-        if path.is_dir():
+    # research state. Default workspaces live under <base>/autoresearch_sessions.
+    for internal_session_id in internal_session_ids:
+        path = _canonical_session_workspace_path(str(internal_session_id or ""))
+        if path is None:
+            continue
+        try:
+            is_workspace_dir = path.is_dir()
+        except OSError as exc:
+            logger.debug("PathScientist workspace probe skipped for %s: %s", path, exc)
+            continue
+        if is_workspace_dir:
             return path.resolve()
     return None
 
 
+def _state_contains_workspace_reference(state: dict[str, Any]) -> bool:
+    if any(state.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")):
+        return True
+    for container_key in ("recovery_metadata", "grounding"):
+        container = state.get(container_key)
+        if isinstance(container, dict) and any(
+            container.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")
+        ):
+            return True
+    summary = state.get("persisted_summary")
+    if isinstance(summary, dict):
+        if any(summary.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")):
+            return True
+        research_session = summary.get("research_session")
+        if isinstance(research_session, dict) and any(
+            research_session.get(key) for key in ("workspace_path", "workspace_dir", "workspace_root")
+        ):
+            return True
+    return False
+
+
 def _resolve_session_workspace(record: SessionRecord) -> Path | None:
     """Find the workspace that owns a Gateway session."""
-    return _resolve_workspace_from_state(_record_state(record))
+    state = _record_state(record)
+    workspace = _resolve_workspace_from_state(state)
+    if workspace is not None:
+        return workspace
+    if _state_contains_workspace_reference(state):
+        return None
+    return _canonical_session_workspace_path(record.session_id)
 
 
 
