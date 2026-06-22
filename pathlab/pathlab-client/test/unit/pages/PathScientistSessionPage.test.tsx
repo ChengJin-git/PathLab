@@ -90,7 +90,7 @@ function renderPage(
 ) {
   mockAuth(role)
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initialPath]}>
       <Routes>
         <Route path="/pathscientist/sessions/:id" element={<PathScientistSessionPage />} />
         <Route path="/pathscientist/new" element={<div>new session</div>} />
@@ -326,7 +326,6 @@ describe('PathScientistSessionPage', () => {
   })
 
   it('deletes a completed session from the detail page and returns to the list', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(getPathScientistSession).mockResolvedValue({
       ...session,
       status: 'completed',
@@ -337,10 +336,27 @@ describe('PathScientistSessionPage', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /delete session/i }))
 
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('workspace'))
-    expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('kept'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText(/delete this autoresearch session/i)).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }))
+
     await waitFor(() => expect(deletePathScientistSession).toHaveBeenCalledWith('s1'))
     expect(await screen.findByText('new session')).toBeInTheDocument()
+  })
+
+  it('uses ConfirmDialog instead of window.confirm for delete', async () => {
+    vi.mocked(getPathScientistSession).mockResolvedValue({
+      ...session,
+      status: 'completed',
+      stage: 'completed',
+    })
+
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /delete session/i }))
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText(/delete this autoresearch session/i)).toBeInTheDocument()
   })
 
   it('resumes a completed session when a checkpoint is available', async () => {
@@ -435,7 +451,7 @@ describe('PathScientistSessionPage', () => {
     })
 
     render(
-      <MemoryRouter initialEntries={['/pathscientist/sessions/s1']}>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={['/pathscientist/sessions/s1']}>
         <Routes>
           <Route
             path="/pathscientist/sessions/:id"

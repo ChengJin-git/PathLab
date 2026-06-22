@@ -10,6 +10,7 @@ import type { PathScientistEvent, PathScientistSessionDetail, PathScientistSessi
 import { formatPathScientistElapsed } from '../lib/pathscientistTime'
 import { isLiveClinicalStatus } from '../lib/pathscientistClinicalSteps'
 import { derivePathScientistDisplayStatus } from '../lib/pathscientistEventSelectors'
+import { ConfirmDialog } from '../components/settings/ConfirmDialog'
 
 const LIVE_SESSION_DETAIL_REFRESH_MS = 5000
 
@@ -77,6 +78,16 @@ export default function PathScientistSessionPage() {
   const [isResuming, setIsResuming] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [dialogState, setDialogState] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+
+  const showConfirmDialog = (config: { title: string; message: string; onConfirm: () => void }) => {
+    setDialogState({ isOpen: true, ...config })
+  }
+
+  const closeConfirmDialog = () => {
+    setDialogState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
+  }
+
   const stream = useSessionStream(id, isLiveClinicalStatus(session?.status))
   const streamEventsRef = useRef<PathScientistEvent[]>([])
 
@@ -206,18 +217,23 @@ export default function PathScientistSessionPage() {
 
   const handleDelete = async () => {
     if (!id || isDeleting) return
-    const confirmed = window.confirm(t('pathScientist.sessionsPage.deleteConfirm'))
-    if (!confirmed) return
-    setIsDeleting(true)
-    setError('')
-    try {
-      await deletePathScientistSession(id)
-      navigate('/pathscientist/new')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('pathScientist.sessionPage.deleteFailed'))
-    } finally {
-      setIsDeleting(false)
-    }
+    showConfirmDialog({
+      title: t('pathScientist.sessionsPage.deleteConfirmTitle'),
+      message: t('pathScientist.sessionsPage.deleteConfirm'),
+      onConfirm: async () => {
+        closeConfirmDialog()
+        setIsDeleting(true)
+        setError('')
+        try {
+          await deletePathScientistSession(id)
+          navigate('/pathscientist/new')
+        } catch (err) {
+          setError(err instanceof Error ? err.message : t('pathScientist.sessionPage.deleteFailed'))
+        } finally {
+          setIsDeleting(false)
+        }
+      },
+    })
   }
 
   const handleResume = async () => {
@@ -270,13 +286,21 @@ export default function PathScientistSessionPage() {
   }
 
   if (useClinicalView) {
-    return <PathScientistClinicalSessionView {...sharedProps} />
+    return (
+      <>
+        <PathScientistClinicalSessionView {...sharedProps} />
+        <ConfirmDialog dialog={dialogState} onClose={closeConfirmDialog} />
+      </>
+    )
   }
 
   return (
-    <PathScientistDeveloperSessionView
-      {...sharedProps}
-      latestStage={latestStage}
-    />
+    <>
+      <PathScientistDeveloperSessionView
+        {...sharedProps}
+        latestStage={latestStage}
+      />
+      <ConfirmDialog dialog={dialogState} onClose={closeConfirmDialog} />
+    </>
   )
 }
