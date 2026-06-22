@@ -287,7 +287,7 @@ PATHSCIENTIST_LLM_WIRE_API=responses
 PATHSCIENTIST_LLM_BASE_URL=https://your-relay.example/v1
 PATHSCIENTIST_LLM_API_KEY=replace-with-local-secret
 
-PATHSCIENTIST_BASE_DIR=/path/to/pathscientist-workspaces
+PATHSCIENTIST_BASE_DIR=/path/to/uploads/autoresearch
 PATHSCIENTIST_DATASET_CACHE_DIR=/path/to/pathlab-data
 PATHSCIENTIST_LITERATURE_ONLINE=1
 PATHSCIENTIST_AUTO_ACQUIRE_DATA=1
@@ -430,14 +430,18 @@ and feature extractor/MIL selection, but stop before feature extraction or
 training.
 ```
 
-Session artifacts are written under `PATHSCIENTIST_BASE_DIR`, usually as:
+`PATHSCIENTIST_BASE_DIR` is the AutoResearch root. In the web app it defaults
+to the Settings uploads directory plus `autoresearch`, for example
+`<settings uploads>/autoresearch`. Session workspaces live under the dedicated
+`autoresearch_sessions` subdirectory:
 
 ```text
-<base>/session_<id>/
+<PATHSCIENTIST_BASE_DIR>/autoresearch_sessions/session_<id>/
   .dataset/
   .pathscientist/
   logs/
-  conversations/
+
+<PATHSCIENTIST_BASE_DIR>/conversations/<conversation_id>/
 ```
 
 ---
@@ -574,7 +578,7 @@ Build RAG from local papers:
 
 ```bash
 cd pathlab/pathlab-client/server/backend
-PATHSCIENTIST_BASE_DIR=/path/to/pathscientist-workspaces \
+PATHSCIENTIST_BASE_DIR=/path/to/uploads/autoresearch \
 pathscientist/.venv/bin/python -m pathscientist.rag_ingest \
   --from-seed-data \
   --corpus-dir /path/to/papers
@@ -762,12 +766,13 @@ kaggle.json
 Useful runtime files for debugging a session:
 
 ```text
-<PATHSCIENTIST_BASE_DIR>/session_<id>/.dataset/acquisition_plan.json
-<PATHSCIENTIST_BASE_DIR>/session_<id>/.dataset/local_discovery.json
-<PATHSCIENTIST_BASE_DIR>/session_<id>/.dataset/manifest.json
-<PATHSCIENTIST_BASE_DIR>/session_<id>/.dataset/download_progress.json
-<PATHSCIENTIST_BASE_DIR>/session_<id>/.pathscientist/execution_brief.md
-<PATHSCIENTIST_BASE_DIR>/session_<id>/logs/completions/
+<PATHSCIENTIST_BASE_DIR>/autoresearch_sessions/session_<id>/.dataset/acquisition_plan.json
+<PATHSCIENTIST_BASE_DIR>/autoresearch_sessions/session_<id>/.dataset/local_discovery.json
+<PATHSCIENTIST_BASE_DIR>/autoresearch_sessions/session_<id>/.dataset/manifest.json
+<PATHSCIENTIST_BASE_DIR>/autoresearch_sessions/session_<id>/.dataset/download_progress.json
+<PATHSCIENTIST_BASE_DIR>/autoresearch_sessions/session_<id>/.pathscientist/execution_brief.md
+<PATHSCIENTIST_BASE_DIR>/autoresearch_sessions/session_<id>/logs/completions/
+<PATHSCIENTIST_BASE_DIR>/conversations/<conversation_id>/base_state.json
 ```
 
 Gateway/web session registries and event logs are also under the resolved

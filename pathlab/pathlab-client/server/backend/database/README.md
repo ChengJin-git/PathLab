@@ -181,7 +181,7 @@ Web PathScientist 流程会 best-effort 写入现有 `auto_research_*` 表。当
 
 数据库只保存可查询索引、状态、metrics、摘要和路径。大型产物仍保存在文件系统：
 
-- session workspace：`PATHSCIENTIST_BASE_DIR/session_<id>/...`
+- session workspace：`PATHSCIENTIST_BASE_DIR/autoresearch_sessions/session_<id>/...`
 - dataset cache：`PATHSCIENTIST_DATASET_CACHE_DIR`
 - feature outputs：`<dataset_root>/patches/*.h5` 和 `<dataset_root>/pt_files/<extractor>/*.pt`
 - model/checkpoint/run artifacts：以路径或 compact summary 进入 JSON 字段，不复制二进制内容进库
