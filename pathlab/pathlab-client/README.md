@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar（Gateway / Preprocessing / AI / TaskWorker），以及固定端口部署所需的运维脚本。
+`pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar（Gateway / Preprocessing / AI / TaskWorker），以及固定端口部署所需的运维脚本。`2026-06-23` 起，本目录还包含 AutoResearch 用户能力；其实现 codename 为 **PathScientist**。
 
 ## 当前入口文件
 
@@ -25,6 +25,8 @@ pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
 ├── logs/                   # 固定端口脚本输出日志
 ├── server/                 # Python sidecar
+│   ├── backend/            # 共享后端模块与内部服务实现
+│   │   └── pathscientist/  # AutoResearch / PathScientist 运行时、编排、持久化与部署文档
 │   ├── tests/              # 后端单元测试（pytest，路由 / 权限 / 任务 / 存储 / AI 回归）
 │   │   ├── conftest.py     # fixtures（auth mock、app factory、load_dotenv）
 │   │   ├── helpers.py      # 测试工具函数
@@ -83,6 +85,7 @@ pathlab-client/
 - React 18 + TypeScript + Vite 7 + Tailwind CSS 4
 - BrowserRouter / HashRouter 双运行时
 - 模块化 API 客户端位于 `src/renderer/src/api/`
+- AutoResearch / PathScientist 前端入口位于 `/pathscientist`、`/pathscientist/new`、`/pathscientist/sessions/:id`，API 客户端为 `src/renderer/src/api/pathscientist.ts`
 - React Query、TooltipProvider 与多层 Context 在 `src/renderer/src/main.tsx` 中统一装配
 - 浏览器模式支持 PWA；Electron 模式不注册 Service Worker
 
@@ -92,14 +95,16 @@ pathlab-client/
 - Preprocessing 负责 WSI 信息、图像、缩略图、DZI、瓦片与部分热图辅助逻辑
 - AI 服务负责训练、推理与模型相关内部能力
 - TaskWorker 负责消费 Redis 任务描述符、持有 GPU 队列、执行长任务并发布运行时快照
+- PathScientist 是 AutoResearch 的实现 codename；Gateway 暴露 `/pathscientist` 与 `/api/pathscientist` 会话 API，`server/backend/pathscientist/` 提供 CLI/headless runtime、实验编排、数据集获取、文献/RAG、综合报告、持久化、sandbox/runtime 和 domain templates/skills
 - PostgreSQL + Redis + `uploads/` 共同组成运行时状态层；`uploads/` 优先由 `PATHLAB_UPLOADS_DIR` 指定，其次读取 `storage.json`，否则落到系统 app data 目录
 
 ## 当前已确认的实现事实
 
 - Gateway 顶层 router 由 `server/gateway/app_setup.py` 统一注册；`server/gateway/routes/` 下的部分模块作为分析 / 聊天 / 存储 / 训练辅助模块被复用，不一定单独挂载
-- 数据库当前可见 ORM 表为 22 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`，用户级 WSI split 覆盖表为 `wsi_slide_user_splits`
+- AutoResearch（codename PathScientist）于 `2026-06-23` 加入；前端、Gateway router、数据库 repository、artifact workspace 和部署脚本均已接入当前代码树
+- 数据库当前可见 ORM 表为 26 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`，用户级 WSI split 覆盖表为 `wsi_slide_user_splits`，AutoResearch 历史使用 `auto_research_sessions` / `auto_research_experiments` / `auto_research_events` 与 `knowhow_entries`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
-- `server/backend/` 当前已收敛为 `ai / annotation / auth / common / database / preprocessing / storage` 七组共享模块
+- `server/backend/` 当前已收敛为 `ai / annotation / auth / common / database / pathscientist / preprocessing / storage` 八组共享模块
 
 ## 测试
 
@@ -130,14 +135,15 @@ python -m pytest server/tests/ -v -k "not pretrained"
 python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 ```
 
-后端测试覆盖配置、认证、权限闭包、任务 taxonomy、Gateway 装配、存储迁移 / 扫描、结果读取、分析、GPU 队列与 AI 模型路径。当前测试文件以 `server/tests/test_*.py` 为准；预训练模型测试单独运行，避免默认 CI 拉取大模型。详细说明见 [server/README.md](server/README.md)。
+后端测试覆盖配置、认证、权限闭包、任务 taxonomy、Gateway 装配、存储迁移 / 扫描、结果读取、分析、GPU 队列、AI 模型路径与 PathScientist Gateway / 进程注册边界。PathScientist backend package 自身还带 `server/backend/pathscientist/tests/`。当前测试文件以 `server/tests/test_*.py` 与实际 package tests 为准；预训练模型测试单独运行，避免默认 CI 拉取大模型。详细说明见 [server/README.md](server/README.md)。
 
 ## 推荐阅读顺序
 
 1. [server/README.md](server/README.md)
-2. [server/permissions/README.md](server/permissions/README.md)
-3. [server/gateway/README.md](server/gateway/README.md)
-4. [server/backend/database/README.md](server/backend/database/README.md)
-5. [src/renderer/README.md](src/renderer/README.md)
-6. [deploy/README.md](deploy/README.md)
-7. [test/README.md](test/README.md)
+2. [server/backend/pathscientist/README.md](server/backend/pathscientist/README.md)
+3. [server/permissions/README.md](server/permissions/README.md)
+4. [server/gateway/README.md](server/gateway/README.md)
+5. [server/backend/database/README.md](server/backend/database/README.md)
+6. [src/renderer/README.md](src/renderer/README.md)
+7. [deploy/README.md](deploy/README.md)
+8. [test/README.md](test/README.md)
