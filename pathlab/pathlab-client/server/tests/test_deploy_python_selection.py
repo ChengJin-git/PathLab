@@ -30,8 +30,28 @@ def test_start_script_checks_pathscientist_runtime_dependencies():
     text = _deploy_script_text("start.sh")
 
     assert "check_pathscientist_environment" in text
-    for module_name in ("openhands.sdk", "torch", "kaggle"):
+    for module_name in ("openhands.sdk", "openhands.tools", "torch", "kaggle"):
         assert module_name in text
+
+
+def test_start_script_installs_pathscientist_requirements_before_failing_preflight():
+    text = _deploy_script_text("start.sh")
+
+    assert "install_pathscientist_python_packages" in text
+    assert "../../requirements.txt" in text
+    assert "../../requirements-test.txt" in text
+    assert "requirements.txt" in text
+    assert """if ! check_pathscientist_python_packages; then
+        install_pathscientist_python_packages
+        check_pathscientist_python_packages
+    fi""" in text
+
+
+def test_start_script_preflight_checks_kaggle_presence_without_authentication():
+    text = _deploy_script_text("start.sh")
+
+    assert "importlib.util.find_spec" in text
+    assert "importlib.import_module(module_name)" not in text
 
 
 def test_start_script_checks_apptainer_and_sandbox_image():

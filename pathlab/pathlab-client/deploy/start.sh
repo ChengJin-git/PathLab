@@ -140,21 +140,20 @@ resolve_pathscientist_sandbox_image() {
 check_pathscientist_python_packages() {
     OPENHANDS_SUPPRESS_BANNER=1 "$PYTHON" - <<'PYCODE'
 import importlib
+import importlib.util
 import sys
 
-required = ["openhands.sdk", "torch", "kaggle"]
+required = ["openhands.sdk", "openhands.tools", "torch", "kaggle"]
 missing = []
 
 for module_name in required:
-    try:
-        importlib.import_module(module_name)
-    except Exception as exc:
-        missing.append((module_name, exc))
+    if importlib.util.find_spec(module_name) is None:
+        missing.append((module_name, "module not installed"))
 
 if missing:
     print("Missing PathScientist Python dependencies:")
     for module_name, exc in missing:
-        print(f"  - {module_name}: {exc.__class__.__name__}: {exc}")
+        print(f"  - {module_name}: {exc}")
     sys.exit(1)
 
 import torch
@@ -163,6 +162,24 @@ print(
     f"(torch={torch.__version__}, cuda_available={torch.cuda.is_available()})"
 )
 PYCODE
+}
+
+install_pathscientist_python_packages() {
+    local package_dir="$SERVER_DIR/backend/pathscientist"
+
+    echo -e "  ${YELLOW}[!]${NC} PathScientist Python dependencies missing, installing..."
+    if ! "$PYTHON" -m pip --version > /dev/null 2>&1; then
+        "$PYTHON" -m ensurepip --upgrade
+    fi
+
+    "$PYTHON" -m pip install --upgrade pip setuptools wheel
+    (
+        cd "$package_dir"
+        "$PYTHON" -m pip install \
+            -r ../../requirements.txt \
+            -r ../../requirements-test.txt \
+            -r requirements.txt
+    )
 }
 
 check_pathscientist_sandbox() {
@@ -215,7 +232,10 @@ check_pathscientist_environment() {
 
     load_pathscientist_env_file "${PATHSCIENTIST_ENV_FILE:-$SERVER_DIR/backend/pathscientist/.env.local}"
 
-    check_pathscientist_python_packages
+    if ! check_pathscientist_python_packages; then
+        install_pathscientist_python_packages
+        check_pathscientist_python_packages
+    fi
     check_pathscientist_sandbox
     echo -e "${GREEN}[✓]${NC} PathScientist 环境检查通过"
 }
