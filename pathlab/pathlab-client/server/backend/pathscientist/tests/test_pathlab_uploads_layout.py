@@ -128,6 +128,76 @@ def test_external_request_discovers_pathlab_uploads_layout(tmp_path):
     assert external["pathlab_masks_dir"] == "/data/pathlab_uploads/masks"
 
 
+def test_external_request_accepts_labels_csv_without_external_split(tmp_path):
+    uploads = tmp_path / "uploads"
+    features = uploads / "features" / "virchow2"
+    wsi_dir = uploads / "WSIs"
+    features.mkdir(parents=True)
+    wsi_dir.mkdir(parents=True)
+    for slide_id in ("slide_001", "slide_002", "slide_003"):
+        (features / f"{slide_id}.pt").write_bytes(b"pt")
+        (wsi_dir / f"{slide_id}.svs").write_text("wsi", encoding="utf-8")
+    (uploads / "label.csv").write_text(
+        "dataset,case,slide,class\n"
+        "external,case-1,slide_001.svs,negative\n"
+        "external,case-2,slide_002.svs,positive\n"
+        "external,case-3,slide_003.svs,negative\n",
+        encoding="utf-8",
+    )
+
+    def llm_caller(_prompt: str) -> str:
+        return json.dumps(
+            {
+                "external_validation_requested": True,
+                "confidence": "high",
+                "external_task_type": "mil_classification",
+                "external_data": {"paths": [str(uploads)], "dataset_name": "external"},
+                "missing": [],
+            }
+        )
+
+    result = infer_external_request(
+        question=f"externally test on {uploads}",
+        selected_skill="mil_classification",
+        data_mounts={str(uploads): "/data/pathlab_uploads"},
+        llm_caller=llm_caller,
+    )
+
+    assert result.status == "enabled"
+    assert result.missing == []
+    assert result.contract["external_features_dir"] == "/data/pathlab_uploads/features/virchow2"
+    assert result.contract["external_wsi_dir"] == "/data/pathlab_uploads/WSIs"
+    assert result.contract["external_labels_file"] == "/data/pathlab_uploads/label.csv"
+    assert "external_splits_file" not in result.contract
+
+
+def test_external_test_template_uses_all_label_csv_rows_when_split_absent(tmp_path, monkeypatch):
+    labels_file = tmp_path / "label.csv"
+    labels_file.write_text(
+        "dataset,case,slide,class\n"
+        "PWH,case-1,23S000109-I.svs,Not Intestinal metaplasia\n"
+        "PWH,case-1,23S000109-II.svs,Intestinal metaplasia\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("EXTERNAL_SPLITS_FILE", raising=False)
+    monkeypatch.setenv("EXTERNAL_LABELS_FILE", str(labels_file))
+    monkeypatch.setenv("PATHLAB_MAX_EXTERNAL_SAMPLES", "0")
+
+    template_path = Path(__file__).parent.parent / "domain" / "templates" / "external_test_template.py"
+    spec = importlib.util.spec_from_file_location(f"external_test_template_{uuid4().hex}", template_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    splits = module.load_splits(Path(""))
+
+    assert splits["sample_ids"] == ["23S000109-I", "23S000109-II"]
+    assert splits["labels"] == {
+        "23S000109-I": "Not Intestinal metaplasia",
+        "23S000109-II": "Intestinal metaplasia",
+    }
+
+
 def test_external_request_prefers_requested_extractor_feature_leaf(tmp_path):
     uploads = tmp_path / "uploads"
     _write_pathlab_uploads(uploads)

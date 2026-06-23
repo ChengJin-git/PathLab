@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@radix-ui/react-tooltip'
@@ -74,6 +74,34 @@ describe('PathScientistSessionSidebar', () => {
     expect(await screen.findByText('Completed session')).toBeInTheDocument()
     const listPollIntervals = intervals.filter((interval) => interval.timeout === 5000)
     expect(listPollIntervals).toHaveLength(0)
+  })
+
+  it('shows a newly created session without remounting', async () => {
+    renderWithProviders(<PathScientistSessionSidebar />)
+
+    expect(await screen.findByText('Completed session')).toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('pathscientist:session-created', {
+        detail: {
+          session: {
+            session_id: 'new-session',
+            conversation_id: 'new-conv',
+            title: 'New NSCLC session',
+            question: 'Train NSCLC',
+            model: 'gpt-5.5',
+            status: 'queued',
+            stage: 'starting',
+            created_at: 1779030200,
+            updated_at: 1779030200,
+            error: '',
+          },
+        },
+      }))
+    })
+
+    expect(screen.getByText('New NSCLC session')).toBeInTheDocument()
+    expect(screen.getByText('Completed session')).toBeInTheDocument()
   })
 
   it('polls every 5s when at least one session has live status', async () => {

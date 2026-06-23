@@ -81,12 +81,44 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
     return data
 
 
+def _read_csv_labels(path: Path) -> dict[str, Any]:
+    _fail_if_missing(path, "external labels file")
+    labels: dict[str, Any] = {}
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            sample_id = ""
+            for key in ("sample_id", "slide_id", "slide", "filename", "file_name", "wsi", "wsi_id"):
+                value = str(row.get(key) or "").strip()
+                if value:
+                    sample_id = Path(value).stem if Path(value).suffix else value
+                    break
+            label_value = ""
+            for key in ("label", "class", "target", "y", "diagnosis"):
+                value = str(row.get(key) or "").strip()
+                if value:
+                    label_value = value
+                    break
+            if sample_id and label_value:
+                labels[sample_id] = label_value
+    if not labels:
+        raise ValueError(f"external labels CSV did not contain usable sample ids and labels: {path}")
+    return {"external": list(labels), "labels": labels}
+
+
+def _read_structured_labels(path: Path, label: str) -> dict[str, Any]:
+    _fail_if_missing(path, label)
+    if path.suffix.lower() == ".csv":
+        return _read_csv_labels(path)
+    return _read_json(path, label)
+
+
 def _merge_external_labels(data: dict[str, Any]) -> dict[str, Any]:
     if not _path_is_configured(EXTERNAL_LABELS_FILE):
         return data
-    labels_data = _read_json(EXTERNAL_LABELS_FILE, "external labels file")
+    labels_data = _read_structured_labels(EXTERNAL_LABELS_FILE, "external labels file")
     merged = dict(data)
-    for key in ("labels", "survival_times", "times", "event_status", "events"):
+    for key in ("external", "sample_ids", "labels", "survival_times", "times", "event_status", "events"):
         if key in labels_data and key not in merged:
             merged[key] = labels_data[key]
     return merged
@@ -105,7 +137,12 @@ def _split_sample_ids(data: dict[str, Any]) -> list[str]:
 
 
 def load_splits(path: Path, *, require_labels: bool = True) -> dict[str, Any]:
-    data = _merge_external_labels(_read_json(path, "external splits file"))
+    if _path_is_configured(path) and path.exists():
+        data = _merge_external_labels(_read_json(path, "external splits file"))
+    elif _path_is_configured(EXTERNAL_LABELS_FILE):
+        data = _read_structured_labels(EXTERNAL_LABELS_FILE, "external labels file")
+    else:
+        data = _merge_external_labels(_read_json(path, "external splits file"))
     labels = data.get("labels") or {}
     if require_labels and (not isinstance(labels, dict) or not labels):
         raise ValueError("External splits file must include a non-empty labels object.")

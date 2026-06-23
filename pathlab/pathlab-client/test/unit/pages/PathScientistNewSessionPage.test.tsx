@@ -103,4 +103,28 @@ describe('PathScientistNewSessionPage', () => {
       }))
     })
   })
+
+  it('notifies the workspace when a session is created', async () => {
+    const listener = vi.fn()
+    window.addEventListener('pathscientist:session-created', listener)
+
+    render(
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <PathScientistNewSessionPage />
+      </MemoryRouter>,
+    )
+
+    fireEvent.change(screen.getByLabelText('Research question'), { target: { value: 'Train NSCLC' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start session' }))
+
+    await waitFor(() => {
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+        detail: expect.objectContaining({
+          session: expect.objectContaining({ session_id: 'new-session' }),
+        }),
+      }))
+    })
+
+    window.removeEventListener('pathscientist:session-created', listener)
+  })
 })

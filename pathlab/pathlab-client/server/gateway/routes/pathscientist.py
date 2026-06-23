@@ -4560,7 +4560,7 @@ def _add_external_run_files_to_zip(
     record_data: dict[str, Any],
     evidence_run_dir: Path,
 ) -> None:
-    prefix = f"external_test/{_safe_zip_component(external_run_id, 'external_run')}"
+    prefix = f"artifacts/external_test/{_safe_zip_component(external_run_id, 'external_run')}"
     _zip_writestr_json(archive, f"{prefix}/record.json", record_data)
 
     for filename in (

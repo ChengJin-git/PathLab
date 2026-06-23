@@ -169,6 +169,12 @@ describe('PathScientistExecutionConsole', () => {
       state: {
         ...session.state,
         objective: { success_metric: 'auc' },
+        selected_dataset: { name: 'Chronic-gastritis' },
+        external_test_request: {
+          contract: {
+            datasets: [{ role: 'external', dataset_name: 'PWH-GC-IM' }],
+          },
+        },
         best_run_id: 'run_36962082',
         run_history: [
           {
@@ -216,6 +222,7 @@ describe('PathScientistExecutionConsole', () => {
     expect(internalCard).toHaveTextContent('AUC 0.976')
     expect(internalCard).toHaveTextContent('114 samples')
     expect(internalCard).toHaveTextContent('completed')
+    expect(internalCard).toHaveTextContent('Chronic-gastritis')
     expect(screen.getByTestId('pathscientist-internal-summary-badges')).toHaveClass('items-end')
     expect(screen.getByTestId('pathscientist-internal-summary-badges')).toHaveClass('sm:items-end')
 
@@ -224,6 +231,7 @@ describe('PathScientistExecutionConsole', () => {
     expect(externalCard).toHaveTextContent('AUC 0.726')
     expect(externalCard).toHaveTextContent('2697 samples')
     expect(externalCard).toHaveTextContent('completed')
+    expect(externalCard).toHaveTextContent('PWH-GC-IM')
     expect(screen.getByTestId('pathscientist-external-summary-badges')).toHaveClass('items-end')
     expect(screen.getByTestId('pathscientist-external-summary-badges')).toHaveClass('sm:items-end')
   })

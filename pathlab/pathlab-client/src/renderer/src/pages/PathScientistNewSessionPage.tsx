@@ -5,6 +5,7 @@ import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { startPathScientistSession } from '../api/pathscientist'
+import { notifyPathScientistSessionCreated } from '../lib/pathscientistSessionEvents'
 
 const DEFAULT_MODEL = 'gpt-5.5'
 const DEFAULT_MAX_ITER = 5
@@ -37,6 +38,7 @@ export default function PathScientistNewSessionPage() {
         max_iter: parseMaxIter(maxIterInput),
         model: DEFAULT_MODEL,
       })
+      notifyPathScientistSessionCreated(session)
       navigate(`/pathscientist/sessions/${session.session_id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('pathScientist.newSessionPage.startFailed'))

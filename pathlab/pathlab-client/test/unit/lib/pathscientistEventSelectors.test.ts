@@ -899,6 +899,12 @@ describe('pathscientist event selectors', () => {
       stage: 'completed',
       state: {
         objective: { success_metric: 'auc' },
+        selected_dataset: { name: 'TCGA-NSCLC' },
+        external_test_request: {
+          contract: {
+            datasets: [{ role: 'external', dataset_name: 'Nanfang-NSCLC' }],
+          },
+        },
         external_test_history: [
           { run_id: 'older_external', status: 'failed', metrics: { auc: 0.5 } },
           externalRecord,
@@ -923,6 +929,7 @@ describe('pathscientist event selectors', () => {
       runDir: '/workspace/runs/external_run_001',
       primaryMetric: { name: 'auc', value: 0.91342 },
       sampleCount: 18,
+      datasetName: 'Nanfang-NSCLC',
     })
     expect(noExternalView.runSummary.externalTest).toBeNull()
   })
@@ -936,6 +943,13 @@ describe('pathscientist event selectors', () => {
       stage: 'completed',
       state: {
         objective: { success_metric: 'auc' },
+        selected_dataset: { name: 'TCGA-NSCLC' },
+        external_test_request: {
+          external_data: { dataset_name: 'Nanfang-NSCLC' },
+          contract: {
+            datasets: [{ role: 'external', dataset_name: 'Nanfang-NSCLC' }],
+          },
+        },
         best_run_id: 'run_train',
         run_history: [
           {
@@ -990,8 +1004,10 @@ describe('pathscientist event selectors', () => {
       sampleCount: 1,
       coverage: 1,
       missingFeatureCount: 0,
+      datasetName: 'TCGA-NSCLC',
     })
     expect(view.runSummary.externalTest).toMatchObject({
+      datasetName: 'Nanfang-NSCLC',
       runId: 'run_external',
       primaryMetric: { name: 'auc', value: 0.5556 },
       sampleCount: 6,

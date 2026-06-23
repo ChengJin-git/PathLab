@@ -3494,6 +3494,122 @@ def test_get_session_enriches_external_test_from_workspace_artifacts(tmp_path):
     }
 
 
+def test_run_zip_for_model_run_includes_linked_external_test_artifacts(tmp_path):
+    route_module = load_route_module()
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "zip-external")
+    model_path = workspace / "model_artifacts" / "s1" / "run_best" / "best_model.pth"
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(b"model-bytes")
+
+    best_evidence = workspace / ".evidence" / "runs" / "run_best"
+    (best_evidence / "artifacts").mkdir(parents=True)
+    (best_evidence / "artifacts" / "best_model.pth").write_bytes(b"model-bytes")
+    (best_evidence / "record.json").write_text(
+        json.dumps({
+            "run_id": "run_best",
+            "run_dir": "output/runs/run_best",
+            "metrics": {"auc": 0.976},
+            "committed": True,
+            "model_path": str(model_path),
+            "artifacts": [
+                {
+                    "name": "best_model.pth",
+                    "path": "output/runs/run_best/best_model.pth",
+                    "storage_mode": "copy",
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    external_run_dir = workspace / "output" / "runs" / "run_external"
+    external_run_dir.mkdir(parents=True)
+    (external_run_dir / "external_test_report.json").write_text(
+        json.dumps({"external_test": {"auc": 0.726, "accuracy": 0.784}}),
+        encoding="utf-8",
+    )
+    (external_run_dir / "metrics.json").write_text(
+        json.dumps({"auc": 0.726, "external": {"auc": 0.726}}),
+        encoding="utf-8",
+    )
+    external_evidence = workspace / ".evidence" / "runs" / "run_external"
+    external_evidence.mkdir(parents=True)
+    external_artifacts = external_evidence / "artifacts"
+    external_artifacts.mkdir()
+    (external_artifacts / "predictions.csv").write_text(
+        "sample_id,prediction\nslide-1,1\n",
+        encoding="utf-8",
+    )
+    (external_evidence / "record.json").write_text(
+        json.dumps({
+            "run_id": "run_external",
+            "run_dir": "output/runs/run_external",
+            "metrics": {"auc": 0.726, "external": {"auc": 0.726}},
+            "committed": False,
+            "model_path": str(model_path),
+            "artifacts": [
+                {
+                    "name": "external_test_report.json",
+                    "path": "output/runs/run_external/external_test_report.json",
+                    "storage_mode": "manifest",
+                },
+                {
+                    "name": "predictions.csv",
+                    "path": "output/runs/run_external/predictions.csv",
+                    "storage_mode": "copy",
+                },
+                {
+                    "name": "metrics.json",
+                    "path": "output/runs/run_external/metrics.json",
+                    "storage_mode": "manifest",
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    record = route_module.SessionRecord(
+        session_id="s1",
+        conversation_id="",
+        question="q",
+        model="gpt-5.5",
+        status="completed",
+        stage="completed",
+        state={
+            "best_run_id": "run_best",
+            "run_history": [
+                {
+                    "run_id": "run_best",
+                    "committed": True,
+                    "model_path": str(model_path),
+                    "metrics": {"auc": 0.976},
+                }
+            ],
+            "external_test": {
+                "run_id": "run_external",
+                "run_dir": "output/runs/run_external",
+                "status": "completed",
+                "metrics": {"auc": 0.726, "model_path": str(model_path)},
+            },
+        },
+    )
+
+    zip_path = route_module._build_run_artifact_zip(record, workspace, "run_best")
+
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            names = set(archive.namelist())
+            assert "artifacts/external_test/run_external/external_test_report.json" in names
+            assert "artifacts/external_test/run_external/predictions.csv" in names
+            assert "artifacts/external_test/run_external/metrics.json" in names
+            assert not any(name.startswith("external_test/") for name in names)
+            assert json.loads(archive.read("artifacts/external_test/run_external/external_test_report.json")) == {
+                "external_test": {"auc": 0.726, "accuracy": 0.784}
+            }
+    finally:
+        Path(zip_path).unlink(missing_ok=True)
+
+
 def test_db_running_session_without_recent_updates_is_marked_interrupted(monkeypatch):
     route_module = load_route_module()
     monkeypatch.setattr(route_module, "LEGACY_RUNNING_STALE_SECONDS", 600)

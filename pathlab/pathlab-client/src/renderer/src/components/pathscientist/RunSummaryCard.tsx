@@ -154,6 +154,11 @@ function InternalTestSummary({ summary }: { summary: PathScientistRunSummaryView
             {t('pathScientist.runSummary.internalTest')}
           </p>
           <p className="mt-1 text-lg font-black text-slate-950">{formatInternalMetric(summary)}</p>
+          {internal.datasetName && (
+            <p className="mt-1 max-w-full truncate text-xs font-extrabold text-sky-700/80" title={internal.datasetName}>
+              {internal.datasetName}
+            </p>
+          )}
         </div>
         <div
           className="flex flex-col items-end gap-2 text-[11px] font-bold sm:items-end"
@@ -189,6 +194,11 @@ function ExternalValidationSummary({ summary }: { summary: PathScientistRunSumma
             {t('pathScientist.runSummary.externalValidation')}
           </p>
           <p className="mt-1 text-lg font-black text-slate-950">{formatExternalMetric(summary)}</p>
+          {external.datasetName && (
+            <p className="mt-1 max-w-full truncate text-xs font-extrabold text-emerald-700/80" title={external.datasetName}>
+              {external.datasetName}
+            </p>
+          )}
         </div>
         <div
           className="flex flex-col items-end gap-2 text-[11px] font-bold sm:items-end"

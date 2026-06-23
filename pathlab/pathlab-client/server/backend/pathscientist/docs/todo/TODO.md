@@ -48,6 +48,12 @@ This directory tracks active PathScientist follow-up work. Historical planning d
   - Source: code organization review, Phase 5.
   - Scope: schemas, session manager, SSE/event normalization, download/archive helpers, access-token validation, PathLab sync, config defaults.
 
+## PathLab Integration
+
+- [ ] Register PathScientist-trained models into the PathLab database automatically after successful training.
+  - Source: `docs/todo/PATHLAB_MODEL_REGISTRATION.md`.
+  - Scope: durable model artifact path, run/session metadata, internal/external metrics, dataset IDs, feature extractor, model architecture, and owner should be persisted so the model appears in normal PathLab model/task views and can be reused outside the PathScientist session.
+
 ## Data / Acquisition
 
 - [ ] Add dedicated GitHub and Figshare providers if they become required.

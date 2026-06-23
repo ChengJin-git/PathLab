@@ -57,6 +57,8 @@ kaggle.json
 .worktrees
 .swarm
 docs/
+!pathlab/pathlab-client/server/backend/pathscientist/docs/
+!pathlab/pathlab-client/server/backend/pathscientist/docs/**
 
 # Local model/data artifacts
 pathlab/pathlab-client/server/backend/ai/extractors/checkpoints/

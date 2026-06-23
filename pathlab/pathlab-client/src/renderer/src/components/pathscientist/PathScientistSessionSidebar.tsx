@@ -5,11 +5,19 @@ import { Beaker, History, Loader2, Plus, Trash2 } from 'lucide-react'
 import { listPathScientistSessions, deletePathScientistSession } from '../../api/pathscientist'
 import type { PathScientistSessionSummary } from '../../types/pathscientist'
 import { dedupePathScientistSessions, isLiveSessionStatus } from '../../lib/pathscientistSessions'
+import {
+  PATHSCIENTIST_SESSION_CREATED_EVENT,
+  sessionFromPathScientistSessionCreatedEvent,
+} from '../../lib/pathscientistSessionEvents'
 import PathScientistBackButton from './PathScientistBackButton'
 import PathScientistSessionListItem from './PathScientistSessionListItem'
 import { ConfirmDialog } from '../settings/ConfirmDialog'
 
 export default function PathScientistSessionSidebar() {
+  type LoadSessionsOptions = {
+    merge?: boolean
+  }
+
   const { t } = usePathScientistTranslation()
   const navigate = useNavigate()
   const [sessions, setSessions] = useState<PathScientistSessionSummary[]>([])
@@ -28,11 +36,14 @@ export default function PathScientistSessionSidebar() {
     setDialogState({ isOpen: false, title: '', message: '', onConfirm: () => {} })
   }
 
-  const loadSessions = async (silent = false) => {
+  const loadSessions = async (silent = false, options: LoadSessionsOptions = {}) => {
     if (!silent) setIsLoading(true)
     try {
       const result = await listPathScientistSessions()
-      setSessions(result.items || [])
+      const nextSessions = result.items || []
+      setSessions((current) => options.merge
+        ? dedupePathScientistSessions([...nextSessions, ...current])
+        : nextSessions)
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : t('pathScientist.loadSessionsFailed'))
@@ -43,6 +54,19 @@ export default function PathScientistSessionSidebar() {
 
   useEffect(() => {
     void loadSessions()
+  }, [])
+
+  useEffect(() => {
+    const handleSessionCreated = (event: Event) => {
+      const session = sessionFromPathScientistSessionCreatedEvent(event)
+      if (!session) return
+      setSessions((current) => dedupePathScientistSessions([session, ...current]))
+      void loadSessions(true, { merge: true })
+    }
+    window.addEventListener(PATHSCIENTIST_SESSION_CREATED_EVENT, handleSessionCreated)
+    return () => {
+      window.removeEventListener(PATHSCIENTIST_SESSION_CREATED_EVENT, handleSessionCreated)
+    }
   }, [t])
 
   const visibleSessions = useMemo(() => dedupePathScientistSessions(sessions), [sessions])

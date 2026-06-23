@@ -150,6 +150,7 @@ export interface PathScientistExternalTestView {
   runDir: string
   primaryMetric: PathScientistMetricView | null
   sampleCount: number | null
+  datasetName: string
 }
 
 export interface PathScientistInternalTestView {
@@ -162,6 +163,7 @@ export interface PathScientistInternalTestView {
   sampleCount: number | null
   coverage: number | null
   missingFeatureCount: number | null
+  datasetName: string
 }
 
 export type PathScientistTaskTypeView =
@@ -936,6 +938,62 @@ function metricKeyExists(metrics: Record<string, unknown>, metricName: string): 
   return Object.keys(metrics).some((key) => normalizedMetricKey(key) === normalizedName)
 }
 
+function datasetDisplayName(record: Record<string, unknown>): string {
+  return asString(
+    record.dataset_name
+    || record.datasetName
+    || record.dataset
+    || record.name
+    || record.dataset_id
+    || record.datasetId,
+  ).trim()
+}
+
+function datasetNameFromContract(state: Record<string, unknown>, role: 'internal' | 'external'): string {
+  const sources = [
+    asRecord(asRecord(state.external_test_request).contract),
+    asRecord(state.external_test_contract),
+    asRecord(asRecord(state.grounding).external_test_contract),
+  ]
+
+  for (const source of sources) {
+    const datasets = asRecordArray(source.datasets)
+    const match = datasets.find((dataset) => asString(dataset.role).trim().toLowerCase() === role)
+    const name = match ? datasetDisplayName(match) : ''
+    if (name) return name
+  }
+
+  return ''
+}
+
+function internalDatasetName(state: Record<string, unknown>, record: Record<string, unknown>): string {
+  const grounding = nestedGrounding(state)
+  const request = asRecord(state.external_test_request)
+  const candidates = [
+    datasetDisplayName(record),
+    datasetDisplayName(asRecord(state.selected_dataset)),
+    datasetDisplayName(asRecord(grounding.selected_dataset)),
+    datasetDisplayName(asRecord(state.training_data)),
+    datasetDisplayName(asRecord(request.training_data)),
+    datasetNameFromContract(state, 'internal'),
+  ]
+
+  return candidates.find(Boolean) || ''
+}
+
+function externalDatasetName(state: Record<string, unknown>, record: Record<string, unknown>): string {
+  const request = asRecord(state.external_test_request)
+  const candidates = [
+    datasetDisplayName(record),
+    datasetDisplayName(asRecord(state.external_test)),
+    datasetDisplayName(asRecord(request.external_data)),
+    datasetNameFromContract(state, 'external'),
+    asString(state.external_dataset_name).trim(),
+  ]
+
+  return candidates.find(Boolean) || ''
+}
+
 function externalHistory(state: Record<string, unknown>): Record<string, unknown>[] {
   const direct = asRecordArray(state.external_test_history)
   if (direct.length > 0) return direct
@@ -1056,6 +1114,7 @@ function buildExternalTestView(state: Record<string, unknown>): PathScientistExt
     committed: Boolean(record.committed),
     modelPath,
     runDir,
+    datasetName: externalDatasetName(state, record),
     primaryMetric,
     sampleCount: externalSampleCount(metrics, record),
   }
@@ -1192,6 +1251,7 @@ function buildInternalTestView(state: Record<string, unknown>): PathScientistInt
     primaryMetric,
     sampleCount: internalSampleCount(metrics, record),
     coverage: typeof coverage === 'number' ? coverage : null,
+    datasetName: internalDatasetName(state, record),
     missingFeatureCount,
   }
 }

@@ -265,6 +265,20 @@ def _contains_ext(root: Path, exts: set[str]) -> bool:
         return False
 
 
+def _discover_label_file(root: Path) -> Path | None:
+    for name in (
+        "labels.json",
+        "label.json",
+        "labels.csv",
+        "label.csv",
+        "pathscientist_labels.csv",
+    ):
+        candidate = root / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _maybe_set_path(
     contract: dict[str, str],
     key: str,
@@ -411,7 +425,7 @@ def _discover_contract_paths(
             name = root.name.lower()
             if name in {"splits.json", "split.json"}:
                 _maybe_set_path(contract, "external_splits_file", root, data_mounts)
-            elif name in {"labels.json", "label.json"}:
+            elif name in {"labels.json", "label.json", "labels.csv", "label.csv", "pathscientist_labels.csv"}:
                 _maybe_set_path(contract, "external_labels_file", root, data_mounts)
             continue
 
@@ -419,8 +433,8 @@ def _discover_contract_paths(
         if splits.exists():
             _maybe_set_path(contract, "external_splits_file", splits, data_mounts)
 
-        labels = root / "labels.json"
-        if labels.exists():
+        labels = _discover_label_file(root)
+        if labels is not None:
             _maybe_set_path(contract, "external_labels_file", labels, data_mounts)
 
         _discover_pathlab_uploads_layout(
