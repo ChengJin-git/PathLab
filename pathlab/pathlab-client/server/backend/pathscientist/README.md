@@ -9,14 +9,13 @@ prompt -> task grounding -> literature search -> dataset discovery/acquisition
        -> data readiness -> feature extraction -> MIL training -> review/synthesis
 ```
 
-This README is the practical setup guide for developers. For deeper design
-notes, see `docs/architecture.md`, `docs/dataset_acquisition.md`, and
-`docs/PROJECT_SUMMARY.md`.
+This README is the practical setup guide for developers and operators. For
+deeper design notes, see `docs/architecture.md`, `docs/dataset_acquisition.md`,
+and `docs/PROJECT_SUMMARY.md`.
 
-For a deployment-server handoff, start with
-`../../../docs/pathscientist-deployment-quickstart.md`. This README is longer
-and includes developer workflows that are not required for a production-style
-PathLab web deployment.
+This README also consolidates the operator-facing deployment quickstart and the
+Apptainer sandbox reference. Developer workflows are in the earlier sections;
+operators can jump to "Deployment Quickstart".
 
 ---
 
@@ -948,7 +947,371 @@ count as complete for this run.
 
 ---
 
-## 18. What To Update When You Change PathScientist
+## 18. Deployment Quickstart
+
+This is the operator-facing quickstart for deploying PathScientist as part of
+the PathLab web app on a new Linux server. Setup steps (system packages,
+Python venv, PostgreSQL/Redis, frontend deps, LLM/HF settings, dataset
+layout) are covered in the developer sections above; this section focuses on
+the deployment-specific flow and references those sections as needed.
+
+### 18.1 What You Are Deploying
+
+PathScientist runs inside the PathLab fixed-port web deployment:
+
+```text
+browser -> Gateway :6100 -> Preprocessing :6101
+                       \-> AI :6102
+                       \-> PathScientist sessions
+```
+
+Runtime state is split across:
+
+- PostgreSQL: users, settings, PathLab metadata, and PathScientist session records.
+- Redis: queue and async coordination.
+- `PATHLAB_UPLOADS_DIR`: the PathLab data repository. PathScientist also uses
+  this as its default dataset cache in the web route.
+- `PATHSCIENTIST_BASE_DIR`: PathScientist workspaces, logs, conversations, and
+  compact run artifacts. Defaults to `pathlab-client/uploads/pathscientist`.
+- `PATHLAB_CKPT_DIR` / Hugging Face cache: foundation-model checkpoints.
+- Apptainer image: isolated runtime for generated feature extraction, training,
+  and external validation scripts.
+
+The deployment script uses ports `6100/6101/6102`. Do not mix these with any
+temporary development ports such as `6200/6201/6202/6203`.
+
+### 18.2 Code Checkout
+
+```bash
+git clone <repo-url> /home/<service-user>/PathLab
+cd /home/<service-user>/PathLab
+git checkout pathscientistv0.1.1dev
+cd pathlab/pathlab-client
+```
+
+Run git commands from `/home/<service-user>/PathLab`; run web deployment
+commands from `/home/<service-user>/PathLab/pathlab/pathlab-client`.
+
+### 18.3 Server Environment
+
+Create `pathlab/pathlab-client/server/.env` and keep it out of git:
+
+```bash
+cd /home/<service-user>/PathLab/pathlab/pathlab-client
+cp .env.example server/.env
+chmod 600 server/.env
+```
+
+Edit `server/.env` and set at least:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://pathlab:pathlab@localhost:5432/pathlab
+REDIS_URL=redis://localhost:6379/0
+INTERNAL_API_KEY=<random-secret>
+JWT_SECRET=<stable-random-secret>
+APP_SALT=<stable-random-secret>
+DEFAULT_ADMIN_PASSWORD=<initial-admin-password>
+
+# Durable PathLab data repository. PathScientist web sessions use this as the
+# default dataset cache unless PATHSCIENTIST_DATASET_CACHE_DIR is explicitly set.
+PATHLAB_UPLOADS_DIR=/data/pathlab/uploads
+
+# Foundation model checkpoints / Hugging Face cache.
+PATHLAB_CKPT_DIR=/data/pathlab/checkpoints
+HF_HOME=/data/pathlab/hf-cache
+# Web sessions inherit PathLab Settings huggingface_token.
+# Standalone/service fallback only:
+# HF_TOKEN=<optional-huggingface-token>
+
+# Optional GPU selection.
+CUDA_VISIBLE_DEVICES=0,1
+```
+
+Use real random values for `INTERNAL_API_KEY`, `JWT_SECRET`, and `APP_SALT` in
+any shared or long-lived deployment. `JWT_SECRET` must stay stable across
+restarts or existing login sessions will be invalidated.
+
+### 18.4 Start The Web App
+
+```bash
+cd /home/<service-user>/PathLab/pathlab/pathlab-client
+./deploy/start.sh
+```
+
+The script will:
+
+1. stop old services on `6100/6101/6102`,
+2. ensure Redis is running,
+3. install Node dependencies if needed,
+4. build the frontend,
+5. start `server/main.py`, which launches Gateway, Preprocessing, and AI.
+
+Check health:
+
+```bash
+curl -fsS http://127.0.0.1:6100/health
+curl -fsS http://127.0.0.1:6101/health
+curl -fsS http://127.0.0.1:6102/health
+```
+
+Open:
+
+```text
+http://127.0.0.1:6100/pathscientist
+```
+
+The initial admin account is created on first run. The password comes from
+`DEFAULT_ADMIN_PASSWORD`; if that variable is missing, `server/main.py` defaults
+it to `admin` for local development.
+
+### 18.5 SSH Tunnel For Remote Testing
+
+From your laptop:
+
+```bash
+ssh -N -L 127.0.0.1:16100:127.0.0.1:6100 <service-user>@<server-host>
+```
+
+Then open:
+
+```text
+http://127.0.0.1:16100/pathscientist
+```
+
+Forward only the Gateway port for the built deployment. A separate Vite dev
+server is optional and is not part of this quickstart.
+
+### 18.6 Smoke Test
+
+Use a small registered dataset first. Example prompt:
+
+```text
+Use a small registered WSI dataset as internal training data.
+Train an ABMIL slide-level classification model.
+If features are missing, extract features first.
+Run only a quick smoke test with a small number of epochs.
+```
+
+After the run starts, verify:
+
+- the session log shows dataset grounding and data readiness before training,
+- feature extraction runs before training when features are missing,
+- the sandbox command appears when Apptainer is enabled,
+- the UI shows training progress and final metrics,
+- durable features/model artifacts land outside the temporary workspace.
+
+### 18.7 Operations Commands
+
+```bash
+# Full restart
+cd /home/<service-user>/PathLab/pathlab/pathlab-client
+./deploy/start.sh
+
+# Hot reload backend or frontend
+./deploy/hot-reload.sh backend
+./deploy/hot-reload.sh frontend
+
+# Logs
+tail -f logs/backend.log
+
+# Process/port check
+ss -tlnp | grep -E ':6100|:6101|:6102'
+```
+
+### 18.8 Do Not Commit
+
+Keep these local only:
+
+```text
+server/.env
+server/backend/pathscientist/.env.local
+.local/pathscientist/
+uploads/
+logs/
+*.sif
+kaggle.json
+*token*.txt
+.venv/
+node_modules/
+```
+
+The repo `.gitignore` already excludes these paths. Recheck `git status` before
+committing from a deployment server.
+
+### 18.9 Deployment Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `Invalid username or password` | Confirm which database `DATABASE_URL` points to and whether the admin user was created with the expected `DEFAULT_ADMIN_PASSWORD`. |
+| `System is under maintenance` | Gateway is reachable but settings/maintenance state or backend health is wrong. Check `logs/backend.log` and `/health`. |
+| `127.0.0.1 refused to connect` | Gateway is not running or the SSH tunnel points to the wrong port/host. Check `ss -tlnp` on the server. |
+| `No LLM model configured` | Web: save PathLab Settings LLM base URL/API key. CLI: set `PATHSCIENTIST_LLM_*` in `.env.local`. |
+| Sandbox falls back to local | Check `apptainer --version`, `PATHSCIENTIST_SANDBOX_IMAGE`, and `ApptainerSandbox.check_available()`. |
+| `/data/...` missing in a session log | The prepared dataset mount was not passed to the sandbox, or the run used local mode. |
+| Features are re-extracted every run | Confirm features are written to the durable dataset root under `pt_files/<extractor>/`, not only to the session workspace. |
+| Huge unexpected download | Review `PATHSCIENTIST_AUTO_ACQUIRE_DATA`, `PATHSCIENTIST_DOWNLOAD_POLICY`, `PATHSCIENTIST_MAX_DOWNLOAD_SIZE_GB`, and provider credentials. |
+
+---
+
+## 19. Apptainer Sandbox Reference
+
+This section records the portable PathScientist runtime setup used on
+`jhcpu5.cse.ust.hk`. The backend still runs on the host Python environment.
+The Apptainer image is only used for generated training, feature extraction,
+and external-test scripts.
+
+### 19.1 Files
+
+- Definition file: `server/backend/pathscientist/runtime/containers/pathlab-sandbox.def`
+- jhcpu5 active image path: `.local/pathscientist/sandbox/pathlab-sandbox.sif`
+- Directory sandbox fallback path: `.local/pathscientist/sandbox/pathlab-sandbox`
+- PathScientist sandbox config file: `server/backend/pathscientist/.env.local` or the service environment
+- Runtime selector: `server/backend/pathscientist/runtime/sandbox.py`
+
+### 19.2 Build On A New Server
+
+Install Apptainer first, then build from the repo root:
+
+```bash
+cd /home/<service-user>/PathLab/pathlab/pathlab-client
+mkdir -p .local/pathscientist/sandbox
+APPTAINER_TMPDIR=/tmp apptainer build --fakeroot --force \
+  .local/pathscientist/sandbox/pathlab-sandbox.sif \
+  server/backend/pathscientist/runtime/containers/pathlab-sandbox.def
+```
+
+If `/tmp` is small, set `APPTAINER_TMPDIR` to a large local disk:
+
+```bash
+mkdir -p /home/<service-user>/.apptainer-tmp
+APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp apptainer build --fakeroot --force \
+  .local/pathscientist/sandbox/pathlab-sandbox.sif \
+  server/backend/pathscientist/runtime/containers/pathlab-sandbox.def
+```
+
+### 19.3 SIF And Directory Sandbox
+
+Apptainer supports both immutable `.sif` files and directory sandbox images. On
+`jhcpu5`, the full dependency build and `%test` passed, but the first SIF
+compression failed in `mksquashfs` with exit 139. A later attempt to compress
+the working directory sandbox also failed because fakeroot left a root-owned
+apt cache subdirectory and an extra `--mksquashfs-args -no-progress` conflicted
+with Apptainer's built-in progress flag.
+
+The fix was:
+
+1. Remove/recreate the unreadable apt cache directory inside the directory sandbox.
+2. Set Apptainer mksquashfs compression to one processor and 4G memory in
+   `/etc/apptainer/apptainer.conf`.
+3. Repack the directory sandbox without extra `--mksquashfs-args`.
+
+Current active runtime uses the SIF image:
+
+```bash
+PATHSCIENTIST_SANDBOX_IMAGE=/home/<service-user>/PathLab/pathlab/pathlab-client/.local/pathscientist/sandbox/pathlab-sandbox.sif
+```
+
+Keep the directory sandbox as a rebuild fallback:
+
+```bash
+APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp apptainer build --fakeroot --sandbox --force \
+  .local/pathscientist/sandbox/pathlab-sandbox \
+  server/backend/pathscientist/runtime/containers/pathlab-sandbox.def
+```
+
+If SIF compression works on a target server, use the `.sif` command above. If
+it fails at `mksquashfs`, use the directory sandbox and point
+`PATHSCIENTIST_SANDBOX_IMAGE` to that directory. The directory sandbox is
+larger and mutable, but PathScientist still runs scripts with
+`apptainer exec --writable-tmpfs`, so normal session writes stay ephemeral
+unless an explicit bind mount is writable.
+
+### 19.4 Configure PathScientist
+
+Add these values to `server/backend/pathscientist/.env.local`:
+
+```bash
+PATHSCIENTIST_SANDBOX=auto
+PATHSCIENTIST_SANDBOX_IMAGE=/absolute/path/to/pathlab-client/.local/pathscientist/sandbox/pathlab-sandbox.sif
+PATHSCIENTIST_SANDBOX_CGROUPS=0
+```
+
+`auto` means PathScientist will use Apptainer when both the binary and image
+are available, and otherwise fall back to local execution. Use
+`PATHSCIENTIST_SANDBOX=apptainer` when you want missing sandbox setup to fail
+loudly.
+
+`PATHSCIENTIST_SANDBOX_CGROUPS=0` disables Apptainer `--memory/--cpus` flags.
+Keep it on jhcpu5 because its user.slice cgroup rejects those limits at
+runtime. On a cluster where cgroup limits work, remove the variable or set it
+to `auto`.
+
+`runtime/sandbox.py` resolves the Apptainer binary in this order:
+
+1. `APPTAINER_BIN`
+2. `apptainer` found on `PATH`
+3. Legacy cluster path `/cm/local/apps/apptainer/current/bin/apptainer`
+
+### 19.5 Verify
+
+Run these checks after building:
+
+```bash
+apptainer exec --nv .local/pathscientist/sandbox/pathlab-sandbox \
+  python -c "import torch; print(torch.__version__); print(torch.cuda.is_available(), torch.cuda.device_count())"
+
+PYTHONPATH=server/backend PATHSCIENTIST_SANDBOX_IMAGE=$PWD/.local/pathscientist/sandbox/pathlab-sandbox \
+  server/backend/pathscientist/.venv/bin/python - <<'PY'
+from pathscientist.runtime.sandbox import ApptainerSandbox
+print(ApptainerSandbox.check_available())
+PY
+```
+
+Expected results:
+
+- The first command imports Torch and reports whether GPUs are visible inside the container.
+- The second command prints `True`.
+
+### 19.6 Runtime Mounts
+
+PathScientist binds the following into the container:
+
+- Session workspace: read/write, same absolute path inside the container
+- Session output directory: read/write, same absolute path inside the container
+- Prepared dataset mounts from acquisition, usually host dataset view to `/data/...`
+- Existing host roots `/project`, `/tmp`, and `/data` when present
+- Template `common/` utilities to `<workspace>/common:ro`
+- Existing model caches under `~/.cache/torch`, `HF_HOME` or `~/.cache/huggingface`
+- Kaggle config directory as `/kaggle:ro` when configured
+
+This is why local execution can fail on `/data/...` paths while Apptainer
+execution works: `/data/...` is a container contract path backed by explicit
+binds.
+
+### 19.7 Migration Checklist
+
+1. Install Apptainer and confirm `apptainer --version` works for the service user.
+2. Confirm the service user has fakeroot mappings in `/etc/subuid` and `/etc/subgid`, or build the SIF as root/admin once.
+3. Build `pathlab-sandbox.sif` from `pathlab-sandbox.def`.
+4. Copy or recreate `.env.local` values for sandbox settings. Web LLM and Hugging Face credentials come from PathLab Settings; copy `PATHSCIENTIST_LLM_*` or set `HF_TOKEN` only for standalone CLI/headless fallback. Put Kaggle credentials in `server/.env` or the service environment.
+5. Restart the backend process so `PATHSCIENTIST_SANDBOX_IMAGE` is loaded.
+6. Run the two verification commands above.
+7. Start a small PathScientist session and confirm logs show `[apptainer] python ...` instead of local `python ...`.
+
+### 19.8 Common Failures
+
+- `check_available()` is `False`: image path does not exist, Apptainer is not on `PATH`, or `APPTAINER_BIN` points to a stale binary.
+- `while setting cgroup limits ... cpu.max`: set `PATHSCIENTIST_SANDBOX_CGROUPS=0` and restart the backend.
+- `127.0.0.1 refused to connect`: backend process is down; restart backend before testing the frontend.
+- `/data/...` missing in a session log: the run is using local execution or the prepared dataset mount was not passed into the sandbox.
+- `torch.cuda.is_available() == False`: retry with `apptainer exec --nv`; if still false, check NVIDIA driver/container integration on the host.
+- `ModuleNotFoundError` inside training scripts: add the runtime dependency to `pathlab-sandbox.def`, rebuild the SIF or directory sandbox, and restart backend.
+- SIF build from a directory sandbox reports permission errors under `var/cache/apt/archives/partial`: rebuild directly from `pathlab-sandbox.def`, or clean/chown that directory as an administrator before repacking.
+- SIF compression crashes with `mksquashfs exit status 134` or `malloc(): corrupted top size`: reduce `/etc/apptainer/apptainer.conf` to `mksquashfs procs = 1` and `mksquashfs mem = 4G`, then rebuild without extra `--mksquashfs-args`.
+
+---
+
+## 20. What To Update When You Change PathScientist
 
 When changing behavior, update the nearest operational doc:
 
@@ -958,7 +1321,7 @@ When changing behavior, update the nearest operational doc:
 | dataset provider/acquisition | `docs/dataset_acquisition.md` |
 | new env var/default | this README + `start.sh` comments |
 | feature extractor/checkpoint behavior | this README + extractor docs/tests |
-| frontend PathScientist UI | `pathlab/pathlab-client/docs/plans/` or frontend README if user-facing |
+| frontend PathScientist UI | frontend README if user-facing |
 | known limitation | this README troubleshooting or `docs/PROJECT_MEMORY.md` |
 
 Before commit, run at least:
