@@ -1,8 +1,9 @@
 # PathScientist Quick Start
 
-PathScientist is the autonomous computational pathology research agent inside
-PathLab. It turns a user goal such as "train a Gleason grading model" into a
-staged workflow:
+AutoResearch was added to PathLab on `2026-06-23`; **PathScientist** is its
+implementation codename and autonomous computational pathology research agent
+inside PathLab. It turns a user goal such as "train a Gleason grading model"
+into a staged workflow:
 
 ```text
 prompt -> task grounding -> literature search -> dataset discovery/acquisition

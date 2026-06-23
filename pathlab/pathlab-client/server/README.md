@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI / TaskWorker** 四个进程，并复用 `backend/` 下的共享模块。
+`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI / TaskWorker** 四个进程，并复用 `backend/` 下的共享模块。`2026-06-23` 起，AutoResearch（实现 codename：PathScientist）也接入这一套 Gateway + backend package + 数据库/文件系统运行边界。
 
 ## 当前启动方式
 
@@ -42,6 +42,7 @@ server/
 │   ├── auth/               # 认证模型与 FastAPI-Users 配置
 │   ├── common/             # 配置、Redis、端口发现、通用工具
 │   ├── database/           # SQLAlchemy 模型与仓储层
+│   ├── pathscientist/      # AutoResearch / PathScientist runtime、编排、持久化与 sandbox
 │   ├── annotation/         # 协作标注 pubsub、presence、COCO/summary 辅助
 │   ├── preprocessing/      # WSI 图像服务与辅助缓存逻辑
 │   └── storage/            # 存储统计、迁移、清理
@@ -53,10 +54,12 @@ server/
 
 | 服务 | 当前职责 |
 |------|----------|
-| Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置等对外 API |
+| Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置 / PathScientist 等对外 API |
 | Preprocessing | WSI 基本信息、图像、缩略图、DZI、瓦片、热图辅助、ROI 提取与部分 COCO 标注导出逻辑 |
 | AI | 训练、推理、特征提取、聚合器 / 分类器注册与模型内部接口 |
 | TaskWorker | 独立消费 Redis 任务描述符，拥有 GPU 任务队列、取消订阅、运行时快照发布与训练恢复 |
+
+PathScientist 不是单独的 HTTP sidecar。它的用户入口由 Gateway 的 `pathscientist_router` 暴露，实际运行时与 AutoResearch 编排代码在 `backend/pathscientist/` 中，历史索引写入 `auto_research_*` ORM 表，完整 OpenHands/PathScientist workspace 与 artifact 保留在磁盘。
 
 ## 任务调度边界
 
@@ -70,7 +73,7 @@ TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务�
 
 - PostgreSQL：元数据与业务状态
 - Redis：任务队列、日志、进度与部分缓存
-- `uploads/`：WSI、特征缓存、模型、日志、标注及衍生文件
+- `uploads/`：WSI、特征缓存、模型、日志、标注、PathScientist workspace / artifact 及衍生文件
 - 上传目录解析顺序：`PATHLAB_UPLOADS_DIR` 环境变量 > `storage.json` 中的 `uploads_dir` > 系统 app data 目录下的 `uploads/`
 
 默认配置可在 `backend/common/config.py` 中看到，包括：
@@ -85,6 +88,7 @@ TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务�
 - Gateway 会在自身生命周期中初始化数据库、Redis 和若干启动期清理逻辑
 - 任务队列初始化、GPU 探测与训练恢复由独立的 `TaskWorker` 进程负责，Gateway 通过 Redis 消费其发布的运行时快照与心跳
 - AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
+- Gateway 同时直接注册 PathScientist router，并以 `/api` prefix 再注册一份；因此 AutoResearch API 同时可通过 `/pathscientist/...` 与 `/api/pathscientist/...` 访问
 - `main.spec` 用于将 sidecar 打包为独立可执行文件
 - `main.py` 会尊重预先设置的 `CUDA_VISIBLE_DEVICES`，否则在启动时自动探测坏卡并收缩可见 GPU 集合
 
@@ -115,6 +119,7 @@ pip install -r server/requirements-test.txt
 - 认证与权限：`test_auth_*`、`test_user_activation_backfill.py`、`test_permission_*`
 - 任务 taxonomy 与调度：`test_task_taxonomy.py`、`test_*_task_taxonomy.py`、`test_training_*`、`test_resume_tasks.py`
 - 存储与数据一致性：`test_storage_*`、`test_uploads_boundary.py`、`test_dataset_repository_namespacing.py`
+- PathScientist / AutoResearch：`test_pathscientist_routes.py`、`test_pathscientist_process_registry.py`，以及 `backend/pathscientist/tests/`
 - 结果、分析与推理：`test_ai_result_store*.py`、`test_*analysis*.py`、`test_batch_inference.py`、`test_patching_stage.py`
 - AI 模型 smoke：`test_ai_models.py`、`test_fm_segmentation_decoders.py`；`test_ai_extractors_pretrained.py` 需 GPU / HuggingFace token，单独运行
 
@@ -130,5 +135,6 @@ pip install -r server/requirements-test.txt
 - [Permissions README](permissions/README.md)
 - [Gateway README](gateway/README.md)
 - [Backend Services README](backend/README.md)
+- [PathScientist README](backend/pathscientist/README.md)
 - [Database README](backend/database/README.md)
 - [Storage README](backend/storage/README.md)

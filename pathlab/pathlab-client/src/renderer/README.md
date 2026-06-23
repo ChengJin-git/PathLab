@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`src/renderer/` 是当前前端打包与浏览器构建目录，既服务 Electron 渲染进程，也支持独立 Web 构建。
+`src/renderer/` 是当前前端打包与浏览器构建目录，既服务 Electron 渲染进程，也支持独立 Web 构建。`2026-06-23` 起，AutoResearch（实现 codename：PathScientist）也有独立前端工作区入口。
 
 ## 当前实现概览
 
@@ -11,6 +11,7 @@
 - 国际化：`en-US`、`zh-CN`、`zh-HK`
 - PWA：浏览器模式会注册 Service Worker，Electron 模式不会
 - WSI 阅片：OpenSeadragon 资源随项目一起打包
+- AutoResearch / PathScientist：`/pathscientist` 会话列表、`/pathscientist/new` 新建会话、`/pathscientist/sessions/:id` 运行详情与事件流
 
 ## 关键入口文件
 
@@ -65,9 +66,10 @@ src/renderer/
 - 任务相关：`/task-setup`（requireGpu）、`/task-list`、`/task/:task_id`
 - 数据相关：`/wsi-list`、`/register`、`/wsi/:wsi_id`
 - 结果相关：`/results`（requireGpu）、`/reports`
+- AutoResearch / PathScientist：`/pathscientist`、`/pathscientist/new`、`/pathscientist/sessions/:id`
 - 以及 1 个 `*` 兜底路由
 
-另外，`pages/StorageManagementPage.tsx` 当前仍是设置页内部功能页，并非独立路由。
+另外，`pages/StorageManagementPage.tsx` 当前仍是设置页内部功能页，并非独立路由。浏览器 standalone PathScientist 模式下，`/` 与 `/login` 会重定向到 `/pathscientist/new`。
 
 ## API 客户端现状
 
@@ -83,6 +85,7 @@ src/renderer/
 - `heatmap`
 - `grants`
 - `queue`
+- `pathscientist`（AutoResearch session API，默认模型 `gpt-5.5`，base 为 `${API_BASE}/pathscientist`）
 - `results`
 - `settings`
 - `stats`

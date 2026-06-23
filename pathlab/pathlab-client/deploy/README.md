@@ -2,9 +2,9 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-如果目标是给新服务器部署完整的 PathLab + PathScientist Web 服务，先看
-[`../docs/pathscientist-deployment-quickstart.md`](../docs/pathscientist-deployment-quickstart.md)。本文档主要解释
-`deploy/` 脚本、桌面打包和固定端口部署细节。
+如果目标是给新服务器部署完整的 PathLab + AutoResearch（实现 codename：PathScientist）Web 服务，先看
+[`../server/backend/pathscientist/README.md`](../server/backend/pathscientist/README.md) 中的 `Deployment Quickstart` 与 `Apptainer Sandbox Reference`。本文档主要解释
+`deploy/` 脚本、桌面打包和固定端口部署细节。AutoResearch / PathScientist 于 `2026-06-23` 加入当前代码库。
 
 本文档分两部分：
 1. **桌面打包**（Electron AppImage / DMG / NSIS）— `scripts/` + `npm run build:linux|mac|win`
@@ -116,7 +116,7 @@ PostgreSQL 由 `embedded-postgres` npm 包在运行时自动管理，无需预�
 - Preprocessing: `6101`
 - AI: `6102`
 
-这与 `PATHLAB_DEBUG=1` 下的 sidecar 端口保持一致，便于浏览器调试与反向代理复用。
+这与 `PATHLAB_DEBUG=1` 下的 sidecar 端口保持一致，便于浏览器调试与反向代理复用。PathScientist 不占用额外 HTTP 端口；AutoResearch 会话 API 由 Gateway 在 `/pathscientist` 与 `/api/pathscientist` 下提供。
 
 ### GPU 控制（CUDA_VISIBLE_DEVICES）
 
@@ -200,6 +200,7 @@ CUDA_VISIBLE_DEVICES=0,1,3
 
 - `/` → `src/renderer/dist`
 - `/api/` → `http://127.0.0.1:6100/`
+- `/pathscientist` 与 `/api/pathscientist/` → Gateway `6100`，由同一前端构建和 Gateway router 服务
 - `/preprocessing/` → `http://127.0.0.1:6101/`
 - `/ai/health` → `http://127.0.0.1:6102/health`
 - `/ai/` → `http://127.0.0.1:6102/api/ai/`
@@ -234,9 +235,11 @@ HTTPS 版本额外包含证书与 SSL 配置；HTTP-only 版本仅保留静态�
 - 部署日志：`logs/`
 - 后端环境变量：`server/.env`
 - 上传目录：优先由 `PATHLAB_UPLOADS_DIR` 指定；未设置时沿用 `storage.json`，再回退到系统 app data 目录
+- AutoResearch / PathScientist workspace：默认位于上传目录下的 `autoresearch/`，可通过 `PATHSCIENTIST_BASE_DIR` 覆盖；完整说明见 `server/backend/pathscientist/README.md`
 
 ### 相关文档
 
 - [Project README](../../../README.md)
 - [Server README](../server/README.md)
+- [PathScientist README](../server/backend/pathscientist/README.md)
 - [Frontend README](../src/renderer/README.md)
