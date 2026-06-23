@@ -100,6 +100,42 @@ PostgreSQL 由 `embedded-postgres` npm 包在运行时自动管理，无需预�
 
 ## 二、固定端口 Web 部署
 
+### 新服务器环境清单
+
+部署固定端口 Web 服务前，先准备：
+
+- Linux 基础工具：`git`、`curl`、`bash`、编译工具和 `pkg-config`。
+- Python：Python 3.12、`python3-venv`、`python3-pip`、`uv`。
+- Node：Node.js 18+ 和 `npm`。
+- 服务：PostgreSQL 和 Redis。
+- WSI 运行库：OpenSlide、OpenGL/GLib 运行库。
+- GPU：与目标 Torch wheel 匹配的 NVIDIA driver/CUDA stack。
+- PathScientist sandbox：Apptainer，以及由 `deploy/build-pathscientist-sandbox.sh` 构建的 `.sif`。
+- PathLab Settings：Web PathScientist 继承 PathLab 的 LLM 和 Hugging Face 设置，不需要单独配置 `PATHSCIENTIST_LLM_*`。
+
+推荐的 PathScientist Python 安装层：
+
+```bash
+cd pathlab/pathlab-client/server/backend/pathscientist
+uv venv .venv --python 3.12
+uv pip install -r ../../requirements.txt
+uv pip install -r ../../requirements-test.txt
+uv pip install -r requirements.txt  # server/backend/pathscientist/requirements.txt
+```
+
+构建 sandbox：
+
+```bash
+cd pathlab/pathlab-client
+./deploy/build-pathscientist-sandbox.sh
+```
+
+如果 `/tmp` 空间不足：
+
+```bash
+APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp ./deploy/build-pathscientist-sandbox.sh
+```
+
 ### 当前文件用途
 
 - `start.sh`：完整启动脚本
@@ -163,15 +199,17 @@ CUDA_VISIBLE_DEVICES=0,1,3
 
 `./deploy/start.sh` 当前会依次执行：
 
-1. 清理占用 `6100 / 6101 / 6102` 的旧进程
-2. 按进程模式补充清理旧的 `server/main.py` / uvicorn / vLLM 相关残留进程
-3. 检查并尽量启动 Redis
-4. 如缺少 `node_modules/`，执行一次 `npm install --silent`
-5. 用 Vite 构建前端到 `src/renderer/dist`
-6. 导出 `PATHLAB_DEBUG=1` 与固定端口环境变量
-7. 以 `nohup` 方式启动 `server/main.py`
-8. 同时通过 `http://127.0.0.1:6100/health`、`6101/health`、`6102/health` 做三服务健康检查；TaskWorker 是无 HTTP 端口后台进程，通过 Redis 队列状态间接观察
-9. 将日志写入 `logs/backend.log`，并记录 `logs/backend.pid`
+1. 检查 PathScientist Python 包：`openhands.sdk`、`torch`、`kaggle`
+2. 检查 `PATHSCIENTIST_SANDBOX`、Apptainer 和 `PATHSCIENTIST_SANDBOX_IMAGE` 指向的 sandbox image
+3. 清理占用 `6100 / 6101 / 6102` 的旧进程
+4. 按进程模式补充清理旧的 `server/main.py` / uvicorn / vLLM 相关残留进程
+5. 检查并尽量启动 Redis
+6. 如缺少 `node_modules/`，执行一次 `npm install --silent`
+7. 用 Vite 构建前端到 `src/renderer/dist`
+8. 导出 `PATHLAB_DEBUG=1` 与固定端口环境变量
+9. 以 `nohup` 方式启动 `server/main.py`
+10. 同时通过 `http://127.0.0.1:6100/health`、`6101/health`、`6102/health` 做三服务健康检查；TaskWorker 是无 HTTP 端口后台进程，通过 Redis 队列状态间接观察
+11. 将日志写入 `logs/backend.log`，并记录 `logs/backend.pid`
 
 该脚本是“直接执行型”的，不需要额外传 `start` 子命令。
 

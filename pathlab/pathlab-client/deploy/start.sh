@@ -47,6 +47,179 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+
+load_pathscientist_env_file() {
+    local env_file="$1"
+    if [ ! -f "$env_file" ]; then
+        return 0
+    fi
+
+    local line key value
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        if [ -z "$line" ] || [[ "$line" == \#* ]]; then
+            continue
+        fi
+        if [[ "$line" == export\ * ]]; then
+            line="${line#export }"
+        fi
+        if [[ "$line" != *=* ]]; then
+            continue
+        fi
+
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        if [[ "$key" != PATHSCIENTIST_* && "$key" != APPTAINER_BIN && "$key" != PATHLAB_SANDBOX_IMAGE ]]; then
+            continue
+        fi
+        if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+            value="${value:1:${#value}-2}"
+        elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+        if [ -z "${!key+x}" ]; then
+            export "$key=$value"
+        fi
+    done < "$env_file"
+}
+
+resolve_apptainer_bin() {
+    local configured="${APPTAINER_BIN:-}"
+    if [ -n "$configured" ]; then
+        if [ -x "$configured" ]; then
+            echo "$configured"
+            return 0
+        fi
+        if command -v "$configured" > /dev/null 2>&1; then
+            command -v "$configured"
+            return 0
+        fi
+        return 1
+    fi
+
+    if command -v apptainer > /dev/null 2>&1; then
+        command -v apptainer
+        return 0
+    fi
+    if [ -x /cm/local/apps/apptainer/current/bin/apptainer ]; then
+        echo /cm/local/apps/apptainer/current/bin/apptainer
+        return 0
+    fi
+    return 1
+}
+
+resolve_pathscientist_sandbox_image() {
+    if [ -n "${PATHSCIENTIST_SANDBOX_IMAGE:-}" ]; then
+        echo "$PATHSCIENTIST_SANDBOX_IMAGE"
+        return 0
+    fi
+    if [ -n "${PATHLAB_SANDBOX_IMAGE:-}" ]; then
+        echo "$PATHLAB_SANDBOX_IMAGE"
+        return 0
+    fi
+
+    local candidate
+    for candidate in \
+        "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox-transformers.sif" \
+        "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif" \
+        "$SERVER_DIR/backend/auto_research_old/pathlab-sandbox-transformers.sif" \
+        "$SERVER_DIR/backend/auto_research_old/pathlab-sandbox.sif"; do
+        if [ -f "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    echo "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif"
+}
+
+check_pathscientist_python_packages() {
+    OPENHANDS_SUPPRESS_BANNER=1 "$PYTHON" - <<'PYCODE'
+import importlib
+import sys
+
+required = ["openhands.sdk", "torch", "kaggle"]
+missing = []
+
+for module_name in required:
+    try:
+        importlib.import_module(module_name)
+    except Exception as exc:
+        missing.append((module_name, exc))
+
+if missing:
+    print("Missing PathScientist Python dependencies:")
+    for module_name, exc in missing:
+        print(f"  - {module_name}: {exc.__class__.__name__}: {exc}")
+    sys.exit(1)
+
+import torch
+print(
+    "  PathScientist Python packages OK "
+    f"(torch={torch.__version__}, cuda_available={torch.cuda.is_available()})"
+)
+PYCODE
+}
+
+check_pathscientist_sandbox() {
+    local sandbox_mode="${PATHSCIENTIST_SANDBOX:-auto}"
+    case "$sandbox_mode" in
+        local)
+            echo -e "  ${YELLOW}[!]${NC} PATHSCIENTIST_SANDBOX=local, skip Apptainer check"
+            return 0
+            ;;
+        auto|apptainer|"")
+            ;;
+        *)
+            echo -e "${RED}[✗]${NC} Unsupported PATHSCIENTIST_SANDBOX=$sandbox_mode (expected auto, apptainer, or local)"
+            return 1
+            ;;
+    esac
+
+    local apptainer_bin
+    if ! apptainer_bin=$(resolve_apptainer_bin); then
+        echo -e "${RED}[✗]${NC} Apptainer not found. Install Apptainer or set APPTAINER_BIN."
+        return 1
+    fi
+    if ! "$apptainer_bin" --version > /dev/null 2>&1; then
+        echo -e "${RED}[✗]${NC} Apptainer is not executable: $apptainer_bin"
+        return 1
+    fi
+
+    local sandbox_image
+    sandbox_image=$(resolve_pathscientist_sandbox_image)
+    if [ ! -f "$sandbox_image" ]; then
+        echo -e "${RED}[✗]${NC} PathScientist sandbox image not found: $sandbox_image"
+        echo -e "    Build it with: apptainer build --fakeroot --force $PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif $SERVER_DIR/backend/pathscientist/runtime/containers/pathlab-sandbox.def"
+        return 1
+    fi
+
+    export PATHSCIENTIST_SANDBOX="$sandbox_mode"
+    export PATHSCIENTIST_SANDBOX_IMAGE="$sandbox_image"
+    echo -e "  ${GREEN}[✓]${NC} Apptainer OK: $apptainer_bin"
+    echo -e "  ${GREEN}[✓]${NC} PathScientist sandbox image: $sandbox_image"
+}
+
+check_pathscientist_environment() {
+    echo -e "${YELLOW}[0/5]${NC} 检查 PathScientist 环境..."
+
+    if [ -f "$SERVER_DIR/.env" ]; then
+        set -a
+        source "$SERVER_DIR/.env"
+        set +a
+    fi
+
+    load_pathscientist_env_file "${PATHSCIENTIST_ENV_FILE:-$SERVER_DIR/backend/pathscientist/.env.local}"
+
+    check_pathscientist_python_packages
+    check_pathscientist_sandbox
+    echo -e "${GREEN}[✓]${NC} PathScientist 环境检查通过"
+}
+
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
 echo -e "${CYAN}║          PathLab 一键启动脚本          ║${NC}"
 echo -e "${CYAN}╚════════════════════════════════════════╝${NC}"
@@ -61,6 +234,8 @@ if systemctl is-active --quiet pathlab 2>/dev/null; then
     echo -e "    或者更新 systemd 的 PATHLAB_UPLOADS_DIR 后继续使用 systemd。"
     exit 1
 fi
+
+check_pathscientist_environment
 
 # ========== Step 1: 停止旧进程 ==========
 echo -e "${YELLOW}[1/5]${NC} 停止旧进程..."

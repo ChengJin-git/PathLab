@@ -29,7 +29,7 @@ pathlab/pathlab-client/
   package.json                         # frontend/Electron dependencies
   deploy/start.sh                      # fixed-port web/backend launcher
   server/
-    requirements.txt                   # Python backend + PathScientist deps
+    requirements.txt                   # shared Python backend deps
     requirements-test.txt              # pytest deps
     main.py                            # starts Gateway/Preprocessing/AI
     backend/pathscientist/             # this package
@@ -39,6 +39,7 @@ Important PathScientist subdirectories:
 
 ```text
 pathscientist/
+  requirements.txt                    # PathScientist-only dependency layer
   start.sh                             # standalone CLI launcher
   run.py                               # batch entry: python -m pathscientist.run
   cli.py                               # interactive entry: python -m pathscientist
@@ -128,9 +129,7 @@ python3 -m venv .venv
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r ../../requirements.txt
 python -m pip install -r ../../requirements-test.txt
-
-# Optional: Kaggle CLI for PANDA/Kaggle downloads
-python -m pip install kaggle
+python -m pip install -r requirements.txt
 ```
 
 If your environment uses `uv`:
@@ -140,14 +139,16 @@ cd pathlab/pathlab-client/server/backend/pathscientist
 uv venv .venv --python 3.12
 uv pip install -r ../../requirements.txt
 uv pip install -r ../../requirements-test.txt
-uv pip install kaggle
+uv pip install -r requirements.txt
 ```
 
 Notes:
 
 - `../../requirements.txt` is `pathlab/pathlab-client/server/requirements.txt`.
-- It includes heavy ML packages, OpenHands SDK, LanceDB/RAG dependencies, and
-  model/tooling dependencies used by PathLab backend code.
+- `requirements.txt` in this directory (`server/backend/pathscientist/requirements.txt`)
+  is the PathScientist-only layer: it keeps agent/acquisition dependencies such
+  as `openhands-sdk`, `openhands-tools`, and `kaggle` separate from the shared
+  PathLab backend requirements.
 - `server/requirements-pdf-marker.txt` is optional. Do not install it into the
   main PathScientist/OpenHands environment unless you intentionally accept its
   OpenAI/Anthropic/Pillow pins for a dedicated PDF parsing worker.
@@ -199,11 +200,13 @@ cd pathlab/pathlab-client
 
 This script:
 
-1. cleans old services on ports `6100/6101/6102`,
-2. ensures Redis is running,
-3. installs Node dependencies if `node_modules/` is missing,
-4. builds the frontend to `src/renderer/dist`,
-5. starts `server/main.py`, which launches Gateway, Preprocessing, and AI.
+1. checks PathScientist Python packages (`openhands.sdk`, `torch`, `kaggle`) and
+   the Apptainer sandbox image,
+2. cleans old services on ports `6100/6101/6102`,
+3. ensures Redis is running,
+4. installs Node dependencies if `node_modules/` is missing,
+5. builds the frontend to `src/renderer/dist`,
+6. starts `server/main.py`, which launches Gateway, Preprocessing, and AI.
 
 After it starts, open:
 
@@ -986,7 +989,7 @@ temporary development ports such as `6200/6201/6202/6203`.
 ```bash
 git clone <repo-url> /home/<service-user>/PathLab
 cd /home/<service-user>/PathLab
-git checkout pathscientistv0.1.1dev
+git checkout pathscientistv0.1.3dev
 cd pathlab/pathlab-client
 ```
 
@@ -1041,11 +1044,13 @@ cd /home/<service-user>/PathLab/pathlab/pathlab-client
 
 The script will:
 
-1. stop old services on `6100/6101/6102`,
-2. ensure Redis is running,
-3. install Node dependencies if needed,
-4. build the frontend,
-5. start `server/main.py`, which launches Gateway, Preprocessing, and AI.
+1. check PathScientist Python packages (`openhands.sdk`, `torch`, `kaggle`) and
+   the Apptainer sandbox image,
+2. stop old services on `6100/6101/6102`,
+3. ensure Redis is running,
+4. install Node dependencies if needed,
+5. build the frontend,
+6. start `server/main.py`, which launches Gateway, Preprocessing, and AI.
 
 Check health:
 
@@ -1175,20 +1180,21 @@ Install Apptainer first, then build from the repo root:
 
 ```bash
 cd /home/<service-user>/PathLab/pathlab/pathlab-client
-mkdir -p .local/pathscientist/sandbox
-APPTAINER_TMPDIR=/tmp apptainer build --fakeroot --force \
-  .local/pathscientist/sandbox/pathlab-sandbox.sif \
-  server/backend/pathscientist/runtime/containers/pathlab-sandbox.def
+./deploy/build-pathscientist-sandbox.sh
 ```
 
 If `/tmp` is small, set `APPTAINER_TMPDIR` to a large local disk:
 
 ```bash
 mkdir -p /home/<service-user>/.apptainer-tmp
-APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp apptainer build --fakeroot --force \
-  .local/pathscientist/sandbox/pathlab-sandbox.sif \
-  server/backend/pathscientist/runtime/containers/pathlab-sandbox.def
+APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp ./deploy/build-pathscientist-sandbox.sh
 ```
+
+The script builds `.local/pathscientist/sandbox/pathlab-sandbox.sif` from
+`server/backend/pathscientist/runtime/containers/pathlab-sandbox.def` and then
+runs a small import check inside the image. Set `PATHSCIENTIST_SANDBOX_VERIFY=0`
+to skip the verification step, or `PATHSCIENTIST_SANDBOX_USE_NV=0` to verify
+without `--nv`.
 
 ### 19.3 SIF And Directory Sandbox
 
@@ -1293,7 +1299,7 @@ binds.
 
 1. Install Apptainer and confirm `apptainer --version` works for the service user.
 2. Confirm the service user has fakeroot mappings in `/etc/subuid` and `/etc/subgid`, or build the SIF as root/admin once.
-3. Build `pathlab-sandbox.sif` from `pathlab-sandbox.def`.
+3. Build `pathlab-sandbox.sif` with `./deploy/build-pathscientist-sandbox.sh`.
 4. Copy or recreate `.env.local` values for sandbox settings. Web LLM and Hugging Face credentials come from PathLab Settings; copy `PATHSCIENTIST_LLM_*` or set `HF_TOKEN` only for standalone CLI/headless fallback. Put Kaggle credentials in `server/.env` or the service environment.
 5. Restart the backend process so `PATHSCIENTIST_SANDBOX_IMAGE` is loaded.
 6. Run the two verification commands above.
