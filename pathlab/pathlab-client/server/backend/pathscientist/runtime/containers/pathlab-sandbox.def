@@ -16,7 +16,7 @@ From: pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
     export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-8}
     export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
     export KAGGLE_CONFIG_DIR=${KAGGLE_CONFIG_DIR:-/kaggle}
-    export MPLCONFIGDIR=${MPLCONFIGDIR:-/tmp/matplotlib}
+    export MPLCONFIGDIR=${MPLCONFIGDIR:-/var/cache/matplotlib}
 
 %post
     set -eux
@@ -73,8 +73,8 @@ From: pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
     python -m pip install --no-cache-dir \
         'git+https://github.com/MrPeterJin/Aslide.git@main#egg=Aslide' || true
 
-    mkdir -p /workspace /results /data /kaggle /tmp/matplotlib
-    chmod 1777 /workspace /results /data /tmp/matplotlib
+    mkdir -p /workspace /results /data /kaggle /var/cache/matplotlib
+    chmod 1777 /workspace /results /data /var/cache/matplotlib
 
 %runscript
     exec python "$@"

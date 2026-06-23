@@ -84,6 +84,33 @@ def test_pathscientist_sandbox_build_script_is_documented_and_configurable():
     assert "deploy/build-pathscientist-sandbox.sh" in pathscientist_readme
 
 
+def test_pathscientist_sandbox_definition_avoids_build_time_tmp_chmod():
+    definition = (
+        CLIENT_ROOT
+        / "server"
+        / "backend"
+        / "pathscientist"
+        / "runtime"
+        / "containers"
+        / "pathlab-sandbox.def"
+    ).read_text()
+
+    assert "MPLCONFIGDIR=${MPLCONFIGDIR:-/var/cache/matplotlib}" in definition
+    assert "/var/cache/matplotlib" in definition
+    assert "/tmp/matplotlib" not in definition
+
+    chmod_lines = [
+        line.strip()
+        for line in definition.splitlines()
+        if line.strip().startswith("chmod ")
+    ]
+    assert any(
+        "/workspace" in line and "/results" in line and "/data" in line
+        for line in chmod_lines
+    )
+    assert all("/tmp" not in line for line in chmod_lines)
+
+
 def test_pathscientist_requirements_file_contains_agent_only_dependencies():
     requirements = (CLIENT_ROOT / "server" / "backend" / "pathscientist" / "requirements.txt").read_text()
     deploy_readme = (CLIENT_ROOT / "deploy" / "README.md").read_text()
