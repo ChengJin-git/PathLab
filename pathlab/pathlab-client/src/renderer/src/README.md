@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`src/renderer/src` 是当前 React 应用的真实源码目录。
+`src/renderer/src` 是当前 React 应用的真实源码目录。`2026-06-23` 起，AutoResearch（实现 codename：PathScientist）的前端页面、API、类型和组件也位于此目录内。
 
 ## 当前源码结构
 
@@ -13,7 +13,7 @@ src/
 ├── config.ts               # Gateway / Preprocessing / AI 地址解析
 ├── i18n.ts                 # i18next 初始化
 ├── api/                    # 按业务拆分的 API 客户端
-├── components/             # 可复用 UI、聊天、阅片、结果、设置等组件
+├── components/             # 可复用 UI、聊天、阅片、结果、设置、PathScientist 等组件
 ├── contexts/               # Auth / BackgroundTask / Toast 状态
 ├── constants/              # 文件类型、指标、训练等常量
 ├── hooks/                  # 独立 React Hook 模块
@@ -41,8 +41,11 @@ src/
   - `/results`（requireGpu）
   - `/reports`
   - `/wsi/:wsi_id`
+  - `/pathscientist`
+  - `/pathscientist/new`
+  - `/pathscientist/sessions/:id`
 
-说明：`pages/StorageManagementPage.tsx` 当前不是独立路由，而是作为设置页内部视图使用。
+说明：`pages/StorageManagementPage.tsx` 当前不是独立路由，而是作为设置页内部视图使用。Standalone PathScientist 模式下，`/` 与 `/login` 会重定向到 `/pathscientist/new`。
 
 ## 运行时事实
 
@@ -68,6 +71,7 @@ src/
 - `api/heatmap.ts`
 - `api/grants.ts`
 - `api/queue.ts`
+- `api/pathscientist.ts`（AutoResearch / PathScientist session API，base 为 `${API_BASE}/pathscientist`，默认模型 `gpt-5.5`）
 - `api/results.ts`
 - `api/settings.ts`
 - `api/stats.ts`
@@ -88,7 +92,9 @@ src/
 - `NewTaskPage.tsx` / `TaskDetailPage.tsx` / `TaskListPage.tsx`：任务配置与追踪
 - `ResultsViewerPage.tsx` / `ReportGeneratorPage.tsx`：结果查看与报告导出
 - `SettingsPage.tsx` / `StorageManagementPage.tsx`：系统设置与存储管理相关界面
+- `PathScientistSessionsPage.tsx` / `PathScientistNewSessionPage.tsx` / `PathScientistSessionPage.tsx`：AutoResearch / PathScientist 会话列表、新建与运行详情
 - `contexts/backgroundTask/`：训练、分析、存储相关 SSE / 动作封装
+- `types/pathscientist.ts` 与 `lib/pathscientist*.ts`：PathScientist API types、事件/session 辅助、国际化与 artifact 下载相关工具
 
 ## 组件分层补充
 
@@ -100,6 +106,7 @@ src/
 - `landing/`
 - `legal/`（隐私政策、免责声明等法律文本内联链接）
 - `list/`
+- `pathscientist/`
 - `results/`
 - `settings/`
 - `taskDetail/`
