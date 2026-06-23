@@ -95,7 +95,7 @@ def compile_with_docker(
         "run",
         "--rm",
         "-v",
-        f"{(paper_root / "final").resolve()}:/work",
+        f"{(paper_root / 'final').resolve()}:/work",
         image,
         "compile",
         template_id,
