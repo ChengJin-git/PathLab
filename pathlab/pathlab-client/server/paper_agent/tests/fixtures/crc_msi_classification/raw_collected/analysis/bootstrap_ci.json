@@ -1,0 +1,26 @@
+{
+  "test_accuracy": {
+    "mean": 0.8871,
+    "ci_lower": 0.7903,
+    "ci_upper": 0.9516,
+    "n_bootstrap": 1000
+  },
+  "test_auc": {
+    "mean": 0.9413,
+    "ci_lower": 0.8834,
+    "ci_upper": 0.9822,
+    "n_bootstrap": 1000
+  },
+  "balanced_accuracy": {
+    "mean": 0.8621,
+    "ci_lower": 0.7412,
+    "ci_upper": 0.9384,
+    "n_bootstrap": 1000
+  },
+  "macro_f1": {
+    "mean": 0.8504,
+    "ci_lower": 0.7268,
+    "ci_upper": 0.9319,
+    "n_bootstrap": 1000
+  }
+}

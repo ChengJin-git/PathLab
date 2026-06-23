@@ -1,0 +1,25 @@
+{
+  "model_id": "model_crc_msi_abmil_fixture_001",
+  "task_id": "crc_msi_abmil_fixture",
+  "model_name": "CRC MSI Attention MIL Fixture",
+  "model_path": "uploads/models/crc_msi_abmil_fixture/model.pt",
+  "config_path": "uploads/models/crc_msi_abmil_fixture/config.json",
+  "classes": [
+    "MSI",
+    "MSS"
+  ],
+  "feature_extractor": "conch_v1",
+  "aggregator": "attention_mil",
+  "train_metrics": {
+    "final_train_loss": 0.2142,
+    "best_epoch": 47
+  },
+  "val_metrics": {
+    "best_val_auc": 0.9278,
+    "best_val_macro_f1": 0.8125,
+    "best_epoch": 47
+  },
+  "is_default": true,
+  "is_active": true,
+  "source": "synthetic_fixture"
+}

@@ -1,0 +1,492 @@
+from __future__ import annotations
+
+import json
+import httpx
+import pytest
+
+from pathlab_paper_agent.citations import (
+    CitationCandidate,
+    CitationReference,
+    check_citation_coverage,
+    check_orphan_cites,
+    extract_cite_keys,
+    generate_bibtex,
+    select_references,
+    verify_candidates,
+)
+from pathlab_paper_agent.citations.openalex import OpenAlexClient
+from pathlab_paper_agent.citations.pubmed import PubMedClient
+from pathlab_paper_agent.citations.semantic_scholar import SemanticScholarClient
+from pathlab_paper_agent.pipeline import create_dev_run, run_stage
+
+
+def test_verifier_filters_deduplicates_and_keeps_valid_candidates() -> None:
+    candidates = [
+        CitationCandidate(
+            title="Attention-Based Deep Multiple Instance Learning",
+            claimed_title="Attention Based Deep Multiple Instance Learning",
+            source="semantic_scholar",
+            authors=("Ilse M",),
+            year=2018,
+            venue="ICML",
+            s2_paper_id="s2-1",
+            citation_count=1000,
+        ),
+        CitationCandidate(
+            title="Attention-Based Deep Multiple Instance Learning",
+            source="pubmed",
+            authors=("Ilse M",),
+            year=2018,
+            doi="10.1/example",
+        ),
+        CitationCandidate(title="", year=2020),
+        CitationCandidate(
+            title="Future Paper",
+            claimed_title="Completely Different Title",
+            year=2035,
+        ),
+    ]
+
+    report = verify_candidates(candidates, cutoff_year=2026)
+
+    assert len(report.verified) == 1
+    assert report.verified[0].title == "Attention-Based Deep Multiple Instance Learning"
+    reasons = {reason for item in report.rejected for reason in item["reasons"]}
+    assert "duplicate" in reasons
+    assert "missing_title" in reasons
+    assert "after_cutoff_year" in reasons
+    assert "title_similarity_below_threshold" in reasons
+
+
+def test_ref_selector_and_bibtex_generation_are_stable() -> None:
+    candidates = [
+        CitationCandidate(
+            title="Computational pathology with whole-slide images",
+            source="pubmed",
+            authors=("Smith J", "Lee K"),
+            year=2020,
+            venue="Nature Medicine",
+            doi="10.1000/test",
+            cluster="macro",
+        ),
+        CitationCandidate(
+            title="Multiple instance learning for WSI",
+            source="semantic_scholar",
+            authors=("Doe A",),
+            year=2021,
+            venue="MICCAI",
+            s2_paper_id="abc",
+            cluster="mil",
+        ),
+    ]
+
+    selection = select_references(candidates, max_refs=10)
+    bibtex = generate_bibtex(selection.selected_refs)
+
+    assert len(selection.selected_refs) == 2
+    assert len(selection.required_cites) == 2
+    assert "@article{" in bibtex
+    assert "@inproceedings{" in bibtex
+    assert "title = {Computational pathology with whole-slide images}" in bibtex
+    assert "booktitle = {MICCAI}" in bibtex
+    assert "doi = {10.1000/test}" in bibtex
+
+
+def test_ref_selector_emits_stable_citekeys_for_canonical_inputs() -> None:
+    """Lock the exact citekey strings so silent drift in the generator (e.g.
+    switching from initial-based to surname-based, or changing the title-word
+    cap) fails this test before it leaks into existing paper runs."""
+    candidates = [
+        CitationCandidate(
+            title="Computational pathology with whole-slide images",
+            source="pubmed",
+            authors=("Smith J", "Lee K"),
+            year=2020,
+            venue="Nature Medicine",
+            doi="10.1000/test",
+            cluster="macro",
+        ),
+        CitationCandidate(
+            title="Multiple instance learning for WSI",
+            source="semantic_scholar",
+            authors=("Doe A",),
+            year=2021,
+            venue="MICCAI",
+            s2_paper_id="abc",
+            cluster="mil",
+        ),
+    ]
+    selection = select_references(candidates, max_refs=10)
+    assert [ref.key for ref in selection.selected_refs] == [
+        "J2020_computational_pathology_with",
+        "A2021_multiple_instance_learning",
+    ]
+
+
+def test_bibtex_renderer_maps_entry_types_and_preserves_title_case() -> None:
+    refs = (
+        CitationReference(
+            key="Smith2024",
+            title="CRC MSI and H&E classification with WSI",
+            authors=("Smith J", "Doe A"),
+            year=2024,
+            venue="Journal of Pathology",
+            doi="10.1000/path_1",
+            url="https://example.test/paper_a?x=1&y=2",
+            source="pubmed",
+        ),
+        CitationReference(
+            key="Lee2024",
+            title="Deep {MSI} detection for CRC",
+            authors=("Lee K",),
+            year=2024,
+            venue="MICCAI",
+            s2_paper_id="s2_abc",
+            source="semantic_scholar",
+        ),
+    )
+
+    bibtex = generate_bibtex(refs)
+
+    assert "@article{Smith2024" in bibtex
+    assert "journal = {Journal of Pathology}" in bibtex
+    assert "title = {{CRC} {MSI} and {H\\&E} classification with {WSI}}" in bibtex
+    assert "doi = {10.1000/path_1}" in bibtex
+    assert "url = {https://example.test/paper_a?x=1&y=2}" in bibtex
+    assert "@inproceedings{Lee2024" in bibtex
+    assert "booktitle = {MICCAI}" in bibtex
+    assert "title = {Deep {MSI} detection for {CRC}}" in bibtex
+    assert r"\{MSI\}" not in bibtex
+
+
+def test_bibtex_renderer_normalizes_unicode_for_classic_bibtex() -> None:
+    refs = (
+        CitationReference(
+            key="Unicode2024",
+            title="MSI\u2013CRC \u201cstudy\u201d with \u03b2-catenin",
+            authors=("Pa\u00efvi Peltom\u00e4ki", "Miguel A. Rodr\u0131\u0301guez-Bigas"),
+            year=2024,
+            venue="Journal of Pathology",
+            source="pubmed",
+        ),
+    )
+
+    bibtex = generate_bibtex(refs)
+
+    assert all(ord(char) < 128 for char in bibtex)
+    assert "Paivi Peltomaki" in bibtex
+    assert "Rodriguez-Bigas" in bibtex
+    assert "{MSI}--{CRC}" in bibtex
+    assert "beta-catenin" in bibtex
+
+
+def test_bibtex_renderer_protects_plural_acronyms() -> None:
+    """Plurals like WSIs / CNNs / AUCs should be wrapped in the same brace
+    as the singular acronym; substrings inside longer words must NOT match."""
+    refs = (
+        CitationReference(
+            key="Plural2024",
+            title="Classifying WSIs across CNNs with reported AUCs",
+            authors=("Author A",),
+            year=2024,
+            venue="MICCAI",
+            source="semantic_scholar",
+        ),
+        CitationReference(
+            key="NotAMatch2024",
+            title="MILstone study of CRCs in TCGA",
+            authors=("Author B",),
+            year=2024,
+            venue="Nature",
+            source="pubmed",
+        ),
+    )
+
+    bibtex = generate_bibtex(refs)
+
+    assert "title = {Classifying {WSIs} across {CNNs} with reported {AUCs}}" in bibtex
+    # "MILstone" contains "MIL" but must NOT match: lookahead `t` rejects it.
+    assert "MILstone" in bibtex
+    assert "{MIL}stone" not in bibtex
+    assert "{MILstone}" not in bibtex
+    # "CRCs" plural should still match.
+    assert "{CRCs}" in bibtex
+    # "TCGA" terminal (no plural) still wrapped.
+    assert "{TCGA}" in bibtex
+
+
+def test_bibtex_renderer_handles_arxiv_and_empty_references() -> None:
+    bibtex = generate_bibtex(
+        [
+            CitationReference(
+                key="Arxiv2024",
+                title="AI pathology preprint",
+                authors=("Preprint A",),
+                year=2024,
+                source="arxiv",
+                url="https://arxiv.org/abs/2401.01234",
+            )
+        ]
+    )
+
+    assert "@misc{Arxiv2024" in bibtex
+    assert "title = {{AI} pathology preprint}" in bibtex
+    assert "eprint = {2401.01234}" in bibtex
+    assert "archivePrefix = {arXiv}" in bibtex
+    assert generate_bibtex([]) == "% No verified references selected.\n"
+
+
+def test_citation_reference_added_by_round_trips() -> None:
+    ref = CitationReference(
+        key="User2024",
+        title="User supplied pathology reference",
+        authors=("User A",),
+        year=2024,
+        source="manual",
+        added_by="user",
+    )
+
+    payload = ref.to_dict()
+    parsed = CitationReference.from_dict(payload)
+    legacy = CitationReference.from_dict({k: v for k, v in payload.items() if k != "added_by"})
+
+    assert payload["added_by"] == "user"
+    assert parsed.added_by == "user"
+    assert legacy.added_by == "agent"
+
+
+def test_added_by_metadata_does_not_change_bibtex_output() -> None:
+    base = CitationReference(
+        key="Smith2024",
+        title="Metadata stable WSI study",
+        authors=("Smith J",),
+        year=2024,
+        venue="MICCAI",
+        source="semantic_scholar",
+        added_by="agent",
+    )
+    user_ref = CitationReference.from_dict({**base.to_dict(), "added_by": "user"})
+
+    assert generate_bibtex([base]) == generate_bibtex([user_ref])
+
+
+def test_coverage_and_orphan_gates() -> None:
+    refs = (
+        CitationReference(key="Smith2020", title="A", required=True),
+        CitationReference(key="Doe2021", title="B", required=False),
+    )
+    used = extract_cite_keys(r"See \citep[see][p.~3]{Smith2020} and \parencite{Ghost}.")
+
+    coverage = check_citation_coverage(refs, (refs[0],), used)
+    orphan = check_orphan_cites(used, refs)
+
+    assert coverage.status == "pass"
+    assert coverage.coverage == 1.0
+    assert coverage.unused_selected == ("Doe2021",)
+    assert orphan.status == "fail"
+    assert orphan.orphan_cites == ("Ghost",)
+
+
+def test_semantic_scholar_client_parses_search_results() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/paper/search")
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "paperId": "s2paper",
+                        "title": "WSI MIL",
+                        "abstract": "abstract",
+                        "authors": [{"name": "Author One"}],
+                        "year": 2022,
+                        "venue": "MICCAI",
+                        "journal": {"name": "Proceedings of MICCAI", "volume": "13435", "pages": "1--12"},
+                        "publicationTypes": ["Conference"],
+                        "externalIds": {"DOI": "10.2/s2", "PubMed": "123"},
+                        "url": "https://example.test/s2",
+                        "citationCount": 7,
+                    }
+                ]
+            },
+        )
+
+    client = SemanticScholarClient(transport=httpx.MockTransport(handler))
+    try:
+        results = client.search("wsi mil", cluster="mil")
+    finally:
+        client.close()
+
+    assert len(results) == 1
+    assert results[0].s2_paper_id == "s2paper"
+    assert results[0].doi == "10.2/s2"
+    assert results[0].pmid == "123"
+    assert results[0].cluster == "mil"
+    assert results[0].journal == "Proceedings of MICCAI"
+    assert results[0].volume == "13435"
+    assert results[0].pages == "1--12"
+    assert results[0].publication_type == "Conference"
+
+
+def test_pubmed_client_parses_search_and_summary_results() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/esearch.fcgi"):
+            return httpx.Response(200, json={"esearchresult": {"idlist": ["111"]}})
+        if request.url.path.endswith("/esummary.fcgi"):
+            return httpx.Response(
+                200,
+                json={
+                    "result": {
+                        "111": {
+                            "uid": "111",
+                            "title": "Computational pathology review",
+                            "authors": [{"name": "Path A"}],
+                            "pubdate": "2021 Jan",
+                            "fulljournalname": "J Pathol",
+                            "volume": "260",
+                            "issue": "4",
+                            "pages": "100-110",
+                            "pubtype": ["Journal Article"],
+                            "articleids": [{"idtype": "doi", "value": "10.3/pubmed"}],
+                        }
+                    }
+                },
+            )
+        raise AssertionError(f"unexpected URL {request.url}")
+
+    client = PubMedClient(transport=httpx.MockTransport(handler))
+    try:
+        results = client.search("computational pathology", cluster="macro")
+    finally:
+        client.close()
+
+    assert len(results) == 1
+    assert results[0].pmid == "111"
+    assert results[0].doi == "10.3/pubmed"
+    assert results[0].year == 2021
+    assert results[0].url == "https://pubmed.ncbi.nlm.nih.gov/111/"
+    assert results[0].journal == "J Pathol"
+    assert results[0].volume == "260"
+    assert results[0].number == "4"
+    assert results[0].pages == "100-110"
+    assert results[0].publication_type == "Journal Article"
+
+
+def test_openalex_client_parses_works_search_results() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/works")
+        assert request.url.params["search"] == "wsi mil"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "https://openalex.org/W123",
+                        "doi": "https://doi.org/10.4/openalex",
+                        "display_name": "OpenAlex WSI MIL",
+                        "publication_year": 2023,
+                        "type_crossref": "journal-article",
+                        "authorships": [{"author": {"display_name": "Open Author"}}],
+                        "primary_location": {
+                            "landing_page_url": "https://example.test/oa",
+                            "source": {"display_name": "Open Journal"},
+                        },
+                        "biblio": {
+                            "volume": "12",
+                            "issue": "2",
+                            "first_page": "101",
+                            "last_page": "109",
+                        },
+                        "ids": {
+                            "openalex": "https://openalex.org/W123",
+                            "pmid": "https://pubmed.ncbi.nlm.nih.gov/222/",
+                        },
+                        "cited_by_count": 9,
+                        "abstract_inverted_index": {
+                            "OpenAlex": [0],
+                            "abstract": [1],
+                            "works": [2],
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = OpenAlexClient(
+        api_key="oa_test",
+        mailto="paper@example.test",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        results = client.search("wsi mil", cluster="mil")
+    finally:
+        client.close()
+
+    assert len(results) == 1
+    assert results[0].source == "openalex"
+    assert results[0].openalex_id == "https://openalex.org/W123"
+    assert results[0].doi == "10.4/openalex"
+    assert results[0].pmid == "222"
+    assert results[0].venue == "Open Journal"
+    assert results[0].journal == "Open Journal"
+    assert results[0].volume == "12"
+    assert results[0].number == "2"
+    assert results[0].pages == "101--109"
+    assert results[0].publication_type == "journal-article"
+    assert results[0].abstract == "OpenAlex abstract works"
+
+
+@pytest.mark.asyncio
+async def test_literature_stage_uses_manual_candidates_without_network(tmp_path) -> None:
+    paper_id, paths = await create_dev_run(paper_id="paper_m8a", uploads_dir=tmp_path)
+    run_stage(paper_id, "outlining", uploads_dir=tmp_path)
+    paths.citations_dir.mkdir(parents=True, exist_ok=True)
+    manual_pool = {
+        "items": [
+            {
+                "title": "Attention-Based Deep Multiple Instance Learning",
+                "source": "semantic_scholar",
+                "authors": ["Ilse M"],
+                "year": 2018,
+                "venue": "ICML",
+                "s2_paper_id": "s2-ilse",
+                "citation_count": 1000,
+                "cluster": "multiple instance learning for pathology",
+            },
+            {
+                "title": "Clinical validation in computational pathology",
+                "source": "pubmed",
+                "authors": ["Pathologist P"],
+                "year": 2021,
+                "venue": "J Pathol",
+                "pmid": "999",
+                "cluster": "macro",
+            },
+        ]
+    }
+    (paths.citations_dir / "discovery_pool.json").write_text(
+        json.dumps(manual_pool), encoding="utf-8"
+    )
+
+    manifest = run_stage(paper_id, "literature_review", uploads_dir=tmp_path)
+
+    selected = json.loads((paths.citations_dir / "selected_refs.json").read_text())
+    required = json.loads((paths.citations_dir / "required_cites.json").read_text())
+    coverage = json.loads((paths.citations_dir / "coverage_report.json").read_text())
+    intro_text = (paths.intro_rw_draft_dir / "introduction.tex").read_text()
+
+    assert manifest.current_stage.value == "literature_review"
+    assert len(selected["items"]) == 2
+    assert len(required["items"]) == 2
+    assert coverage["status"] == "pass"
+    assert coverage["orphan_status"] == "pass"
+    assert coverage["orphan_cites"] == []
+    assert coverage["coverage"] == 1.0
+    assert "\\cite{" in intro_text
+    assert "@article" in paths.refs_bib.read_text()
+    assert manifest.artifact_index["citations/selected_refs.json"]["visibility"] == "private_backend_only"
+
+    run_stage(paper_id, "section_writing", uploads_dir=tmp_path)
+    section_intro_text = (paths.sections_dir / "introduction.tex").read_text()
+    assert "\\cite{" in section_intro_text
+    assert "\\section{Introduction}" in section_intro_text

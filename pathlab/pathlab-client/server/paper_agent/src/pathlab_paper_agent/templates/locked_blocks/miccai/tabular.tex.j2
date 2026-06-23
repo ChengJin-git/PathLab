@@ -1,0 +1,7 @@
+\begin{tabular}{ {{- columns -}} }
+\toprule
+{% for row in rows -%}
+{{ row | latex_row }} \\
+{% endfor -%}
+\bottomrule
+\end{tabular}

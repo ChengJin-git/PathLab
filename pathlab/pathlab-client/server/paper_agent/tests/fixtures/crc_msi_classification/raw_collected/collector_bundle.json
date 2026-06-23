@@ -1,0 +1,368 @@
+{
+  "paper_id": "paper_crc_msi_fixture",
+  "mode": "fixture",
+  "status": "ready",
+  "collected_at": "2026-05-06T00:00:00Z",
+  "source_tasks": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main",
+      "label": null
+    }
+  ],
+  "task_summaries": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main",
+      "label": null,
+      "exists": true,
+      "status": "ready",
+      "task_name": "CRC MSI WSI Classification",
+      "task_description": "Synthetic fixture: predict MSI versus MSS status from colorectal cancer H&E whole-slide images using attention MIL.",
+      "training_status": "completed",
+      "progress": 100,
+      "task_type": "wsi_classification",
+      "data_type": "wsi",
+      "aggregation_level": "case",
+      "supported_task_type": true,
+      "preprocessing_config": {
+        "feature_extractor": "conch_v1",
+        "level": 0,
+        "feature_batch_size": 128,
+        "use_gpu": true,
+        "sthresh": 8,
+        "mthresh": 7,
+        "close": 4,
+        "use_otsu": false
+      },
+      "model_config": {
+        "aggregator": "attention_mil",
+        "learning_rate": 0.0002,
+        "epochs": 80,
+        "optimizer": "adamw",
+        "batch_size": 1,
+        "auto_balance": true,
+        "early_stopping_patience": 12
+      },
+      "classes": [
+        "MSI",
+        "MSS"
+      ],
+      "missing_evidence": []
+    }
+  ],
+  "dataset_summaries": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main",
+      "label": null,
+      "status": "ready",
+      "datasets": [
+        {
+          "dataset_id": "crc_msi_dataset_fixture",
+          "name": "Synthetic CRC MSI H&E WSI Cohort",
+          "group_id": "group_crc_msi_wsi_fixture",
+          "data_type": "wsi",
+          "aggregation_level": "case",
+          "task_type": "wsi_classification",
+          "source_organ": "colorectal",
+          "is_public": false,
+          "wsi_count": 312,
+          "case_count": 312,
+          "label_distribution": {
+            "MSI": 96,
+            "MSS": 216
+          },
+          "split_distribution": {
+            "train": 188,
+            "val": 62,
+            "test": 62
+          },
+          "source_distribution": {
+            "synthetic_crc_msi_cohort": 312
+          },
+          "gender_distribution": {
+            "female": 146,
+            "male": 166
+          },
+          "age": {
+            "count": 312,
+            "min": 39.0,
+            "median": 64.0,
+            "max": 86.0
+          },
+          "mpp": {
+            "count": 312,
+            "min": 0.23,
+            "median": 0.25,
+            "max": 0.5
+          },
+          "vendors": [
+            "aperio",
+            "hamamatsu"
+          ],
+          "magnifications": [
+            20,
+            40
+          ],
+          "feature_extracted_count": 312
+        }
+      ],
+      "missing_evidence": []
+    }
+  ],
+  "split_summaries": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main",
+      "label": null,
+      "status": "ready",
+      "buckets": [
+        {
+          "split": "train",
+          "wsi_count": 188,
+          "case_count": 188,
+          "label_distribution": {
+            "MSI": 58,
+            "MSS": 130
+          }
+        },
+        {
+          "split": "val",
+          "wsi_count": 62,
+          "case_count": 62,
+          "label_distribution": {
+            "MSI": 19,
+            "MSS": 43
+          }
+        },
+        {
+          "split": "test",
+          "wsi_count": 62,
+          "case_count": 62,
+          "label_distribution": {
+            "MSI": 19,
+            "MSS": 43
+          }
+        }
+      ],
+      "has_test_split": true,
+      "fold_splits": [],
+      "missing_evidence": []
+    }
+  ],
+  "model_summaries": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main",
+      "label": null,
+      "status": "ready",
+      "models": [
+        {
+          "model_id": "model_crc_msi_abmil_fixture_001",
+          "task_id": "crc_msi_abmil_fixture",
+          "model_name": "CRC MSI Attention MIL Fixture",
+          "model_path": "uploads/models/crc_msi_abmil_fixture/model.pt",
+          "config_path": "uploads/models/crc_msi_abmil_fixture/config.json",
+          "classes": [
+            "MSI",
+            "MSS"
+          ],
+          "feature_extractor": "conch_v1",
+          "aggregator": "attention_mil",
+          "train_metrics": {
+            "final_train_loss": 0.2142,
+            "best_epoch": 47
+          },
+          "val_metrics": {
+            "best_val_auc": 0.9278,
+            "best_val_macro_f1": 0.8125,
+            "best_epoch": 47
+          },
+          "is_default": true,
+          "is_active": true,
+          "source": "synthetic_fixture"
+        }
+      ],
+      "missing_evidence": []
+    }
+  ],
+  "analysis_summaries": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main",
+      "label": null,
+      "status": "ready",
+      "selection": "latest",
+      "selected_analysis_id": "20260506_010101",
+      "analyses": [
+        {
+          "analysis_id": "20260506_010101",
+          "analysis_dir": "evidence/raw_collected/analysis",
+          "source": "synthetic_fixture",
+          "summary_path": "evidence/raw_collected/analysis/summary.json",
+          "results_path": "evidence/raw_collected/analysis/results.json",
+          "summary": {
+            "metrics": {
+              "test_accuracy": 0.8871,
+              "test_auc": 0.9413,
+              "balanced_accuracy": 0.8621,
+              "macro_f1": 0.8504,
+              "weighted_f1": 0.8896,
+              "test_loss": 0.3178
+            },
+            "per_class": {
+              "msi_recall_sensitivity": 0.7895,
+              "msi_precision": 0.8333,
+              "msi_f1": 0.8108,
+              "mss_recall_specificity": 0.9302,
+              "mss_precision": 0.9091,
+              "mss_f1": 0.9195
+            },
+            "confusion_matrix": {
+              "labels": [
+                "MSI",
+                "MSS"
+              ],
+              "matrix": [
+                [
+                  15,
+                  4
+                ],
+                [
+                  3,
+                  40
+                ]
+              ],
+              "rows_are_true_labels": true
+            },
+            "operating_point": {
+              "threshold_for_msi": 0.5,
+              "selection": "validation_youden_index_then_fixed_on_test"
+            },
+            "chart_paths": {
+              "roc_curve": "charts/roc_curve.png",
+              "pr_curve": "charts/pr_curve.png",
+              "confusion_matrix": "charts/confusion_matrix.png",
+              "calibration": "charts/calibration.png"
+            }
+          },
+          "results_count": 62,
+          "chart_paths": {
+            "roc_curve": "charts/roc_curve.png",
+            "pr_curve": "charts/pr_curve.png",
+            "confusion_matrix": "charts/confusion_matrix.png",
+            "calibration": "charts/calibration.png"
+          },
+          "artifacts": [
+            {
+              "kind": "summary",
+              "path": "evidence/raw_collected/analysis/summary.json",
+              "exists": true
+            },
+            {
+              "kind": "results",
+              "path": "evidence/raw_collected/analysis/results.json",
+              "exists": true
+            },
+            {
+              "kind": "bootstrap_ci",
+              "path": "evidence/raw_collected/analysis/bootstrap_ci.json",
+              "exists": true
+            },
+            {
+              "kind": "chart:roc_curve",
+              "path": "evidence/raw_collected/analysis/charts/roc_curve.png",
+              "exists": true
+            },
+            {
+              "kind": "chart:pr_curve",
+              "path": "evidence/raw_collected/analysis/charts/pr_curve.png",
+              "exists": true
+            },
+            {
+              "kind": "chart:confusion_matrix",
+              "path": "evidence/raw_collected/analysis/charts/confusion_matrix.png",
+              "exists": true
+            },
+            {
+              "kind": "chart:calibration",
+              "path": "evidence/raw_collected/analysis/charts/calibration.png",
+              "exists": true
+            }
+          ]
+        }
+      ],
+      "db_analysis_runs": [],
+      "missing_evidence": []
+    }
+  ],
+  "external_validation_summary": {
+    "status": "missing",
+    "items": [],
+    "missing_evidence": [
+      {
+        "item": "external_validation",
+        "task_id": "crc_msi_abmil_fixture",
+        "reason": "No external validation task is included in this synthetic fixture.",
+        "severity": "nonblocking"
+      }
+    ]
+  },
+  "qualitative_summaries": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main",
+      "label": null,
+      "status": "partial",
+      "ai_result_bundle": null,
+      "bundle_exists": false,
+      "result_count": 0,
+      "available_artifacts": [
+        "roc_curve",
+        "pr_curve",
+        "confusion_matrix",
+        "calibration"
+      ],
+      "chart_artifacts": [
+        {
+          "kind": "chart:roc_curve",
+          "path": "evidence/raw_collected/analysis/charts/roc_curve.png",
+          "exists": true
+        },
+        {
+          "kind": "chart:pr_curve",
+          "path": "evidence/raw_collected/analysis/charts/pr_curve.png",
+          "exists": true
+        },
+        {
+          "kind": "chart:confusion_matrix",
+          "path": "evidence/raw_collected/analysis/charts/confusion_matrix.png",
+          "exists": true
+        },
+        {
+          "kind": "chart:calibration",
+          "path": "evidence/raw_collected/analysis/charts/calibration.png",
+          "exists": true
+        }
+      ],
+      "missing_evidence": [
+        {
+          "item": "qualitative_heatmaps",
+          "task_id": "crc_msi_abmil_fixture",
+          "reason": "No heatmap bundle is included; fixture focuses on manuscript topic and metrics.",
+          "severity": "nonblocking"
+        }
+      ]
+    }
+  ],
+  "missing_evidence": [
+    {
+      "item": "external_validation",
+      "task_id": "crc_msi_abmil_fixture",
+      "reason": "No external validation task is included in this synthetic fixture.",
+      "severity": "nonblocking"
+    }
+  ],
+  "collector_errors": []
+}

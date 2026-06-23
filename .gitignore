@@ -1,0 +1,105 @@
+# root docs (generated, not tracked)
+/docs/
+pathlab/pathlab-client/server/paper_agent/docs/
+
+# git worktrees
+.worktrees/
+
+# checkpoints of feature extractors
+pathlab/pathlab-client/server/backend/ai/extractors/checkpoints
+pathlab/pathlab-client/server/backend/ai/segmentors/checkpoints
+pathlab/pathlab-client/server/gateway/knowledge/chat/training_rag/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+
+# Compiled Python files
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Note: uv.lock files are committed (paper-gen is an application/service,
+# not a library — teammates and CI need the same resolved versions).
+
+# IDEs
+.vscode/
+.idea/
+.agents/
+.claude/
+skills-lock.json
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+logs/
+*.log
+*.pid
+
+# Runtime data
+uploads/
+*.csv
+*.json.bak
+*.tmp
+.ruff_cache
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Environment variables (keep .env.example)
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+*.bin
+temp/
+
+.worktrees
+.swarm
+
+# pytest --basetemp output for the paper-agent end-to-end smoke
+pathlab/pathlab-client/server/paper_agent/tests/integration/.smoke_runs/

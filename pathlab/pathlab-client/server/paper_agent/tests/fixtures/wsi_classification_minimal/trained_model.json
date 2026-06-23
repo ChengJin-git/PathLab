@@ -1,0 +1,11 @@
+{
+  "model_id": "model_fixture_001",
+  "task_id": "wsi_cls_fixture",
+  "model_name": "Attention MIL Fixture",
+  "model_path": "/private/pathlab/models/CASE-0001/model.pt",
+  "config_path": "/private/pathlab/models/CASE-0001/config.json",
+  "classes": ["tumor", "normal"],
+  "feature_extractor": "resnet50",
+  "aggregator": "attention_mil",
+  "is_default": true
+}

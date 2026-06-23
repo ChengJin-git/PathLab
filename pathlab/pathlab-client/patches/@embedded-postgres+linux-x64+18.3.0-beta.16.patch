@@ -1,0 +1,11 @@
+--- a/node_modules/@embedded-postgres/linux-x64/dist/index.js
++++ b/node_modules/@embedded-postgres/linux-x64/dist/index.js
+@@ -1,6 +1,7 @@
+ import path from 'path';
+ import { fileURLToPath } from 'url';
+-const __dirname = path.dirname(fileURLToPath(import.meta.url));
++const _asarFixedUrl = import.meta.url.replace(/([\/\\])app\.asar\1/g, '$1app.asar.unpacked$1');
++const __dirname = path.dirname(fileURLToPath(_asarFixedUrl));
+ export const pg_ctl = path.resolve(__dirname, '..', 'native', 'bin', 'pg_ctl');
+ export const initdb = path.resolve(__dirname, '..', 'native', 'bin', 'initdb');
+ export const postgres = path.resolve(__dirname, '..', 'native', 'bin', 'postgres');

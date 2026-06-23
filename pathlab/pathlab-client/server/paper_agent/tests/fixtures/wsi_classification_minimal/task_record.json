@@ -1,0 +1,9 @@
+{
+  "task_id": "wsi_cls_fixture",
+  "task_name": "Fixture WSI Classification",
+  "task_type": "wsi_classification",
+  "data_type": "wsi",
+  "aggregation_level": "wsi",
+  "classes": ["tumor", "normal"],
+  "source_institution": "Example Hospital"
+}

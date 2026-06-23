@@ -1,0 +1,268 @@
+"""Claim guard: deterministic keyword claims vs evidence support."""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from pathlab_paper_agent.storage import PaperRunPaths
+
+from .common import GuardReport, rel_to_run, tex_files_under
+from .metric_guard import load_evidence_lock, metric_entries
+
+
+@dataclass(frozen=True)
+class ClaimPattern:
+    """One claim keyword family and the derived evidence flag it requires."""
+
+    regex: re.Pattern[str]
+    code: str
+    missing_flag: str
+    missing_label: str
+    negation_regex: re.Pattern[str] | None = None
+
+
+_NEGATION_PREFIX = (
+    r"\b(?:no|without|lacking|lack(?:s|ed)?|not|did\s+not|does\s+not|"
+    r"fail(?:ed|s)?\s+to|do(?:es)?\s+not\s+(?:reach|achieve|attain))\b"
+)
+_ABSENCE_PREFIX = r"\b(?:absence|lack|missing|unavailability)\s+of\b"
+_NEGATED_EXTERNAL_RE = re.compile(
+    r"(?:" + _NEGATION_PREFIX + "|" + _ABSENCE_PREFIX + r")"
+    + r"[^.]{0,80}\b(?:external\s+validation|independent\s+cohort|real[-\s]+world\s+deployment|"
+    r"generaliz(?:ation|ability)\s+to|generalis(?:ation|ability)\s+to)\b",
+    re.IGNORECASE,
+)
+_NEGATED_BASELINE_RE = re.compile(
+    _NEGATION_PREFIX
+    + r"[^.]{0,80}\b(?:outperform(?:s|ed|ing)?|better\s+than|superior\s+to|"
+    r"state[-\s]+of[-\s]+the[-\s]+art|sota)\b",
+    re.IGNORECASE,
+)
+_NEGATED_STATISTICAL_RE = re.compile(
+    _NEGATION_PREFIX
+    + r"[^.]{0,80}\b(?:statistically\s+significant|significant\s+difference|significantly|"
+    r"p\s*[<=>]\s*0?\.\d+)\b",
+    re.IGNORECASE,
+)
+_CLAIM_PATTERNS = (
+    ClaimPattern(
+        re.compile(
+            r"\b(?:external\s+validation|independent\s+cohort|generaliz(?:ation|ability)\s+to|"
+            r"generalis(?:ation|ability)\s+to|real[-\s]+world\s+deployment)\b",
+            re.IGNORECASE,
+        ),
+        "unsupported_external_validation_claim",
+        "has_external_validation",
+        "external_validation evidence",
+        _NEGATED_EXTERNAL_RE,
+    ),
+    ClaimPattern(
+        re.compile(
+            r"\b(?:outperform(?:s|ed|ing)?|better\s+than|superior\s+to|"
+            r"state[-\s]+of[-\s]+the[-\s]+art|sota)\b",
+            re.IGNORECASE,
+        ),
+        "unsupported_baseline_comparison_claim",
+        "has_baseline",
+        "baseline source task",
+        _NEGATED_BASELINE_RE,
+    ),
+    ClaimPattern(
+        re.compile(
+            r"\b(?:statistically\s+significant|significant\s+difference|significantly|p\s*[<=>]\s*0?\.\d+)\b",
+            re.IGNORECASE,
+        ),
+        "unsupported_statistical_significance_claim",
+        "has_statistical_test",
+        "statistical-test metric such as ci_ or p_value",
+        _NEGATED_STATISTICAL_RE,
+    ),
+)
+
+
+def derive_evidence_flags(evidence_lock: Mapping[str, Any]) -> dict[str, bool]:
+    """Derive M10b support flags from the existing evidence-lock schema."""
+    entries = metric_entries(dict(evidence_lock))
+    return {
+        "has_external_validation": bool(evidence_lock.get("external_validation")),
+        "has_baseline": _has_baseline_source_task(evidence_lock.get("source_tasks")),
+        "has_statistical_test": _has_statistical_test(entries),
+    }
+
+
+def run(paths: PaperRunPaths) -> GuardReport:
+    evidence_lock = load_evidence_lock(paths)
+    flags = derive_evidence_flags(evidence_lock)
+    tex_files = tex_files_under(paths.sections_dir)
+    report = GuardReport(
+        "claim_guard",
+        metadata={
+            **flags,
+            "checked_files": [rel_to_run(paths, path) for path in tex_files],
+        },
+    )
+    for path in tex_files:
+        _scan_file(path, paths, flags, report)
+    return report
+
+
+def _scan_file(path: Path, paths: PaperRunPaths, flags: Mapping[str, bool], report: GuardReport) -> None:
+    rel = rel_to_run(paths, path)
+    text = _strip_latex_comments(path.read_text(encoding="utf-8"))
+    for pattern in _CLAIM_PATTERNS:
+        if flags.get(pattern.missing_flag):
+            continue
+        for match in pattern.regex.finditer(text):
+            if _is_latex_sectioning_match(text, match):
+                continue
+            if _is_negated_claim(text, match, pattern):
+                continue
+            if pattern.code == "unsupported_external_validation_claim" and _is_evidence_scope_statement(
+                text, match
+            ):
+                continue
+            keyword = " ".join(match.group(0).split())
+            report.error(
+                pattern.code,
+                f"Claim keyword requires {pattern.missing_label}, but evidence_lock does not support it.",
+                path=rel,
+                context=f"keyword={keyword}; missing={pattern.missing_flag}",
+            )
+
+
+def _has_baseline_source_task(source_tasks: Any) -> bool:
+    if not isinstance(source_tasks, list):
+        return False
+    for task in source_tasks:
+        if isinstance(task, Mapping) and str(task.get("role") or "").casefold() == "baseline":
+            return True
+    return False
+
+
+def _has_statistical_test(entries: Mapping[str, Mapping[str, Any]]) -> bool:
+    for key, entry in entries.items():
+        haystack = " ".join(_flatten_text([key, entry])).casefold()
+        if "ci_" in haystack or "p_value" in haystack or "pvalue" in haystack or "p-value" in haystack:
+            return True
+    return False
+
+
+def _flatten_text(values: Iterable[Any]) -> list[str]:
+    flattened: list[str] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, str):
+            flattened.append(value)
+        elif isinstance(value, Mapping):
+            for key, item in value.items():
+                visit(key)
+                visit(item)
+        elif isinstance(value, list | tuple | set):
+            for item in value:
+                visit(item)
+
+    for value in values:
+        visit(value)
+    return flattened
+
+
+def _is_negated_claim(text: str, match: re.Match[str], pattern: ClaimPattern) -> bool:
+    if pattern.negation_regex is None:
+        return False
+    start = max(0, match.start() - 100)
+    end = min(len(text), match.end() + 20)
+    return bool(pattern.negation_regex.search(text[start:end]))
+
+
+def _is_evidence_scope_statement(text: str, match: re.Match[str]) -> bool:
+    """Allow literature/background statements that limit rather than assert evidence."""
+    sentence = _sentence_around(text, match).casefold()
+    boundary_terms = (
+        "separate evidence",
+        "reported separately",
+        "explicit separation",
+        "does not substitute",
+        "not substitute",
+        "remain necessary",
+        "remains necessary",
+        "necessary before",
+        "needed before",
+        "required before",
+        "future work should add",
+        "next validation steps",
+    )
+    if any(term in sentence for term in boundary_terms):
+        return True
+    if "unsupported external validation" in sentence and any(
+        term in sentence for term in ("imply", "implies", "avoid", "risk", "reduces the risk")
+    ):
+        return True
+    if "external validation" in sentence and any(
+        term in sentence
+        for term in (
+            "is unavailable",
+            "was unavailable",
+            "not available",
+            "no external validation evidence",
+            "without external validation evidence",
+            "no external-cohort performance is reported",
+            "no external cohort performance is reported",
+        )
+    ):
+        return True
+    if re.search(
+        r"\brequir(?:e|es|ed|ing)\b[^.]{0,80}\bexternal validation\b[^.]{0,80}\bbefore\b",
+        sentence,
+    ):
+        return True
+    if (
+        "external validation" in sentence
+        and "evidence available" in sentence
+        and ("\\caption" in sentence or "table" in sentence)
+    ):
+        return True
+    if "external-validation examples" in sentence and "motivate" in sentence:
+        return True
+    return (
+        "external validation" in sentence
+        and "internal" in sentence
+        and any(term in sentence for term in ("separate", "distinct", "bounded"))
+    )
+
+
+def _sentence_around(text: str, match: re.Match[str]) -> str:
+    start_candidates = [text.rfind(mark, 0, match.start()) for mark in (".", "\n")]
+    start = max(start_candidates) + 1
+    end_candidates = [idx for idx in (text.find(".", match.end()), text.find("\n", match.end())) if idx != -1]
+    end = min(end_candidates) if end_candidates else len(text)
+    return text[start:end]
+
+
+def _is_latex_sectioning_match(text: str, match: re.Match[str]) -> bool:
+    """Ignore section/paragraph labels; they are headings, not evidence claims."""
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    before = text[line_start : match.start()]
+    after = text[match.end() : text.find("\n", match.end()) if "\n" in text[match.end() :] else len(text)]
+    return bool(re.search(r"\\(?:sub)*section\*?\{[^{}]*$|\\paragraph\{[^{}]*$", before) and "}" in after)
+
+
+def _strip_latex_comments(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        escaped = False
+        kept: list[str] = []
+        for char in line:
+            if char == "\\" and not escaped:
+                escaped = True
+                kept.append(char)
+                continue
+            if char == "%" and not escaped:
+                break
+            escaped = False
+            kept.append(char)
+        lines.append("".join(kept))
+    return "\n".join(lines)

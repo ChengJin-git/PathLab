@@ -1,0 +1,190 @@
+{
+  "name": "pathlab-client",
+  "version": "1.0.5",
+  "main": "./out/main/index.js",
+  "author": "PathLab Team",
+  "description": "PathLab Client Application",
+  "scripts": {
+    "format": "prettier --write .",
+    "lint": "eslint . --ext .js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix",
+    "dev": "electron-vite dev -- --no-sandbox",
+    "build": "electron-vite build",
+    "prepare-redis": "bash scripts/prepare-redis.sh",
+    "build:python": "bash scripts/build-python.sh",
+    "build:win": "npm run build:python && npm run prepare-redis && npm run build && electron-builder --win --config",
+    "build:mac": "npm run build:python && npm run prepare-redis && npm run build && electron-builder --mac --config",
+    "build:linux": "npm run build:python && npm run prepare-redis && npm run build && electron-builder --linux --config",
+    "postinstall": "electron-builder install-app-deps && patch-package",
+    "start": "electron-vite preview",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.1.0",
+    "@electron-toolkit/preload": "^3.0.0",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@radix-ui/react-accordion": "^1.2.12",
+    "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-hover-card": "^1.1.15",
+    "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-scroll-area": "^1.2.10",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slider": "^1.3.6",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-switch": "^1.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@tanstack/react-query": "^5.90.21",
+    "@tanstack/react-query-devtools": "^5.91.3",
+    "@tiptap/extension-mention": "^3.20.1",
+    "@tiptap/react": "^3.20.1",
+    "best-effort-json-parser": "^1.2.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "docx": "^9.6.0",
+    "dompurify": "^3.3.2",
+    "echarts": "^6.0.0",
+    "echarts-for-react": "^3.0.5",
+    "embedded-postgres": "18.3.0-beta.16",
+    "exceljs": "^4.4.0",
+    "file-saver": "^2.0.5",
+    "framer-motion": "^12.29.2",
+    "html2canvas": "^1.4.1",
+    "i18next": "^25.8.13",
+    "i18next-browser-languagedetector": "^8.2.1",
+    "jspdf": "^4.2.0",
+    "jszip": "^3.10.1",
+    "katex": "^0.16.37",
+    "lru-cache": "^11.2.6",
+    "lucide-react": "^0.548.0",
+    "marked": "^17.0.4",
+    "motion": "^12.35.0",
+    "nanoid": "^5.1.6",
+    "next-themes": "^0.4.6",
+    "novel": "^1.0.2",
+    "papaparse": "^5.5.3",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-i18next": "^16.5.4",
+    "react-markdown": "^9.0.1",
+    "react-router-dom": "^6.23.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.0",
+    "remark-math": "^6.0.0",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.4.0",
+    "tippy.js": "^6.3.7",
+    "tiptap-markdown": "^0.9.0",
+    "typecheck": "^0.1.2",
+    "unist-util-visit": "^5.1.0",
+    "use-debounce": "^10.1.0",
+    "use-stick-to-bottom": "^1.1.3",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@electron-toolkit/eslint-config": "^1.0.2",
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@tailwindcss/postcss": "^4.1.16",
+    "@tailwindcss/typography": "^0.5.15",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.19.7",
+    "@types/papaparse": "^5.3.14",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/coverage-v8": "^2.1.9",
+    "autoprefixer": "^10.4.21",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
+    "eslint": "^8.56.0",
+    "jsdom": "^24.1.3",
+    "patch-package": "^8.0.1",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.16",
+    "typescript": "^5.3.3",
+    "vite": "^7.3.0",
+    "vite-plugin-pwa": "^1.2.0",
+    "vitest": "^2.1.9"
+  },
+  "overrides": {
+    "@tootallnate/once": "^3.0.1",
+    "minimatch": "^10.2.4",
+    "semver": "^7.7.4",
+    "tar": "^7.5.11",
+    "serialize-javascript": "^7.0.4"
+  },
+  "build": {
+    "appId": "com.pathlab.client",
+    "productName": "PathLab",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "package.json",
+      "node_modules/embedded-postgres/**/*",
+      "node_modules/@embedded-postgres/**/*",
+      "node_modules/pg/**/*",
+      "node_modules/async-exit-hook/**/*"
+    ],
+    "asarUnpack": [
+      "**/node_modules/embedded-postgres/**/*",
+      "**/node_modules/@embedded-postgres/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "server/dist/main",
+        "to": "server/main",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icon.png",
+      "category": "Science",
+      "extraResources": [
+        {
+          "from": "resources/redis-server",
+          "to": "redis-server"
+        }
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "resources/redis-server",
+          "to": "redis-server"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png",
+      "extraResources": [
+        {
+          "from": "resources/redis-server.exe",
+          "to": "redis-server.exe"
+        }
+      ]
+    }
+  }
+}

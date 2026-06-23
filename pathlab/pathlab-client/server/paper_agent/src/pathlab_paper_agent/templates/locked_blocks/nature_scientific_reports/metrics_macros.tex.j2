@@ -1,0 +1,5 @@
+{% if macro_lines -%}
+{{ macro_lines | join('\n') }}
+{% else -%}
+% No metric macros are available.
+{% endif -%}

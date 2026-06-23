@@ -1,0 +1,14 @@
+{
+  "metrics": {
+    "test_accuracy": 0.9123,
+    "test_auc": 0.9456,
+    "macro_f1": 0.8877
+  },
+  "per_class": {
+    "tumor_recall": 0.901,
+    "normal_recall": 0.874
+  },
+  "chart_paths": {
+    "roc": "/private/pathlab/logs/analysis/wsi_cls_fixture/20260504_010101/roc.png"
+  }
+}

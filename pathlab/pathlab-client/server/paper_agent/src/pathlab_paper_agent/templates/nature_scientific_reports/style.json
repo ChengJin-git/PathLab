@@ -1,0 +1,312 @@
+{
+  "template_id": "nature_scientific_reports",
+  "venue": "Nature Scientific Reports",
+  "format_family": "Nature Scientific Reports",
+  "document_class": "wlscirep",
+  "bibliography_style": "naturemag",
+  "section_order": [
+    "abstract",
+    "introduction",
+    "results",
+    "discussion",
+    "methods"
+  ],
+  "required_sections": [
+    "abstract",
+    "introduction",
+    "results",
+    "discussion",
+    "methods"
+  ],
+  "style_constraints": {
+    "double_blind": false,
+    "methods_after_discussion": true,
+    "requires_data_availability": true,
+    "unnumbered_sections": true,
+    "abstract_before_document": true,
+    "abstract_max_words": 200,
+    "abstract_no_references": true,
+    "abstract_unstructured": true,
+    "main_text_max_words_excluding_methods_refs_legends": 4500,
+    "results_before_methods": true,
+    "results_use_topical_subheadings": true,
+    "discussion_without_subheadings": true,
+    "display_items_max": 8,
+    "figure_width": "0.85\\linewidth",
+    "official_template_package": "Overleaf Scientific Reports template (wlscirep)"
+  },
+  "section_design": {
+    "abstract": {
+      "role": "Broad unstructured summary for a multidisciplinary Nature Portfolio reader.",
+      "target_words": "150-200",
+      "include": [
+        "one-sentence clinical or scientific context",
+        "clear study objective",
+        "high-level cohort and evaluation setting only when needed for credibility",
+        "main evidence-backed findings and their implication"
+      ],
+      "avoid": [
+        "references or citation placeholders",
+        "dense implementation details",
+        "long metric catalogs",
+        "overclaiming clinical deployment"
+      ],
+      "pathology_ai_emphasis": "State why the pathology problem matters before naming the model; keep technical detail subordinate to the finding."
+    },
+    "introduction": {
+      "role": "Clinical and scientific context that narrows to the study objective.",
+      "target_words": "700-1000",
+      "include": [
+        "disease or pathology workflow burden",
+        "why digital pathology or computational pathology is relevant",
+        "what current approaches cannot yet resolve",
+        "study gap stated in clinical/scientific terms",
+        "final paragraph with objective, hypothesis, and what is evaluated"
+      ],
+      "avoid": [
+        "a MICCAI-style exhaustive related-work taxonomy",
+        "algorithm-first motivation",
+        "detailed training protocol",
+        "results repeated in full"
+      ],
+      "pathology_ai_emphasis": "Use citations selectively to frame need, validation gap, and generalizability; do not create a separate Related Work section."
+    },
+    "results": {
+      "role": "Self-contained discovery narrative placed before Methods.",
+      "target_words": "1200-1800",
+      "include": [
+        "brief study design and cohort/task context before first finding",
+        "figure- and table-led subsections in logical order",
+        "primary performance with n, confidence intervals, and locked metrics",
+        "secondary analyses such as external validation, subgroup robustness, ablation, calibration, or interpretability when available",
+        "failure modes or boundary conditions when supported by evidence"
+      ],
+      "avoid": [
+        "method recipes better suited for Methods",
+        "unsupported comparisons to state of the art",
+        "raw metric values not grounded in evidence",
+        "discussion-level speculation"
+      ],
+      "pathology_ai_emphasis": "Each subsection should start with the biological or clinical question, then report the finding, then point to the relevant figure or table."
+    },
+    "discussion": {
+      "role": "Interpret findings, limitations, and generalizability without new results.",
+      "target_words": "800-1200",
+      "include": [
+        "principal findings in plain scientific language",
+        "relationship to prior pathology and AI work",
+        "clinical or biological interpretation",
+        "limitations in cohort composition, labels, scanners, staining, sites, and retrospective design",
+        "generalizability and deployment caveats",
+        "future validation or reproducibility needs"
+      ],
+      "avoid": [
+        "new metrics or unreported analyses",
+        "subheadings unless unavoidable",
+        "claims of clinical readiness without external/prospective evidence",
+        "repeating the full Results"
+      ],
+      "pathology_ai_emphasis": "Separate what the evidence supports from what remains a translational hypothesis."
+    },
+    "methods": {
+      "role": "Detailed reproducibility record after Discussion.",
+      "target_words": "1200-2200",
+      "include": [
+        "cohort sources, inclusion/exclusion criteria, slide preparation, scanner/stain details, and ethics when available",
+        "data splits, leakage controls, labels, annotation process, and pathologist review protocol",
+        "model architecture or algorithm, preprocessing, training, hyperparameters, and inference procedure",
+        "evaluation metrics, statistical tests, confidence intervals, sample sizes, and comparison protocol",
+        "external validation or subgroup analysis definitions",
+        "software, compute environment, random seeds, code availability, data availability, and LLM-assisted writing disclosure when relevant"
+      ],
+      "avoid": [
+        "headline claims without enough procedural detail",
+        "private paths, case identifiers, institutions, or PHI",
+        "moving result interpretation out of Results/Discussion",
+        "omitting reproducibility information for central code"
+      ],
+      "pathology_ai_emphasis": "Make cohort/model/evaluation choices auditable enough for another pathology AI group to reproduce the analysis."
+    }
+  },
+  "narrative_principles": {
+    "primary_reader": "scientifically broad reader with biomedical/pathology interest, not only ML reviewers",
+    "preferred_flow": "clinical context -> objective -> findings -> interpretation -> detailed reproducibility",
+    "tone": "measured, evidence-bounded, translational, and accessible",
+    "citation_style": "citations in Introduction and Discussion; no citations in Abstract; Results cite only when needed for dataset or comparator context",
+    "locked_evidence_policy": "metrics, figure/table references, and cohort facts must come from PathLab locked evidence and public artifacts"
+  },
+  "section_guidelines": {
+    "abstract": {
+      "purpose": "Summarize the study for a broad Scientific Reports readership before the main text.",
+      "recommended_length": "150-200 words, single paragraph.",
+      "must_include": [
+        "broad scientific or clinical context",
+        "study objective",
+        "brief method and evidence source",
+        "strongest supported finding through metric placeholders when useful",
+        "careful implication and scope"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "Do not use citations in the abstract.",
+      "metrics_policy": "Use metric placeholders for all numeric findings; keep numbers sparse.",
+      "figures_tables_policy": "Do not include figures or tables.",
+      "tone": "Accessible, declarative, and cautious rather than conference-pitch style.",
+      "must_avoid": [
+        "acronym-heavy opening sentences",
+        "unsupported clinical utility claims",
+        "raw metric numbers"
+      ]
+    },
+    "introduction": {
+      "purpose": "Establish scientific context, knowledge gap, and study objective.",
+      "recommended_length": "4-7 paragraphs.",
+      "must_include": [
+        "clinical/scientific motivation for WSI analysis",
+        "limitations of existing automation or validation practice",
+        "why evidence-locked reporting matters for reproducibility",
+        "clear statement of the study aim",
+        "brief description of what was evaluated"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "Use selected references for background and required citations from the literature draft.",
+      "metrics_policy": "Do not preview detailed metric values.",
+      "figures_tables_policy": "Avoid figures unless a ready overview figure is central to comprehension.",
+      "tone": "Broad, explanatory, and study-oriented.",
+      "must_avoid": [
+        "MICCAI-style contribution hype",
+        "overly compressed technical framing",
+        "results discussion"
+      ]
+    },
+    "results": {
+      "purpose": "Present findings before Methods in a self-contained Scientific Reports style.",
+      "recommended_length": "5-9 paragraphs or short result subsections.",
+      "must_include": [
+        "main empirical finding from locked results",
+        "dataset/evaluation context sufficient to understand the finding",
+        "primary table and all ready figures",
+        "external validation, calibration, or ablation findings only when locked",
+        "explicit distinction between observed findings and interpretation"
+      ],
+      "locked_inputs": [
+        "locked_blocks/results_block.tex"
+      ],
+      "citation_policy": "Use few citations; Results should primarily report this study's evidence.",
+      "metrics_policy": "All numeric findings must use metric placeholders; do not type raw values.",
+      "figures_tables_policy": "Include every ready manifest figure with its figure_id and path; tables must come only from table_paths.",
+      "tone": "Self-contained, factual, and readable for non-method specialists.",
+      "must_avoid": [
+        "methods-heavy implementation detail",
+        "unsupported causal interpretation",
+        "missing ready figures"
+      ]
+    },
+    "discussion": {
+      "purpose": "Interpret the study findings, limitations, and implications after Results.",
+      "recommended_length": "4-7 paragraphs.",
+      "must_include": [
+        "summary of principal findings without restating every number",
+        "interpretation relative to reproducibility and validation needs",
+        "limitations tied to cohort scope, evidence gaps, or missing external validation",
+        "practical implications stated cautiously",
+        "future work based on evidence gaps"
+      ],
+      "locked_inputs": [
+        "locked_blocks/evidence_gaps.tex"
+      ],
+      "citation_policy": "Use selected citations to contextualize findings with prior work.",
+      "metrics_policy": "Prefer qualitative references to Results; use placeholders only if repeating a key result is necessary.",
+      "figures_tables_policy": "Do not introduce new figures or tables unless already ready and not better placed in Results.",
+      "tone": "Reflective, balanced, and accessible.",
+      "must_avoid": [
+        "clinical deployment claims",
+        "generalization beyond evidence",
+        "new unreported results"
+      ]
+    },
+    "methods": {
+      "purpose": "Provide detailed reproducibility information after Discussion, following Scientific Reports conventions.",
+      "recommended_length": "Detailed enough for reproduction; can be longer than MICCAI methods.",
+      "must_include": [
+        "cohort/data source description from locked evidence",
+        "model architecture, preprocessing, and training/inference details from locked blocks",
+        "evaluation metrics, split protocol, and statistical procedures when available",
+        "privacy scrubbing and provenance controls",
+        "software/reproducibility details only if present in evidence"
+      ],
+      "locked_inputs": [
+        "locked_blocks/dataset_block.tex",
+        "locked_blocks/method_block.tex"
+      ],
+      "citation_policy": "Cite method and evaluation references where selected.",
+      "metrics_policy": "Do not report outcome values; describe metric definitions and procedures.",
+      "figures_tables_policy": "Dataset or protocol tables may appear if table_paths provide them.",
+      "tone": "Detailed, transparent, and reproducibility-oriented.",
+      "must_avoid": [
+        "conference-style compression that hides reproducibility details",
+        "rewriting private locked facts",
+        "unsupported software or parameter details"
+      ]
+    },
+    "experiments": {
+      "purpose": "If retained as a separate section, act as an evaluation-protocol bridge rather than a second Results section.",
+      "recommended_length": "2-4 paragraphs.",
+      "must_include": [
+        "evaluation design and task roles",
+        "dataset/split facts from locked evidence",
+        "baseline, ablation, and external-validation availability",
+        "metric definitions without values"
+      ],
+      "locked_inputs": [
+        "locked_blocks/dataset_block.tex"
+      ],
+      "citation_policy": "Use citations only for standard protocols or baselines.",
+      "metrics_policy": "Name metrics but do not report values.",
+      "figures_tables_policy": "Prefer tables from table_paths; avoid new figures unless ready.",
+      "tone": "Procedural and supplementary-style.",
+      "must_avoid": [
+        "duplicating Methods in full",
+        "interpreting results",
+        "invented baselines or external cohorts"
+      ]
+    },
+    "related_work": {
+      "purpose": "Provide concise prior-work context if the selected template keeps a separate Related Work section.",
+      "recommended_length": "2-4 concise paragraphs.",
+      "must_include": [
+        "relevant WSI/MIL literature",
+        "clinical validation or reproducibility literature",
+        "brief comparison to the present evidence-locked study"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "Use selected references and required citations; avoid unverified claims about prior work.",
+      "metrics_policy": "Do not present numeric prior-work comparisons unless locked evidence supports them.",
+      "figures_tables_policy": "No figures or tables.",
+      "tone": "Background-like and concise, because Scientific Reports often integrates related work into the Introduction.",
+      "must_avoid": [
+        "long conference-style taxonomy",
+        "uncited claims",
+        "novelty overclaim"
+      ]
+    },
+    "conclusion": {
+      "purpose": "End with the study's evidence-supported implication.",
+      "recommended_length": "1 short paragraph.",
+      "must_include": [
+        "principal supported finding",
+        "evidence-locked reporting contribution",
+        "careful implication for future validation"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "Usually no citations.",
+      "metrics_policy": "Do not introduce new metrics.",
+      "figures_tables_policy": "No figures or tables.",
+      "tone": "Plain, broad, and restrained.",
+      "must_avoid": [
+        "new claims",
+        "raw numbers",
+        "deployment promises"
+      ]
+    }
+  }
+}

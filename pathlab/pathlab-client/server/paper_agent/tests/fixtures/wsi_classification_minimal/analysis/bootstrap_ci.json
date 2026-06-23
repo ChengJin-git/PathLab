@@ -1,0 +1,4 @@
+{
+  "test_accuracy": {"mean": 0.9123, "ci_lower": 0.8421, "ci_upper": 0.9664},
+  "test_auc": {"mean": 0.9456, "ci_lower": 0.8912, "ci_upper": 0.9821}
+}

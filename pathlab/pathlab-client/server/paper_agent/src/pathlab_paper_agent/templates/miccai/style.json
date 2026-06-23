@@ -1,0 +1,294 @@
+{
+  "template_id": "miccai",
+  "venue": "MICCAI",
+  "format_family": "LNCS",
+  "document_class": "llncs",
+  "bibliography_style": "splncs04",
+  "section_order": [
+    "abstract",
+    "introduction",
+    "related_work",
+    "methods",
+    "experiments",
+    "results",
+    "discussion",
+    "conclusion"
+  ],
+  "required_sections": [
+    "abstract",
+    "introduction",
+    "methods",
+    "results",
+    "discussion"
+  ],
+  "style_constraints": {
+    "double_blind": true,
+    "compact_methods": true,
+    "max_references": 30,
+    "figure_width": "0.95\\linewidth",
+    "official_template_package": "Springer LNCS LaTeX2e Proceedings Templates",
+    "main_text_page_limit": 8,
+    "reference_page_limit": 2,
+    "searchable_pdf_required": true,
+    "template_modifications_allowed": false,
+    "data_use_declaration_required": true,
+    "abstract_word_count": {
+      "min": 150,
+      "max": 250
+    }
+  },
+  "venue_requirements": {
+    "source_profile": "MICCAI 2026 submission guidelines and Springer LNCS proceedings style",
+    "main_text_scope": "Title, abstract, keywords, main body, figures, tables, conclusion, and acknowledgments/disclaimer if present must fit within the main text page limit.",
+    "review_mode": "double_blind",
+    "format_policy": [
+      "Use the official MICCAI/LNCS template without margin, spacing, or author-block modifications.",
+      "Submit a searchable PDF; keep the manuscript self-contained for review.",
+      "Anonymize acknowledgments, links, repositories, and data-use statements when needed for double-blind review.",
+      "Declare data origin, license, and ethics/approval information when applicable, preferably in the experimental setup."
+    ],
+    "abstract_policy": {
+      "word_count_min": 150,
+      "word_count_max": 250,
+      "citations_allowed": false,
+      "required_move_order": [
+        "problem",
+        "method",
+        "experiments",
+        "results",
+        "conclusion"
+      ],
+      "new_claims_allowed": false
+    }
+  },
+  "miccai_pathology_writing_profile": {
+    "sampled_miccai_pathology_papers": 10,
+    "observed_moves": [
+      "Start from a clinical WSI or computational pathology bottleneck, then state the technical gap.",
+      "Introduce one compact method idea with a pipeline figure or algorithmic module instead of a broad survey.",
+      "Use experiments to define datasets, splits, baselines, metrics, and ablations before interpreting results.",
+      "Report results through tables and figures, including external validation or ablation only when supported.",
+      "Keep clinical translation claims cautious; reviewers scrutinize validation, reproducibility, and unsupported SOTA language."
+    ],
+    "pathology_topics_to_cover_when_relevant": [
+      "multiple instance learning for gigapixel WSIs",
+      "weak, self, or vision-language supervision under limited annotations",
+      "clinical and external validation evidence",
+      "reproducibility through code, splits, deterministic metrics, and evidence locks"
+    ]
+  },
+  "claim_discipline": {
+    "numeric_claims": "All numeric results must come through metric placeholders or locked result blocks; never type raw metric values.",
+    "citation_claims": "Use selected citation placeholders only; the abstract has no citations.",
+    "clinical_claims": "Avoid clinical deployment, real-world readiness, or broad generalization unless external evidence explicitly supports it.",
+    "sota_claims": "Use SOTA/outperforms/significant language only when baseline and statistical evidence exist in the evidence lock.",
+    "section_separation": "Experiments defines protocol; Results reports findings; Discussion interprets and limits claims."
+  },
+  "locked_block_requirements": {
+    "methods": [
+      "locked_blocks/method_block.tex"
+    ],
+    "experiments": [
+      "locked_blocks/dataset_block.tex"
+    ],
+    "results": [
+      "locked_blocks/results_block.tex",
+      "locked_blocks/metrics_macros.tex"
+    ],
+    "discussion": [
+      "locked_blocks/evidence_gaps.tex"
+    ],
+    "policy": "Do not rewrite locked block facts in prose; frame or interpret them with cautious MICCAI prose."
+  },
+  "section_guidelines": {
+    "abstract": {
+      "purpose": "Summarize the WSI study for a MICCAI/LNCS reader in one compact evidence-locked paragraph.",
+      "recommended_length": "150-250 words.",
+      "must_include": [
+        "clinical or computational pathology problem",
+        "one-sentence method summary grounded in the locked method evidence",
+        "cohort and evaluation setting only at a high level",
+        "strongest supported result through metric placeholders when available",
+        "bounded conclusion about what the evidence supports"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "No citations in the abstract.",
+      "metrics_policy": "Use metric placeholders for any numeric result; include only headline supported metrics.",
+      "figures_tables_policy": "Do not include figures or tables.",
+      "tone": "Dense, technical, and contribution-oriented.",
+      "must_avoid": [
+        "unsupported deployment claims",
+        "raw metric numbers",
+        "raw cohort counts not present in locked evidence",
+        "literature review detail"
+      ],
+      "word_count": {
+        "min": 150,
+        "max": 250
+      },
+      "required_move_order": [
+        "problem",
+        "method",
+        "experiments",
+        "results",
+        "conclusion"
+      ]
+    },
+    "introduction": {
+      "purpose": "Motivate the MICCAI contribution and lead to clear evidence-bounded claims.",
+      "recommended_length": "4-6 concise paragraphs.",
+      "must_include": [
+        "medical imaging or WSI motivation tied to a concrete pathology need",
+        "why weak supervision, MIL, or evidence-locked reporting is needed",
+        "clear gap in current model reporting, validation, or reproducibility practice",
+        "short overview of the proposed PathLab-backed approach",
+        "explicit contribution list phrased cautiously and supported by planned evidence"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "Use selected references for WSI/MIL/background and preserve required citations from the literature draft.",
+      "metrics_policy": "Avoid detailed results; only preview evaluation goals without numbers.",
+      "figures_tables_policy": "May refer to an overview figure if it is ready in the manifest; do not force a figure here.",
+      "tone": "Conference style: focused, problem-driven, and novelty-forward.",
+      "must_avoid": [
+        "long clinical tutorial",
+        "claims of clinical readiness",
+        "results interpretation better suited for Results or Discussion"
+      ]
+    },
+    "related_work": {
+      "purpose": "Position the method and evidence-locking choices against verified prior work.",
+      "recommended_length": "3-5 compact paragraphs.",
+      "must_include": [
+        "weakly supervised WSI or MIL methods",
+        "attention, prototype, graph, state-space, or vision-language model family most relevant to the run",
+        "clinical validation and external validation context",
+        "reproducibility context: code, data splits, deterministic evaluation, or evidence-locked reporting",
+        "what remains different about the PathLab evidence-locked workflow"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "Use only selected references; include all required related-work citations.",
+      "metrics_policy": "Do not compare numeric results unless those numbers are in locked evidence.",
+      "figures_tables_policy": "Usually no figures or tables.",
+      "tone": "Thematic rather than paper-by-paper; comparative but fair.",
+      "must_avoid": [
+        "uncited surveys",
+        "invented prior-work weaknesses",
+        "raw citation commands"
+      ]
+    },
+    "methods": {
+      "purpose": "Describe the PathLab method and reproducible implementation without rewriting locked facts.",
+      "recommended_length": "4-7 short subsections or paragraphs.",
+      "must_include": [
+        "model and end-to-end pipeline overview",
+        "the literal method locked block input for deterministic configuration facts",
+        "training, inference, feature extraction, or MIL aggregation workflow if available",
+        "privacy scrubbing and provenance handling",
+        "guardrail that factual configuration comes from locked blocks"
+      ],
+      "locked_inputs": [
+        "locked_blocks/method_block.tex"
+      ],
+      "citation_policy": "Cite method-family references where needed, but keep locked implementation facts uncited unless literature support is needed.",
+      "metrics_policy": "Do not report outcome metrics here.",
+      "figures_tables_policy": "May include a ready method overview figure; do not invent architectural diagrams.",
+      "tone": "Technical and implementation-oriented but compact for MICCAI page limits.",
+      "must_avoid": [
+        "duplicating locked block details in prose",
+        "private paths or task IDs",
+        "unsupported hyperparameters",
+        "results interpretation"
+      ]
+    },
+    "experiments": {
+      "purpose": "Specify dataset, split, baseline, and evaluation protocol separately from results interpretation.",
+      "recommended_length": "3-5 concise paragraphs.",
+      "must_include": [
+        "dataset, split, and external-validation status from locked evidence",
+        "evaluation metrics and model-selection protocol without raw values",
+        "baseline, ablation, and external-validation roles when available",
+        "statistical test, confidence interval, or calibration protocol only if present in evidence"
+      ],
+      "locked_inputs": [
+        "locked_blocks/dataset_block.tex"
+      ],
+      "citation_policy": "Use references only for standard evaluation protocols or baseline families when selected.",
+      "metrics_policy": "Name metrics but do not give values; values belong in Results through placeholders.",
+      "figures_tables_policy": "Include dataset/split tables only if present in table_paths.",
+      "tone": "Procedural and reproducibility-focused.",
+      "must_avoid": [
+        "result interpretation",
+        "invented ablations",
+        "invented external cohorts",
+        "claims about superiority or clinical impact"
+      ]
+    },
+    "results": {
+      "purpose": "Report the supported empirical findings with tables, figures, and metric placeholders.",
+      "recommended_length": "4-7 concise paragraphs organized by claim.",
+      "must_include": [
+        "main result from the locked results block",
+        "primary table when available",
+        "all ready figures from the manifest",
+        "external validation findings only when evidence exists",
+        "ablation findings only when evidence exists",
+        "uncertainty, CI, or statistical evidence when locked"
+      ],
+      "locked_inputs": [
+        "locked_blocks/results_block.tex"
+      ],
+      "citation_policy": "Citations are optional and should not distract from locked empirical evidence.",
+      "metrics_policy": "Every numeric result must use metric placeholders; never type raw numbers.",
+      "figures_tables_policy": "Every ready manifest figure must be included with its path and figure_id; tables must come only from table_paths.",
+      "tone": "Factual, concise, and claim-by-claim.",
+      "must_avoid": [
+        "unsupported comparisons",
+        "numbers outside metric placeholders",
+        "missing ready figures"
+      ]
+    },
+    "discussion": {
+      "purpose": "Interpret the results for a MICCAI audience while bounding all claims to evidence.",
+      "recommended_length": "3-5 paragraphs.",
+      "must_include": [
+        "interpretation of what the main evidence suggests",
+        "why evidence locking and provenance matter for MICCAI pathology review",
+        "limitations from missing evidence, cohort scope, split design, or external validation",
+        "cautious clinical relevance without deployment claims",
+        "future work tied to concrete missing evidence"
+      ],
+      "locked_inputs": [
+        "locked_blocks/evidence_gaps.tex"
+      ],
+      "citation_policy": "Use citations sparingly for clinical validation or reproducibility context.",
+      "metrics_policy": "Refer to reported results qualitatively or via metric placeholders only when necessary.",
+      "figures_tables_policy": "Usually no new figures or tables.",
+      "tone": "Balanced, reviewer-aware, and cautious.",
+      "must_avoid": [
+        "deployment-ready language",
+        "claiming generalization beyond available cohorts",
+        "repeating the full Results section",
+        "turning limitations into unsupported clinical promises"
+      ]
+    },
+    "conclusion": {
+      "purpose": "Close the MICCAI paper with a short evidence-bounded contribution and scope.",
+      "recommended_length": "1 short paragraph.",
+      "must_include": [
+        "short statement of the evidence-locked paper generation contribution",
+        "supported empirical takeaway",
+        "bounded future-facing implication for reproducible computational pathology"
+      ],
+      "locked_inputs": [],
+      "citation_policy": "Usually no citations.",
+      "metrics_policy": "Avoid new metrics; if needed, reuse placeholders already reported.",
+      "figures_tables_policy": "No figures or tables.",
+      "tone": "Short and precise.",
+      "must_avoid": [
+        "new claims",
+        "new numbers",
+        "broad clinical deployment promises"
+      ]
+    }
+  }
+}
