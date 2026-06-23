@@ -4,7 +4,7 @@ This document summarizes the **current implemented permission model** in PathLab
 
 Scope includes:
 - Role boundaries
-- Feature access (upload/data management/training/internal validation/external validation/AI chat/annotation/admin settings)
+- Feature access (upload/data management/training/internal validation/external validation/AI chat/annotation/AutoResearch PathScientist/admin settings)
 - Dataset visibility and grant/revoke behavior
 - Annotation (personal/shared/collaborator/finalize)
 - Annotation-to-new-dataset closed loop
@@ -33,6 +33,7 @@ Scope includes:
 ### 2.1 Frontend route gates
 - `/settings` uses `requireAdmin`: `pathlab/pathlab-client/src/renderer/src/App.tsx`.
 - `/task-setup` and `/results` use `requireGpu`: `pathlab/pathlab-client/src/renderer/src/App.tsx`, `pathlab/pathlab-client/src/renderer/src/App.tsx`.
+- `/pathscientist`, `/pathscientist/new`, and `/pathscientist/sessions/:id` are protected AutoResearch / PathScientist routes: `pathlab/pathlab-client/src/renderer/src/App.tsx`.
 - `ProtectedRoute` checks only login/admin/gpu flags and redirects accordingly: `pathlab/pathlab-client/src/renderer/src/components/ProtectedRoute.tsx`.
 
 ### 2.2 Backend is source-of-truth
@@ -138,6 +139,15 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
 
 ## 4.7 Admin settings
 - Backend admin-only for get/update/check-vllm/check-asr operations: `pathlab/pathlab-client/server/gateway/routes/settings.py`, `pathlab/pathlab-client/server/gateway/routes/settings.py`, `pathlab/pathlab-client/server/gateway/routes/settings.py`, `pathlab/pathlab-client/server/gateway/routes/settings.py`.
+
+## 4.8 AutoResearch / PathScientist
+- Added on `2026-06-23`; PathScientist is the implementation codename for the AutoResearch user feature.
+- Frontend routes are protected by login at `/pathscientist`, `/pathscientist/new`, and `/pathscientist/sessions/:id`: `pathlab/pathlab-client/src/renderer/src/App.tsx`.
+- Gateway exposes PathScientist under both `/pathscientist/...` and `/api/pathscientist/...` because `app_setup.py` registers each router directly and again with `/api` prefix: `pathlab/pathlab-client/server/gateway/app_setup.py`.
+- Session management endpoints require `current_active_user`; non-admin access is limited to sessions owned by that user: `pathlab/pathlab-client/server/gateway/routes/pathscientist.py`.
+- Dataset mounts supplied to a PathScientist session are resolved through PathLab dataset access checks before being passed into the runtime: `pathlab/pathlab-client/server/gateway/routes/pathscientist.py`.
+- Artifact download and SSE event endpoints use PathScientist-specific short-lived access tokens because browser download/event-stream clients cannot always attach normal headers: `pathlab/pathlab-client/server/gateway/routes/pathscientist.py`.
+- Compact history is indexed in `auto_research_sessions`, `auto_research_experiments`, and `auto_research_events`; full workspace/artifact state remains on disk under the configured PathScientist base directory: `pathlab/pathlab-client/server/backend/database/models.py`.
 
 ---
 
@@ -301,7 +311,7 @@ Code: `pathlab/pathlab-client/server/gateway/routes/results.py`, `pathlab/pathla
 
 ## 11) Practical Summary (Current State)
 
-- **Guest**: can upload and access permitted/public data; cannot perform GPU-required flows (training/external validation/internal analysis requiring GPU), cannot access admin settings. `check_dataset_gpu_permission` no longer has a dedicated `is_guest()` short-circuit — the DB query (`has_valid_gpu`) is the uniform gate, which still returns false for guest because no GPU grant is ever stored for guest accounts.
+- **Guest**: can upload and access permitted/public data; cannot perform GPU-required flows (training/external validation/internal analysis requiring GPU), cannot access admin settings. Authenticated guests can open PathScientist routes, but any dataset mounts still go through normal dataset access checks and downstream GPU work remains subject to the relevant execution/runtime constraints. `check_dataset_gpu_permission` no longer has a dedicated `is_guest()` short-circuit — the DB query (`has_valid_gpu`) is the uniform gate, which still returns false for guest because no GPU grant is ever stored for guest accounts.
 - **Pathologist**: can use GPU flows and non-admin product functions under dataset/task ownership/grant boundaries. Role-level `can_use_gpu()` bypasses the DB grant check, but `run_task_analysis` now enforces an additional `check_dataset_access_permission` check so that a revoked dataset grant blocks new analysis submissions even for pathologists.
 - **Admin**: full access, plus global settings and grant/revoke controls. Admin bypasses the dataset access check in `run_task_analysis`.
 
@@ -315,7 +325,7 @@ Key architectural point: permissions are a combination of **role capability** + 
 
 ## 12) Registered Routers Not Covered in Sections 1–11
 
-Gateway registers 17 top-level routers. The following are authenticated-user-only (require `current_active_user`) unless noted:
+Gateway registers 18 top-level routers. The following are authenticated-user-only (require `current_active_user`) unless noted:
 
 | Router | Auth level | Notes |
 |---|---|---|
@@ -326,6 +336,7 @@ Gateway registers 17 top-level routers. The following are authenticated-user-onl
 | `ai_tasks` | authenticated user | AI task list filtered to current user unless admin |
 | `training_options` | authenticated user | Read-only endpoint returning available extractor/aggregator options; no ownership logic |
 | `asr` | `?token=` query param (WebSocket) | See Section 13.3 for dedicated auth path |
+| `pathscientist` | authenticated user for session management; PathScientist access token for SSE/download | AutoResearch session owner/admin boundary; artifact/SSE token is minted from an authenticated session |
 
 `wsi_grants` is not a top-level router but an auxiliary module included by the `wsi` router. Grant creation (`POST /datasets/{dataset_id}/grants`) requires the caller to be **admin only** (`require_admin` dependency): `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py`. Dataset owners without admin role cannot create grants through this endpoint.
 

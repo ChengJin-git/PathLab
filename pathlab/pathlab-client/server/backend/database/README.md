@@ -38,10 +38,10 @@
 19. `dataset_stats`
 20. `dataset_grants`
 21. `permission_audit_logs`
-22. `auto_research_sessions`（PathScientist 自动化实验会话汇总）
-23. `auto_research_experiments`（PathScientist 每次实验 run 的 metrics 和摘要）
-24. `auto_research_events`（PathScientist 运行事件流，用于回放/审计）
-25. `knowhow_entries`（PathScientist/Auto Research 经验知识条目）
+22. `auto_research_sessions`（AutoResearch / PathScientist 自动化实验会话汇总）
+23. `auto_research_experiments`（AutoResearch / PathScientist 每次实验 run 的 metrics 和摘要）
+24. `auto_research_events`（AutoResearch / PathScientist 运行事件流，用于回放/审计）
+25. `knowhow_entries`（AutoResearch / PathScientist 经验知识条目）
 
 ### 认证表（`backend/auth/models.py`）
 
@@ -125,7 +125,9 @@
 
 这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注及协作审计等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。
 
-## PathScientist 自动化实验存储
+## PathScientist / AutoResearch 自动化实验存储
+
+AutoResearch 于 `2026-06-23` 加入 PathLab；PathScientist 是当前实现 codename，数据库层沿用 `auto_research_*` 表名记录 compact 历史。
 
 Web PathScientist 流程会 best-effort 写入现有 `auto_research_*` 表。当前目标是
 **DB 索引 + 磁盘权威**：
