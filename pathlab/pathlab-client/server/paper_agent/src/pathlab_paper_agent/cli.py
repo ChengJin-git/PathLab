@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import Optional
 
 from .bootstrap import configure_uploads_dir
-from .pipeline import complete_run, create_dev_run, run_stage
+from .pipeline import (
+    complete_run,
+    create_dev_run,
+    run_after_outline,
+    run_render_export,
+    run_stage,
+    run_until_outline,
+)
 from .regenerate import latest_regenerate_log_summary, regenerate_section
 
 
@@ -24,6 +31,18 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run the Phase 01 scaffold pipeline for one paper id.")
     run.add_argument("--paper-id", required=True)
     _add_common_runtime_args(run)
+
+    run_until_outline_parser = sub.add_parser("run-until-outline", help="Run through outline generation and stop for approval.")
+    run_until_outline_parser.add_argument("--paper-id", required=True)
+    _add_common_runtime_args(run_until_outline_parser)
+
+    run_after_outline_parser = sub.add_parser("run-after-outline", help="Resume a paper run after outline approval.")
+    run_after_outline_parser.add_argument("--paper-id", required=True)
+    _add_common_runtime_args(run_after_outline_parser)
+
+    render_export = sub.add_parser("render-export", help="Re-render final paper outputs and exports.")
+    render_export.add_argument("--paper-id", required=True)
+    _add_common_runtime_args(render_export)
 
     run_stage_parser = sub.add_parser("run-stage", help="Run a single stub stage and update manifest.json.")
     run_stage_parser.add_argument("--paper-id", required=True)
@@ -74,6 +93,21 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.command == "run":
         manifest = complete_run(args.paper_id, uploads_dir=uploads_dir, config_path=args.config)
+        print(f"{manifest.paper_id}: {manifest.current_stage.value} ({manifest.status.value})")
+        return 0
+
+    if args.command == "run-until-outline":
+        manifest = run_until_outline(args.paper_id, uploads_dir=uploads_dir, config_path=args.config)
+        print(f"{manifest.paper_id}: {manifest.current_stage.value} ({manifest.status.value})")
+        return 0
+
+    if args.command == "run-after-outline":
+        manifest = run_after_outline(args.paper_id, uploads_dir=uploads_dir, config_path=args.config)
+        print(f"{manifest.paper_id}: {manifest.current_stage.value} ({manifest.status.value})")
+        return 0
+
+    if args.command == "render-export":
+        manifest = run_render_export(args.paper_id, uploads_dir=uploads_dir, config_path=args.config)
         print(f"{manifest.paper_id}: {manifest.current_stage.value} ({manifest.status.value})")
         return 0
 

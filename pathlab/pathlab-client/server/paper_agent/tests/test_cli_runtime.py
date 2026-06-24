@@ -5,7 +5,52 @@ import zipfile
 
 import pytest
 
+from pathlab_paper_agent import cli
 from pathlab_paper_agent.pipeline import complete_run, create_dev_run, run_stage
+
+
+class _CliManifest:
+    paper_id = "paper_cli"
+
+    class current_stage:
+        value = "stage"
+
+    class status:
+        value = "status"
+
+
+@pytest.mark.parametrize(
+    ("command", "attr_name"),
+    [
+        ("run-until-outline", "run_until_outline"),
+        ("run-after-outline", "run_after_outline"),
+        ("render-export", "run_render_export"),
+    ],
+)
+def test_split_job_cli_commands_call_pipeline_functions(command, attr_name, tmp_path, monkeypatch):
+    calls = []
+    config_path = tmp_path / "config.json"
+
+    def fake_pipeline(paper_id, *, uploads_dir=None, config_path=None):
+        calls.append((paper_id, uploads_dir, config_path))
+        return _CliManifest()
+
+    monkeypatch.setattr(cli, attr_name, fake_pipeline)
+
+    rc = cli.main(
+        [
+            command,
+            "--paper-id",
+            "paper_cli",
+            "--uploads-dir",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert rc == 0
+    assert calls == [("paper_cli", str(tmp_path), str(config_path))]
 
 
 @pytest.mark.asyncio
