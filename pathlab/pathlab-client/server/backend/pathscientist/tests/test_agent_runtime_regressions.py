@@ -74,6 +74,45 @@ def test_failed_run_does_not_reuse_previous_metrics():
         )
 
 
+def test_run_experiment_passes_deduped_data_mounts_to_workspace(tmp_path):
+    from pathscientist.tools.run_experiment import RunExperimentAction, RunExperimentExecutor
+    from pathscientist.runtime.sandbox import SandboxResult
+
+    workspace_root = tmp_path / "autoresearch_sessions" / "session_abc"
+    output_root = workspace_root / "output"
+    current_contract = workspace_root / ".dataset" / "pathlab_registered" / "nanfang_contract"
+    stale_contract = tmp_path / "pathlab_datasets" / "session_inputs" / "old" / "nanfang_contract"
+    current_contract.mkdir(parents=True)
+    stale_contract.mkdir(parents=True)
+    output_root.mkdir(parents=True)
+    (workspace_root / "train.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+    captured = {}
+
+    class FakeWorkspace:
+        root = workspace_root
+
+        def run_script(self, *_, data_mounts=None, **__):
+            captured["data_mounts"] = dict(data_mounts or {})
+            return SandboxResult(exit_code=1, stdout="", stderr="failed")
+
+    class FakeConfig:
+        quick_check_timeout = 30
+        execution_timeout = 30
+        data_mounts = {
+            str(stale_contract): "/data/nanfang_contract",
+            str(current_contract): "/data/nanfang_contract",
+        }
+
+        def resolve_output(self, _ws):
+            return output_root
+
+    executor = RunExperimentExecutor(FakeWorkspace(), FakeConfig())
+    obs = executor(RunExperimentAction(script_path="train.py", timeout=10))
+
+    assert obs.exit_code != 0
+    assert captured["data_mounts"] == {str(current_contract): "/data/nanfang_contract"}
+
+
 # ---- Test 3: Metrics history ----
 
 def test_metrics_tool_reflects_real_history_after_commit_and_revert():

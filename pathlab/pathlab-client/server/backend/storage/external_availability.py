@@ -223,8 +223,7 @@ def record_many_from_scan(result: dict[str, Any]) -> None:
         _save_cache(cache)
 
 
-def roll_up_dataset_availability(wsi_ids: Iterable[str]) -> dict[str, Any]:
-    """Aggregate cached child WSI availability into a dataset-level status."""
+def _roll_up_ids_from_cache(wsi_ids: Iterable[str], wsi_cache: dict[str, Any]) -> dict[str, Any]:
     ids = [str(wsi_id) for wsi_id in wsi_ids]
     total_count = len(ids)
     available_count = 0
@@ -233,7 +232,14 @@ def roll_up_dataset_availability(wsi_ids: Iterable[str]) -> dict[str, Any]:
     known_count = 0
 
     for wsi_id in ids:
-        status = get_wsi_availability(wsi_id).get("status")
+        entry = wsi_cache.get(wsi_id) if isinstance(wsi_cache, dict) else None
+        if isinstance(entry, dict):
+            status = entry.get("status")
+            if status not in _VALID_STATUSES:
+                status = UNKNOWN
+        else:
+            status = UNKNOWN
+
         if status == AVAILABLE:
             available_count += 1
             known_count += 1
@@ -260,6 +266,29 @@ def roll_up_dataset_availability(wsi_ids: Iterable[str]) -> dict[str, Any]:
         "unavailable_count": unavailable_count,
         "unknown_count": total_count - known_count,
         "stale_count": stale_count,
+    }
+
+
+def roll_up_dataset_availability(wsi_ids: Iterable[str]) -> dict[str, Any]:
+    """Aggregate cached child WSI availability into a dataset-level status."""
+    with _lock:
+        cache = _load_cache()
+        wsi_cache = cache.get("wsi", {})
+
+    return _roll_up_ids_from_cache(wsi_ids, wsi_cache)
+
+
+def roll_up_datasets_availability(
+    wsi_ids_by_dataset: dict[str, Iterable[str]]
+) -> dict[str, dict[str, Any]]:
+    """Aggregate cached availability for multiple datasets with one cache read."""
+    with _lock:
+        cache = _load_cache()
+        wsi_cache = cache.get("wsi", {})
+
+    return {
+        str(dataset_id): _roll_up_ids_from_cache(wsi_ids, wsi_cache)
+        for dataset_id, wsi_ids in wsi_ids_by_dataset.items()
     }
 
 

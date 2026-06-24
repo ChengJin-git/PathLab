@@ -37,6 +37,7 @@ This file locks in:
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -98,6 +99,30 @@ def test_detect_hf_model_cache_lists_pathology_fms(tmp_path):
     assert 'get_extractor("H-Optimus-1")' in out
     # "Pre-installed" wording — no network implied.
     assert "OFFLINE" in out or "offline" in out.lower()
+
+
+def test_detect_hf_model_cache_defaults_to_pathlab_upload_checkpoints(tmp_path, monkeypatch):
+    """PathScientist context should inherit PathLab's extractor checkpoint root."""
+    uploads = tmp_path / "uploads"
+    ckpts_root = uploads / "extractor_checkpoints"
+    _make_fake_checkpoints(
+        ckpts_root,
+        [("UNI", "pytorch_model.bin", 1_100_000_000)],
+    )
+
+    class FakeConfig:
+        @staticmethod
+        def get_uploads_dir():
+            return uploads
+
+    fake_config_module = types.SimpleNamespace(Config=FakeConfig)
+    monkeypatch.setitem(sys.modules, "backend.common.config", fake_config_module)
+    monkeypatch.delenv("PATHLAB_CKPT_DIR", raising=False)
+
+    out = detect_hf_model_cache()
+
+    assert str(ckpts_root) in out
+    assert 'get_extractor("uni")' in out
 
 
 def test_detect_hf_model_cache_skips_missing_ckpt_dirs(tmp_path):

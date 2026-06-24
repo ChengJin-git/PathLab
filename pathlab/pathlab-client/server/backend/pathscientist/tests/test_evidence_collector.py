@@ -266,6 +266,43 @@ def test_collector_deduplicates_same_directory_artifacts(tmp_path):
     assert len(metrics_artifacts) == 1
 
 
+def test_collector_summarizes_patch_feature_cache_artifacts(tmp_path):
+    ws_dir = _make_workspace(tmp_path)
+    store = EvidenceStore(tmp_path / ".evidence")
+
+    run_dir = ws_dir / "output" / "runs" / "run_patch_cache"
+    cache_dir = run_dir / "patch_feature_cache" / "uni"
+    cache_dir.mkdir(parents=True)
+    (run_dir / "metrics.json").write_text('{"auc": 0.91}', encoding="utf-8")
+    (cache_dir / "train_cache.pt").write_bytes(b"train-cache")
+    (cache_dir / "val_cache.pt").write_bytes(b"val-cache")
+
+    collector = EvidenceCollector(
+        workspace_root=ws_dir, store=store, session_id="s1", primary_metric="auc"
+    )
+    collector.record_experiment_output(
+        run_id="run_patch_cache",
+        run_dir="output/runs/run_patch_cache",
+        exit_code=0,
+        stdout="done",
+        stderr="",
+        metrics={"auc": 0.91},
+        duration=30.0,
+    )
+
+    result = collector.finalize(committed=True, iteration=0)
+    assert result.skipped is False
+    record = store.load("run_patch_cache")
+
+    artifact_names = [a.name for a in record.artifacts]
+    assert "metrics.json" in artifact_names
+    assert "train_cache.pt" not in artifact_names
+    assert "val_cache.pt" not in artifact_names
+    cache_summaries = [a for a in record.artifacts if a.storage_mode == "cache_summary"]
+    assert len(cache_summaries) == 1
+    assert cache_summaries[0].name == "patch_feature_cache/ (2 files)"
+
+
 def test_collector_only_keeps_current_run_data_output_artifacts(tmp_path):
     """Shared DATA_OUTPUT_DIR should only keep files explicitly marked as current-run outputs."""
     ws_dir = _make_workspace(tmp_path)

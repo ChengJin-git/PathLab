@@ -13,6 +13,22 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def pathlab_extractor_checkpoint_root() -> Path:
+    """Return the PathLab extractor checkpoint root inherited by PathScientist."""
+    env_dir = os.environ.get("PATHLAB_CKPT_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser()
+
+    try:
+        from backend.common.config import Config
+
+        return Config.get_uploads_dir() / "extractor_checkpoints"
+    except Exception:
+        logger.debug("Could not resolve PathLab uploads checkpoint root", exc_info=True)
+
+    return Path(__file__).resolve().parents[1] / "ai" / "extractors" / "checkpoints"
+
+
 def detect_gpu() -> str:
     """Detect available GPUs via nvidia-smi."""
     try:
@@ -114,8 +130,8 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
 
     Pass ``ckpts_root`` to point at a different checkpoints directory
     (used by tests to fake the inventory). When ``None`` (default) the
-    function scans the real
-    ``domain/templates/common/extractors/checkpoints/`` sibling tree.
+    function scans PathLab's own
+    ``Config.get_uploads_dir()/extractor_checkpoints`` root.
 
     Motivated by session_9df3fa411bbf (2026-04-22), where the agent wrote
     ``AutoModel.from_pretrained("MahmoodLab/UNI2-h")`` and got
@@ -149,7 +165,11 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
     usable: list[tuple[str, str, str]] = []     # (display, key, size)
     missing: list[tuple[str, str]] = []         # (display, key) — dir present but no ckpt
 
-    if ckpts_root is not None and ckpts_root.is_dir():
+    explicit_ckpts_root = ckpts_root is not None
+    if ckpts_root is None:
+        ckpts_root = pathlab_extractor_checkpoint_root()
+
+    if ckpts_root.is_dir():
         for dir_name, display, key in extractors:
             d = ckpts_root / dir_name
             if not d.is_dir():
@@ -167,7 +187,7 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
                 missing.append((display, key))
                 continue
             usable.append((display, key, _format_size(size)))
-    elif ckpts_root is None:
+    elif not explicit_ckpts_root:
         try:
             from .domain.templates.common.extractors.checkpoint_manager import get_ckpt_path
         except ImportError:
@@ -218,9 +238,6 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
                 os.environ.pop("TRANSFORMERS_OFFLINE", None)
             else:
                 os.environ["TRANSFORMERS_OFFLINE"] = old_transformers_offline
-
-    if ckpts_root is None:
-        ckpts_root = Path(__file__).parent / "domain" / "templates" / "common" / "extractors" / "checkpoints"
 
     if not usable:
         return (

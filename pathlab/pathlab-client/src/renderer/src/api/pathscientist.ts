@@ -126,6 +126,26 @@ export async function getPathScientistRunDownloadUrl(sessionId: string, runId: s
   )
 }
 
+export async function downloadPathScientistRun(
+  sessionId: string,
+  runId: string,
+): Promise<{ filename: string }> {
+  const access = await mintPathScientistAccessToken(sessionId, {
+    purpose: 'run_download',
+    runId,
+  })
+  return downloadApiFile(
+    appendPathScientistAccessToken(
+      `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/download`,
+      access.token,
+    ),
+    `autoresearch-${sessionId}-${runId}.zip`,
+    undefined,
+    'Download AutoResearch run',
+    true,
+  )
+}
+
 export async function getPathScientistSessionDownloadUrl(sessionId: string): Promise<string> {
   const access = await mintPathScientistAccessToken(sessionId, { purpose: 'session_download' })
   return appendPathScientistAccessToken(

@@ -130,16 +130,27 @@ async def _attach_dataset_availability(
         else {}
     )
 
+    external_ids_by_dataset: dict[str, list[str]] = {}
     for item in datasets:
         dataset_id = item.get("dataset_id")
         refs = refs_by_dataset.get(str(dataset_id), []) if dataset_id else []
         external_wsi_ids = [str(ref["wsi_id"]) for ref in refs]
-        if not external_wsi_ids:
+        if external_wsi_ids and dataset_id:
+            external_ids_by_dataset[str(dataset_id)] = external_wsi_ids
+
+    availability_by_dataset = external_availability.roll_up_datasets_availability(
+        external_ids_by_dataset
+    )
+
+    for item in datasets:
+        dataset_id = item.get("dataset_id")
+        if not dataset_id:
             continue
-        item["availability"] = external_availability.roll_up_dataset_availability(
-            external_wsi_ids
-        )
-        item["availability"]["external_count"] = len(external_wsi_ids)
+        availability = availability_by_dataset.get(str(dataset_id))
+        if availability is None:
+            continue
+        item["availability"] = availability
+        item["availability"]["external_count"] = len(external_ids_by_dataset[str(dataset_id)])
 
 
 def _is_split_stratification_error(exc: Exception) -> bool:

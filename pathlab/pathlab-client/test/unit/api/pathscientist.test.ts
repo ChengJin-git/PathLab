@@ -17,6 +17,7 @@ import {
   startPathScientistSession,
   stopPathScientistSession,
   downloadPathScientistSession,
+  downloadPathScientistRun,
   sharePathScientistSession,
 } from '@renderer/api/pathscientist'
 
@@ -129,6 +130,51 @@ describe('pathscientist api', () => {
       'http://localhost:6100/pathscientist/sessions/abc/download?token=scoped-download-token',
     )
     expect(getPathScientistSessionShareUrl('abc')).toContain('/pathscientist/sessions/abc')
+  })
+
+  it('downloads a run with a scoped access token through fetch instead of page navigation', async () => {
+    setAuthToken('download-token')
+    const originalURL = globalThis.URL
+    const originalClick = HTMLAnchorElement.prototype.click
+    try {
+      vi.stubGlobal('URL', {
+        createObjectURL: vi.fn(() => 'blob:run-zip'),
+        revokeObjectURL: vi.fn(),
+      })
+      HTMLAnchorElement.prototype.click = vi.fn()
+      mockFetch
+        .mockResolvedValueOnce(ok({
+          token: 'scoped-run-token',
+          token_type: 'pathscientist_access',
+          purpose: 'run_download',
+          session_id: 'abc',
+          run_id: 'run_1',
+          expires_in: 300,
+        }))
+        .mockResolvedValueOnce(new Response(new Blob(['zip-content']), {
+          status: 200,
+          headers: new Headers({
+            'Content-Disposition': 'attachment; filename="pathscientist-abc-run_1.zip"',
+          }),
+        }))
+
+      const result = await downloadPathScientistRun('abc', 'run_1')
+
+      expect(result.filename).toBe('pathscientist-abc-run_1.zip')
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:6100/pathscientist/sessions/abc/access-token')
+      expect(JSON.parse(mockFetch.mock.calls[0][1]?.body as string)).toEqual({
+        purpose: 'run_download',
+        run_id: 'run_1',
+      })
+      expect(mockFetch.mock.calls[1][0]).toBe(
+        'http://localhost:6100/pathscientist/sessions/abc/runs/run_1/download?token=scoped-run-token',
+      )
+      expect(HTMLAnchorElement.prototype.click).toHaveBeenCalled()
+    } finally {
+      vi.stubGlobal('URL', originalURL)
+      HTMLAnchorElement.prototype.click = originalClick
+    }
   })
 
   describe('user-visible branding', () => {

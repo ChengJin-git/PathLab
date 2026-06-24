@@ -715,6 +715,27 @@ function acquisitionStageSummary(acquisition: PathScientistAcquisitionView | nul
   return acquisition?.summary || undefined
 }
 
+function isPathScientistStage(value: string): value is typeof PATHSCIENTIST_STAGE_ORDER[number] {
+  return PATHSCIENTIST_STAGE_ORDER.includes(value as typeof PATHSCIENTIST_STAGE_ORDER[number])
+}
+
+function latestStageHistoryStage(state: Record<string, unknown>): string {
+  const history = Array.isArray(state.stage_history) ? state.stage_history.map(asRecord) : []
+  for (const entry of [...history].reverse()) {
+    const stage = asString(entry.stage)
+    if (isPathScientistStage(stage)) return stage
+  }
+  return ''
+}
+
+function latestEventStage(visibleEvents: PathScientistEvent[]): string {
+  for (const event of [...visibleEvents].reverse()) {
+    const stage = eventStage(event)
+    if (isPathScientistStage(stage)) return stage
+  }
+  return ''
+}
+
 function buildStages(
   session: PathScientistSessionDetail | null,
   visibleEvents: PathScientistEvent[],
@@ -724,9 +745,9 @@ function buildStages(
 ): PathScientistStageView[] {
   const eventStages = visibleEvents.map(eventStage).filter(Boolean)
   const rawStage = asString(state.stage) || session?.stage || eventStages.at(-1) || 'intake'
-  const currentStage = PATHSCIENTIST_STAGE_ORDER.includes(rawStage as typeof PATHSCIENTIST_STAGE_ORDER[number])
+  const currentStage = isPathScientistStage(rawStage)
     ? rawStage
-    : eventStages.at(-1) || 'intake'
+    : latestStageHistoryStage(state) || latestEventStage(visibleEvents) || 'intake'
   const currentIndex = Math.max(0, PATHSCIENTIST_STAGE_ORDER.indexOf(currentStage as typeof PATHSCIENTIST_STAGE_ORDER[number]))
   const sessionStatus = derivePathScientistDisplayStatus(session, state)
   const successTerminal = isSuccessTerminalStatus(sessionStatus) || (rawStage === 'completed' && sessionStatus !== 'failed')

@@ -241,6 +241,7 @@ class EvidenceCollector:
         "feature_cache",
         "features_cache",
         "cached_features",
+        "patch_feature_cache",
         "patch_features",
         "patch_cache",
     })

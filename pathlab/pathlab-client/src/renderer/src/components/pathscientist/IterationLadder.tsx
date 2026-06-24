@@ -1,5 +1,5 @@
 import { Activity, BarChart3, Download, Loader2, Trophy, Wrench } from 'lucide-react'
-import { getPathScientistRunDownloadUrl } from '../../api/pathscientist'
+import { downloadPathScientistRun } from '../../api/pathscientist'
 import { cn } from '../../lib/utils'
 import { usePathScientistTranslation } from '../../lib/usePathScientistTranslation'
 import {
@@ -99,8 +99,7 @@ export default function IterationLadder({
   const downloadRun = async (runId: string) => {
     if (!sessionId) return
     try {
-      const url = await getPathScientistRunDownloadUrl(sessionId, runId)
-      window.location.assign(url)
+      await downloadPathScientistRun(sessionId, runId)
     } catch (error) {
       console.error('PathScientist run download failed:', error)
     }

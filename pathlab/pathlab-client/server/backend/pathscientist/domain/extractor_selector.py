@@ -41,7 +41,9 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = 1
+# Cache v1 stored broad task-level LLM picks and could pin future runs to
+# stale extractors after default policy changes. v2 invalidates those entries.
+CACHE_VERSION = 2
 _ALLOWED_CONFIDENCE = {"high", "medium", "low"}
 
 # Domain rules — fallback mappings. Only fire when both organ and target
