@@ -125,9 +125,7 @@ resolve_pathscientist_sandbox_image() {
     local candidate
     for candidate in \
         "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox-transformers.sif" \
-        "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif" \
-        "$SERVER_DIR/backend/auto_research_old/pathlab-sandbox-transformers.sif" \
-        "$SERVER_DIR/backend/auto_research_old/pathlab-sandbox.sif"; do
+        "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif"; do
         if [ -f "$candidate" ]; then
             echo "$candidate"
             return 0

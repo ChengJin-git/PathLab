@@ -2471,6 +2471,76 @@ def test_background_title_generation_updates_record_title():
     assert record.events[-1]["title"] == "LLM concise title"
 
 
+def test_session_title_prompt_requires_domain_and_task(monkeypatch):
+    route_module = load_route_module()
+    captured: dict[str, str] = {}
+
+    class FakeMessage:
+        def __init__(self, role, content):
+            self.role = role
+            self.content = content
+
+    class FakeTextContent:
+        def __init__(self, text):
+            self.text = text
+
+    fake_openhands_llm = types.ModuleType("openhands.sdk.llm")
+    fake_openhands_llm.Message = FakeMessage
+    fake_openhands_llm.TextContent = FakeTextContent
+    monkeypatch.setitem(sys.modules, "openhands.sdk.llm", fake_openhands_llm)
+
+    fake_llm_client = types.ModuleType("backend.pathscientist.llm_client")
+    fake_llm_client.make_llm_config = lambda **kwargs: SimpleNamespace()
+    fake_llm_client.build_chat_llm = lambda *args, **kwargs: object()
+
+    def fake_invoke_chat_llm(llm, *, messages, wire_api):
+        captured["prompt"] = messages[0].content[0].text
+        captured["wire_api"] = wire_api
+        return "Lung NSCLC classification"
+
+    fake_llm_client.invoke_chat_llm = fake_invoke_chat_llm
+    fake_llm_client.extract_text = lambda response: str(response)
+    monkeypatch.setitem(sys.modules, "backend.pathscientist.llm_client", fake_llm_client)
+
+    title = route_module._generate_session_title(
+        "Use TCGA-NSCLC as internal and Nanfang-NSCLC as external to train ABMIL."
+    )
+
+    assert title == "Lung NSCLC classification"
+    assert captured["wire_api"] == "completion"
+    prompt = captured["prompt"]
+    assert "organ" in prompt.lower()
+    assert "disease" in prompt.lower()
+    assert "task" in prompt.lower()
+    assert "action" in prompt.lower()
+    assert "Lung NSCLC classification" in prompt
+
+
+def test_fallback_session_title_includes_domain_and_task_for_nsclc_classification():
+    route_module = load_route_module()
+
+    title = route_module._fallback_session_title(
+        "Use TCGA-NSCLC as the internal training dataset and Nanfang-NSCLC as external validation. "
+        "Train an ABMIL model for classification."
+    )
+
+    assert "Lung" in title
+    assert "NSCLC" in title
+    assert "classification" in title
+
+
+def test_fallback_session_title_includes_domain_and_task_for_gastric_im():
+    route_module = load_route_module()
+
+    title = route_module._fallback_session_title(
+        "用 Chronic-gastritis 做 internal，PWH-GC-IM 做 external，训练一个 IM 分类模型"
+    )
+
+    assert any(token in title for token in ("Gastric", "Stomach", "Gastritis"))
+    assert "IM" in title
+    assert "classification" in title
+
+
 def test_stop_running_session_marks_record_interrupted():
     route_module = load_route_module()
     manager = route_module.PathScientistSessionManager()

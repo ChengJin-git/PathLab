@@ -46,7 +46,7 @@ def _resolve_apptainer_bin() -> str:
 
 _APPTAINER_BIN = _resolve_apptainer_bin()
 
-# Default .sif image: PathScientist-owned local state, with legacy fallback.
+# Default .sif image: PathScientist-owned local state.
 def _resolve_default_image(backend_dir: Path | None = None) -> str:
     """Resolve the default Apptainer image used when no image is passed."""
     env_image = os.getenv("PATHSCIENTIST_SANDBOX_IMAGE") or os.getenv("PATHLAB_SANDBOX_IMAGE")
@@ -56,15 +56,13 @@ def _resolve_default_image(backend_dir: Path | None = None) -> str:
     backend = backend_dir or Path(__file__).resolve().parents[2]
     client_root = backend.parents[1]
     pathscientist_image_dir = client_root / ".local" / "pathscientist" / "sandbox"
-    legacy_image_dir = backend / "auto_research_old"
 
-    for image_dir in (pathscientist_image_dir, legacy_image_dir):
-        transformers_image = image_dir / "pathlab-sandbox-transformers.sif"
-        if transformers_image.exists():
-            return str(transformers_image)
-        image = image_dir / "pathlab-sandbox.sif"
-        if image.exists():
-            return str(image)
+    transformers_image = pathscientist_image_dir / "pathlab-sandbox-transformers.sif"
+    if transformers_image.exists():
+        return str(transformers_image)
+    image = pathscientist_image_dir / "pathlab-sandbox.sif"
+    if image.exists():
+        return str(image)
 
     return str(pathscientist_image_dir / "pathlab-sandbox.sif")
 

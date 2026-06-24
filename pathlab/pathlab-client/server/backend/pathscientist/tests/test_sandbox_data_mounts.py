@@ -69,6 +69,29 @@ def test_default_image_prefers_pathscientist_local_sandbox(tmp_path, monkeypatch
     assert sandbox_module._resolve_default_image(backend_dir) == str(image)
 
 
+def test_default_image_does_not_fallback_to_auto_research_old(tmp_path, monkeypatch):
+    """PathScientist should not use the removed auto_research_old sandbox image."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    monkeypatch.delenv("PATHSCIENTIST_SANDBOX_IMAGE", raising=False)
+    monkeypatch.delenv("PATHLAB_SANDBOX_IMAGE", raising=False)
+
+    backend_dir = tmp_path / "pathlab-client" / "server" / "backend"
+    legacy_image_dir = backend_dir / "auto_research_old"
+    legacy_image_dir.mkdir(parents=True)
+    (legacy_image_dir / "pathlab-sandbox.sif").write_text("legacy image")
+
+    expected = (
+        backend_dir.parent.parent
+        / ".local"
+        / "pathscientist"
+        / "sandbox"
+        / "pathlab-sandbox.sif"
+    )
+
+    assert sandbox_module._resolve_default_image(backend_dir) == str(expected)
+
+
 def test_default_image_ignores_stale_env_image_when_local_sandbox_exists(tmp_path, monkeypatch):
     """A stale image path from an old worktree must not silently disable sandbox."""
     import pathscientist.runtime.sandbox as sandbox_module

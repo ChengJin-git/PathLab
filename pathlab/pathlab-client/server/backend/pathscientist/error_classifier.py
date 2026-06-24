@@ -1,7 +1,6 @@
 """Error classification for experiment failures.
 
 Classifies tracebacks into 12 types with targeted fix hints.
-Ported from auto_research_old/code_agent.py.
 """
 from __future__ import annotations
 

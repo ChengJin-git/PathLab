@@ -1206,35 +1206,64 @@ def _fallback_session_title(question: str) -> str:
         return "PathScientist session"
 
     lower = text.lower()
-    parts: list[str] = []
+    domains: list[str] = []
     for keyword, label in (
-        ("tcga", "TCGA"),
-        ("nsclc", "NSCLC"),
-        ("luad", "LUAD"),
-        ("lusc", "LUSC"),
-        ("gdc", "GDC"),
+        ("nsclc", "Lung NSCLC"),
+        ("luad", "Lung LUAD"),
+        ("lusc", "Lung LUSC"),
+        ("lung", "Lung"),
+        ("gc-im", "Gastric IM"),
+        ("gastric im", "Gastric IM"),
+        ("stomach", "Gastric"),
+        ("gastric", "Gastric"),
+        ("chronic-gastritis", "Chronic gastritis"),
         ("chronic gastritis", "Chronic gastritis"),
         ("gastritis", "Gastritis"),
-        ("gleason", "Gleason"),
-        ("isup", "ISUP"),
-        ("crc-msi", "CRC-MSI"),
+        ("crc-msi", "CRC MSI"),
+        ("crc", "CRC"),
         ("msi", "MSI"),
-        ("survival", "Survival"),
-        ("feature extraction", "Feature extraction"),
-        ("wsi", "WSI"),
-        ("mil", "MIL"),
-        ("patch", "Patch"),
-        ("grading", "grading"),
-        ("classification", "classification"),
+        ("gleason", "Prostate Gleason"),
+        ("isup", "Prostate ISUP"),
+        ("prostate", "Prostate"),
+        ("brca", "Breast BRCA"),
+        ("breast", "Breast"),
+        ("camelyon", "Breast metastasis"),
+        ("tcga", "TCGA"),
+        ("gdc", "GDC"),
     ):
-        if label == "Gastritis" and "Chronic gastritis" in parts:
-            continue
-        if keyword in lower and label not in parts:
-            parts.append(label)
-    if any(keyword in lower for keyword in ("data acquisition", "download", "metadata", "检索", "下载", "整理", "获取")):
-        if "data acquisition" not in parts:
-            parts.append("data acquisition")
+        if keyword in lower and label not in domains:
+            if label == "Gastric" and any(d.startswith("Gastric IM") for d in domains):
+                continue
+            if label == "Gastritis" and "Chronic gastritis" in domains:
+                continue
+            if label in {"Lung", "Gastric", "Prostate", "Breast"} and any(
+                d.startswith(label + " ") for d in domains
+            ):
+                continue
+            domains.append(label)
 
+    actions: list[str] = []
+    for keywords, label in (
+        (("data acquisition", "download", "metadata", "检索", "下载", "整理", "获取"), "data acquisition"),
+        (("feature extraction", "extract feature", "提取feature", "提feature", "特征提取"), "feature extraction"),
+        (("survival", "c-index", "cox", "生存"), "survival prediction"),
+        (("segment", "segmentation", "mask", "dice", "iou", "分割"), "segmentation"),
+        (("external", "validation", "test", "测试", "验证"), "external validation"),
+        (("classification", "classify", "classifier", "分类"), "classification"),
+        (("grading", "grade", "分级"), "grading"),
+        (("train", "training", "训练", "mil", "abmil", "transmil", "dtfd"), "model training"),
+    ):
+        if any(keyword in lower for keyword in keywords) and label not in actions:
+            actions.append(label)
+
+    if "classification" in actions and "model training" in actions:
+        actions.remove("model training")
+    if "external validation" in actions and "classification" in actions:
+        actions.remove("external validation")
+    if "grading" in actions and "classification" in actions:
+        actions.remove("classification")
+
+    parts = domains[:2] + actions[:1]
     if parts:
         return _clean_session_title(" ".join(parts))
     return _clean_session_title(text)
@@ -1262,6 +1291,12 @@ def _generate_session_title(question: str, config: Any | None = None) -> str:
         prompt = (
             "Summarize this computational pathology research request as a concise UI title.\n"
             "Return ONLY the title, no quotes, no markdown, no trailing period.\n"
+            "The title MUST show the pathology domain: organ or disease/cohort, plus the task/action.\n"
+            "Prefer the format '<organ/disease> <task/action>', for example:\n"
+            "- Lung NSCLC classification\n"
+            "- Gastric IM classification\n"
+            "- Prostate Gleason grading\n"
+            "- CRC MSI feature extraction\n"
             "Use English if the request mixes English technical terms; keep domain terms.\n"
             "Limit to 3-8 words and at most 72 characters.\n\n"
             f"Request:\n{question}"
