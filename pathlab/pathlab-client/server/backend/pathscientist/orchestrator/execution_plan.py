@@ -90,7 +90,7 @@ class ExecutionPlan:
 
 _FEATURE_CONSUMER_TASKS = {"mil_classification", "survival_analysis"}
 _PATCH_READY_STATUSES = {"patch_features_ready", "patch_images_ready"}
-DEFAULT_FEATURE_EXTRACTOR = "uni2"
+DEFAULT_FEATURE_EXTRACTOR = "virchow2"
 _FEATURE_EXTRACTOR_ALIASES = {
     "UNI2": "uni2",
     "UNI": "uni",

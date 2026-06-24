@@ -3058,6 +3058,27 @@ def _pathlab_dataset_slug(name: str, dataset_id: str) -> str:
     return slug[:96]
 
 
+def _pathlab_workspace_scope(workspace_root: str | Path) -> str:
+    import re
+
+    path = Path(workspace_root)
+    for part in reversed(path.parts):
+        if part.startswith("session_"):
+            raw = part
+            break
+    else:
+        raw = path.name or uuid4().hex
+    scope = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._-")
+    return (scope or uuid4().hex)[:96]
+
+
+def _pathlab_registered_container_paths(slug: str, workspace_root: str | Path) -> tuple[str, str]:
+    clean_slug = str(slug or "dataset").strip("/") or "dataset"
+    scope = _pathlab_workspace_scope(workspace_root)
+    data_container = f"/data/pathscientist_sessions/{scope}/{clean_slug}"
+    return data_container, f"{data_container}_contract"
+
+
 def _safe_pathlab_slide_id(value: str) -> str:
     import re
 
@@ -3341,8 +3362,10 @@ def _resolve_pathlab_dataset_for_acquisition_factory(config, workspace_root: Pat
                 for row in slides
             ]
             slug = _pathlab_dataset_slug(getattr(dataset, "name", ""), dataset_id)
-            data_container = f"/data/{slug}"
-            contract_container = f"{data_container}_contract"
+            data_container, contract_container = _pathlab_registered_container_paths(
+                slug,
+                workspace_root_arg,
+            )
             return _build_pathlab_registered_dataset_contract(
                 dataset=dataset,
                 slides=slide_objects,

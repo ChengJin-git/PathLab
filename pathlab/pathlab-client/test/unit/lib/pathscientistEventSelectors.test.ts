@@ -820,6 +820,66 @@ describe('pathscientist event selectors', () => {
     expect(view.runSummary.totalDurationLabel).toBe('57s')
   })
 
+  it('marks the last progressed stage as error when a session is interrupted', () => {
+    const session = {
+      session_id: 's-interrupted-execution',
+      title: 'Interrupted MIL run',
+      question: 'Train a model and validate externally.',
+      status: 'interrupted',
+      stage: 'interrupted',
+      state: {
+        stage: 'interrupted',
+        stage_history: [
+          { stage: 'intake', started_at: 100, ended_at: 101, duration_sec: 1 },
+          { stage: 'grounding', started_at: 101, ended_at: 111, duration_sec: 10 },
+          { stage: 'acquisition', started_at: 111, ended_at: 123, duration_sec: 12 },
+          { stage: 'pre_execution_ready', started_at: 123, ended_at: 137, duration_sec: 14 },
+          { stage: 'execution', started_at: 137, ended_at: 150, duration_sec: 13 },
+        ],
+      },
+      events: [
+        { kind: 'session', ts: 100, status: 'running', stage: 'intake', summary: 'Session started' },
+        { kind: 'state', ts: 150, status: 'interrupted', state: { stage: 'interrupted' } },
+      ],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, session.events)
+
+    expect(view.stages.find((stage) => stage.id === 'intake')?.status).toBe('complete')
+    expect(view.stages.find((stage) => stage.id === 'pre_execution_ready')?.status).toBe('complete')
+    expect(view.stages.find((stage) => stage.id === 'execution')?.status).toBe('error')
+    expect(view.stages.find((stage) => stage.id === 'review')?.status).toBe('pending')
+  })
+
+  it('marks the last progressed stage as error when a session fails', () => {
+    const session = {
+      session_id: 's-failed-acquisition',
+      title: 'Failed acquisition run',
+      question: 'Download data and train a model.',
+      status: 'failed',
+      stage: 'failed',
+      state: {
+        stage: 'failed',
+        stage_history: [
+          { stage: 'intake', started_at: 100, ended_at: 103, duration_sec: 3 },
+          { stage: 'grounding', started_at: 103, ended_at: 115, duration_sec: 12 },
+          { stage: 'acquisition', started_at: 115, ended_at: 124, duration_sec: 9 },
+        ],
+      },
+      events: [
+        { kind: 'session', ts: 100, status: 'running', stage: 'intake', summary: 'Session started' },
+        { kind: 'state', ts: 124, status: 'failed', state: { stage: 'failed' } },
+      ],
+    } satisfies PathScientistSessionDetail
+
+    const view = buildPathScientistExecutionView(session, session.events)
+
+    expect(view.stages.find((stage) => stage.id === 'intake')?.status).toBe('complete')
+    expect(view.stages.find((stage) => stage.id === 'grounding')?.status).toBe('complete')
+    expect(view.stages.find((stage) => stage.id === 'acquisition')?.status).toBe('error')
+    expect(view.stages.find((stage) => stage.id === 'execution')?.status).toBe('pending')
+  })
+
   it('summarizes stage-history-only checkpoints instead of showing zero-event fallbacks', () => {
     const events: PathScientistEvent[] = [
       {

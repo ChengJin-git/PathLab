@@ -980,6 +980,185 @@ def test_classify_pathlab_mount_roles_keeps_chinese_internal_dataset_internal(tm
     assert "external" not in roles
 
 
+def test_classify_pathlab_mount_roles_does_not_promote_unmentioned_external_named_dataset(tmp_path):
+    route_module = load_route_module()
+    internal_dir = tmp_path / "tcga_nsclc_fcd42d36_contract"
+    requested_external_dir = tmp_path / "nanfang_nsclc_cc7d5b75_contract"
+    unrelated_external_named_dir = tmp_path / "cervical_cytology_external_validation_f97df65c_contract"
+    for view_dir, dataset_name in (
+        (internal_dir, "TCGA-NSCLC"),
+        (requested_external_dir, "Nanfang-NSCLC"),
+        (unrelated_external_named_dir, "Cervical Cytology External Validation"),
+    ):
+        view_dir.mkdir()
+        (view_dir / "dataset_manifest.json").write_text(
+            json.dumps({"dataset_name": dataset_name}),
+            encoding="utf-8",
+        )
+
+    roles = route_module._classify_pathlab_mount_roles(
+        "Use TCGA-NSCLC as the internal training dataset. Use Nanfang-NSCLC as the external validation dataset.",
+        {
+            str(internal_dir): "/data/tcga_nsclc_fcd42d36_contract",
+            str(unrelated_external_named_dir): "/data/cervical_cytology_external_validation_f97df65c_contract",
+            str(requested_external_dir): "/data/nanfang_nsclc_cc7d5b75_contract",
+        },
+    )
+
+    assert roles.get("internal", {}).get("dataset_name") == "TCGA-NSCLC"
+    assert roles.get("external", {}).get("dataset_name") == "Nanfang-NSCLC"
+    assert roles.get("external", {}).get("container") == "/data/nanfang_nsclc_cc7d5b75_contract"
+
+
+def test_create_session_uses_llm_roles_before_role_fallback(monkeypatch, tmp_path):
+    route_module = load_route_module()
+    registry_dir = tmp_path / "registry"
+    registry_dir.mkdir()
+    route_module._gateway_session_registry_path = (
+        lambda: registry_dir / route_module.GATEWAY_SESSION_REGISTRY
+    )
+    route_module._queue_session_title_generation = lambda record, config: None
+    route_module._scan_persisted_conversations = lambda *, curated_only=False: []
+    route_module._resolve_pathscientist_base_dir = lambda: tmp_path / "pathscientist-base"
+
+    dataset_specs = {
+        "tcga": ("TCGA-NSCLC", "fcd42d36", "LUAD"),
+        "nanfang": ("Nanfang-NSCLC", "cc7d5b75", "LUAD"),
+        "cervical": ("Cervical Cytology External Validation", "f97df65c", "negative"),
+    }
+    roots: dict[str, Path] = {}
+    slides_by_dataset: dict[str, list[SimpleNamespace]] = {}
+    for dataset_id, (name, _suffix, label) in dataset_specs.items():
+        root = tmp_path / name
+        wsi_dir = root / "WSIs"
+        features_dir = root / "features" / "virchow2"
+        wsi_dir.mkdir(parents=True)
+        features_dir.mkdir(parents=True)
+        roots[dataset_id] = root
+        slides = []
+        for idx, split in enumerate(["train", "train", "val", "test"], start=1):
+            source = wsi_dir / f"{dataset_id}-{idx}.svs"
+            source.write_text("slide", encoding="utf-8")
+            (features_dir / f"{dataset_id}-{idx}.pt").write_bytes(b"pt")
+            slides.append(
+                SimpleNamespace(
+                    wsi_id=f"{dataset_id}-{idx}",
+                    wsi_path=str(source),
+                    original_filename=source.name,
+                    label=label if idx % 2 else "LUSC",
+                    split=split,
+                )
+            )
+        slides_by_dataset[dataset_id] = slides
+
+    dataset_rows = [
+        {"dataset_id": "tcga", "dataset_name": "TCGA-NSCLC", "data_type": "wsi", "labels": {"LUAD": 2, "LUSC": 2}},
+        {"dataset_id": "nanfang", "dataset_name": "Nanfang-NSCLC", "data_type": "wsi", "labels": {"LUAD": 2, "LUSC": 2}},
+        {
+            "dataset_id": "cervical",
+            "dataset_name": "Cervical Cytology External Validation",
+            "data_type": "wsi",
+            "labels": {"negative": 2, "LUSC": 2},
+        },
+    ]
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return []
+
+    loaded_dataset_ids = []
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        loaded_dataset_ids.append(dataset_id)
+        name, _suffix, _label = dataset_specs[dataset_id]
+        return SimpleNamespace(
+            dataset_id=dataset_id,
+            name=name,
+            user_id="user-dataset",
+            is_public=True,
+            parent_dataset_id=None,
+            source_organ="lung",
+            data_type="wsi",
+        )
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_datasets(db, **kwargs):
+            return dataset_rows if kwargs.get("data_type") == "wsi" else []
+
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            return slides_by_dataset[dataset_id]
+
+    def fake_llm(prompt):
+        assert "Cervical Cytology External Validation" in prompt
+        return json.dumps(
+            {
+                "matches": [
+                    {"dataset_id": "tcga", "role": "internal", "confidence": "high", "reason": "training cohort"},
+                    {"dataset_id": "nanfang", "role": "external", "confidence": "high", "reason": "external validation cohort"},
+                ]
+            }
+        )
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.auth.dependencies":
+            return SimpleNamespace(
+                get_dataset_with_access=fake_get_dataset_with_access,
+                get_permitted_dataset_ids=fake_get_permitted_dataset_ids,
+            )
+        if name == "backend.database.repositories":
+            return SimpleNamespace(WSIRepository=FakeWSIRepository)
+        return real_import(name, globals, locals, fromlist, level)
+
+    captured_configs = []
+    manager = route_module.PathScientistSessionManager()
+    manager.create_runner = lambda config, question, emit: captured_configs.append(config) or {"stage": "completed"}
+    route_module._SESSION_MANAGER = manager
+    disable_persistence(route_module)
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+    monkeypatch.setattr(route_module, "_pathscientist_dataset_match_llm_caller", lambda: fake_llm)
+    monkeypatch.setattr(
+        route_module,
+        "_match_pathlab_datasets_from_question",
+        lambda question, datasets: ["tcga", "nanfang", "cervical"],
+    )
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module, user_id="user-dataset")
+    response = TestClient(app).post(
+        "/pathscientist/sessions",
+        json={
+            "question": "Use TCGA-NSCLC as the internal training dataset. Use Nanfang-NSCLC as the external validation dataset.",
+        },
+    )
+
+    assert response.status_code == 200
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not captured_configs:
+        time.sleep(0.01)
+    assert loaded_dataset_ids == ["tcga", "nanfang"]
+    contract = captured_configs[0].external_test_contract
+    assert contract["external_pathlab_uploads_dir"].startswith("/data/nanfang_nsclc")
+    assert contract["external_features_dir"].startswith("/data/nanfang_nsclc")
+    assert contract["external_labels_file"].startswith("/data/nanfang_nsclc")
+    assert "cervical" not in json.dumps(contract).lower()
+    internal = next(item for item in contract["datasets"] if item["role"] == "internal")
+    external = next(item for item in contract["datasets"] if item["role"] == "external")
+    assert internal["dataset_name"] == "TCGA-NSCLC"
+    assert external["dataset_name"] == "Nanfang-NSCLC"
+
+
 def test_resolve_pathlab_dataset_mounts_matches_question_dataset_name(monkeypatch, tmp_path):
     route_module = load_route_module()
     route_module._resolve_pathscientist_base_dir = lambda: tmp_path / "pathscientist-base"
@@ -3606,6 +3785,101 @@ def test_run_zip_for_model_run_includes_linked_external_test_artifacts(tmp_path)
             assert json.loads(archive.read("artifacts/external_test/run_external/external_test_report.json")) == {
                 "external_test": {"auc": 0.726, "accuracy": 0.784}
             }
+    finally:
+        Path(zip_path).unlink(missing_ok=True)
+
+
+def test_run_zip_for_model_run_excludes_feature_cache_artifacts(tmp_path):
+    route_module = load_route_module()
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "zip-feature-cache")
+    run_id = "run_patch"
+    output_run_dir = workspace / "output" / "runs" / run_id
+    output_run_dir.mkdir(parents=True)
+    (output_run_dir / "best_model.pth").write_bytes(b"model-bytes")
+    (output_run_dir / "metrics.json").write_text(json.dumps({"auc": 0.91}), encoding="utf-8")
+    (output_run_dir / "run_metadata.json").write_text(
+        json.dumps({"run_id": run_id, "quick_check": False}),
+        encoding="utf-8",
+    )
+    (output_run_dir / "train.log").write_text("epoch 1 auc=0.91\n", encoding="utf-8")
+    cache_file = output_run_dir / "patch_feature_cache" / "uni" / "train_cache.pt"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(b"feature-cache-bytes")
+
+    evidence_run_dir = workspace / ".evidence" / "runs" / run_id
+    (evidence_run_dir / "artifacts").mkdir(parents=True)
+    (evidence_run_dir / "record.json").write_text(
+        json.dumps({
+            "run_id": run_id,
+            "run_dir": f"output/runs/{run_id}",
+            "metrics": {"auc": 0.91},
+            "committed": True,
+            "model_path": str(output_run_dir / "best_model.pth"),
+            "artifacts": [
+                {
+                    "name": "best_model.pth",
+                    "path": f"output/runs/{run_id}/best_model.pth",
+                    "storage_mode": "copy",
+                },
+                {
+                    "name": "metrics.json",
+                    "path": f"output/runs/{run_id}/metrics.json",
+                    "storage_mode": "copy",
+                },
+                {
+                    "name": "run_metadata.json",
+                    "path": f"output/runs/{run_id}/run_metadata.json",
+                    "storage_mode": "manifest",
+                },
+                {
+                    "name": "train.log",
+                    "path": f"output/runs/{run_id}/train.log",
+                    "storage_mode": "manifest",
+                },
+                {
+                    "name": "train_cache.pt",
+                    "path": f"output/runs/{run_id}/patch_feature_cache/uni/train_cache.pt",
+                    "storage_mode": "manifest",
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+    record = route_module.SessionRecord(
+        session_id="s1",
+        conversation_id="",
+        question="q",
+        model="gpt-5.5",
+        status="completed",
+        stage="completed",
+        state={
+            "best_run_id": run_id,
+            "run_history": [
+                {
+                    "run_id": run_id,
+                    "committed": True,
+                    "model_path": str(output_run_dir / "best_model.pth"),
+                    "metrics": {"auc": 0.91},
+                }
+            ],
+        },
+    )
+
+    zip_path = route_module._build_run_artifact_zip(record, workspace, run_id)
+
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            names = set(archive.namelist())
+            assert "artifacts/best_model.pth" in names
+            assert "artifacts/metrics.json" in names
+            assert "artifacts/run_metadata.json" in names
+            assert "artifacts/train.log" in names
+            assert not any("patch_feature_cache" in name for name in names)
+            assert "artifacts/train_cache.pt" not in names
+            assert not any(name.startswith("artifacts/best_model-") for name in names)
+            assert not any(name.startswith("artifacts/metrics-") for name in names)
+            assert not any(name.startswith("artifacts/run_metadata-") for name in names)
+            assert not any(name.startswith("artifacts/train-") for name in names)
     finally:
         Path(zip_path).unlink(missing_ok=True)
 

@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from pathscientist.domain.extractor_selector import (
+    CACHE_VERSION,
     FeatureExtractorSelector,
     detect_explicit_feature_extractor,
 )
@@ -21,12 +22,17 @@ _CATALOG = {
 }
 
 
-def _write_cached_pick(tmp_path: Path, *, name: str = "UNI") -> Path:
+def _write_cached_pick(
+    tmp_path: Path,
+    *,
+    name: str = "UNI",
+    version: int = CACHE_VERSION,
+) -> Path:
     cache_path = tmp_path / "extractor_choice_cache.json"
     cache_path.write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": version,
                 "entries": {
                     "lung|nsclc_subtype|mil_classification": {
                         "name": name.lower(),
@@ -99,3 +105,26 @@ def test_multiple_explicit_extractors_do_not_freeze_single_extractor(
 
     assert selection.name == "uni"
     assert selection.source == "cache"
+
+
+def test_legacy_extractor_cache_does_not_override_current_default(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("PATHSCIENTIST_FEATURE_EXTRACTOR", raising=False)
+    selector = FeatureExtractorSelector(
+        llm_parser=None,
+        catalog=_CATALOG,
+        cache_path=_write_cached_pick(tmp_path, name="UNI", version=1),
+    )
+
+    selection = selector.select(
+        task_profile={
+            "organ": "lung",
+            "prediction_target": "nsclc_subtype",
+            "task_type": "mil_classification",
+        }
+    )
+
+    assert selection.name == "virchow2"
+    assert selection.canonical == "Virchow2"
+    assert selection.source == "default"

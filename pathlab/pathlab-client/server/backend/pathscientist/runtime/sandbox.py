@@ -27,6 +27,11 @@ from .kaggle_auth import (
 
 logger = logging.getLogger(__name__)
 
+try:
+    from backend.common.config import Config as _PathLabConfig
+except Exception:  # pragma: no cover - import can fail in isolated unit tests
+    _PathLabConfig = None
+
 # Apptainer binary — resolved once at import time.
 def _resolve_apptainer_bin() -> str:
     """Resolve apptainer from env, PATH, then the legacy cluster module path."""
@@ -66,6 +71,8 @@ def _resolve_default_image(backend_dir: Path | None = None) -> str:
 
 _DEFAULT_IMAGE = _resolve_default_image()
 _KAGGLE_CONTAINER_CONFIG_DIR = "/kaggle"
+_CGROUP_DISABLE_VALUES = {"0", "false", "no", "off", "disabled"}
+_CGROUP_FORCE_VALUES = {"1", "true", "yes", "on", "enabled", "force"}
 
 # Patterns that signal a fatal error within the first N seconds.
 # Compiled into a single regex so per-line matching is O(1) instead of O(patterns).
@@ -95,6 +102,46 @@ def _validate_workspace_relative_script_path(script_path: str) -> str:
 def _resolve_kaggle_config_dir() -> Path | None:
     """Return the host Kaggle config dir to expose to the sandbox, if any."""
     return resolve_kaggle_config_dir()
+
+
+def _pathlab_extractor_checkpoint_root() -> Path | None:
+    """Resolve PathLab's extractor checkpoint root for PathScientist sandboxes."""
+    env_dir = os.getenv("PATHLAB_CKPT_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir).expanduser()
+
+    if _PathLabConfig is not None:
+        try:
+            return _PathLabConfig.get_uploads_dir() / "extractor_checkpoints"
+        except Exception:
+            logger.debug("Could not resolve PathLab uploads checkpoint root", exc_info=True)
+
+    try:
+        backend_dir = Path(__file__).resolve().parents[2]
+        return backend_dir / "ai" / "extractors" / "checkpoints"
+    except Exception:
+        return None
+
+
+def _resource_cgroups_available(setting: str | None = None) -> bool:
+    """Return whether Apptainer resource-limit flags are safe to use."""
+    raw_setting = (
+        setting
+        if setting is not None
+        else os.getenv("PATHSCIENTIST_SANDBOX_CGROUPS", "auto")
+    )
+    cgroups_setting = str(raw_setting or "auto").strip().lower()
+    if cgroups_setting in _CGROUP_DISABLE_VALUES:
+        return False
+    if cgroups_setting in _CGROUP_FORCE_VALUES:
+        return True
+
+    required_files = [
+        Path("/sys/fs/cgroup/cgroup.controllers"),
+        Path("/sys/fs/cgroup/cpu.max"),
+        Path("/sys/fs/cgroup/memory.max"),
+    ]
+    return all(path.exists() for path in required_files)
 
 
 def _symlink_chain_mounts(link_path: Path, *, max_depth: int = 32) -> list[Path]:
@@ -194,6 +241,78 @@ def _dedupe_mounts(mounts: list[Path]) -> list[Path]:
         seen.add(key)
         out.append(mount)
     return out
+
+
+def _normalized_container_mount(path_text: str) -> str:
+    text = str(path_text or "").strip()
+    if not text:
+        return ""
+    return text.rstrip("/") or "/"
+
+
+def _path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _data_mount_preference_score(host_path: Path, workspace_dir: Path) -> int:
+    """Rank duplicate container-target mounts by freshness and locality."""
+    host_text = str(host_path)
+    score = 0
+    if _path_is_relative_to(host_path, workspace_dir):
+        score += 100
+    if "/.dataset/pathlab_registered/" in host_text:
+        score += 50
+    if "/pathlab_datasets/session_inputs/" in host_text:
+        score -= 50
+    return score
+
+
+def _dedupe_data_mounts_by_container_target(
+    data_mounts: dict[str, str] | None,
+    *,
+    workspace_dir: Path,
+) -> list[tuple[str, str]]:
+    """Return data mounts with one host path per container target.
+
+    PathScientist can carry a stale session_inputs contract and a freshly
+    generated workspace contract for the same dataset. Both point at the same
+    container path, but only the workspace contract has the latest split IDs.
+    Apptainer warns on duplicate destinations and the visible mount can be
+    ambiguous, so choose deterministically before constructing --bind flags.
+    """
+    selected: dict[str, tuple[str, str, int]] = {}
+    order: list[str] = []
+    for host_path, container_path in (data_mounts or {}).items():
+        host_str = str(host_path)
+        container_str = str(container_path)
+        target = _normalized_container_mount(container_str)
+        if not host_str or not target:
+            continue
+        score = _data_mount_preference_score(Path(host_str), workspace_dir)
+        existing = selected.get(target)
+        if existing is None:
+            selected[target] = (host_str, container_str, score)
+            order.append(target)
+            continue
+
+        old_host, old_container, old_score = existing
+        if score > old_score:
+            logger.warning(
+                "Replacing duplicate data_mount target %s: %s -> %s wins over %s -> %s",
+                target, host_str, container_str, old_host, old_container,
+            )
+            selected[target] = (host_str, container_str, score)
+        else:
+            logger.warning(
+                "Skipping duplicate data_mount target %s: keeping %s -> %s over %s -> %s",
+                target, old_host, old_container, host_str, container_str,
+            )
+
+    return [(selected[target][0], selected[target][1]) for target in order]
 
 
 def _pathlab_dataset_parent_for_symlink(link_path: Path) -> Path | None:
@@ -306,11 +425,7 @@ class ApptainerSandbox:
         self.memory_limit = memory_limit
         self.cpus = cpus
         self.apptainer = _APPTAINER_BIN
-        cgroups_setting = os.getenv("PATHSCIENTIST_SANDBOX_CGROUPS", "auto").strip().lower()
-        self._cgroups_available = (
-            cgroups_setting not in {"0", "false", "no", "off", "disabled"}
-            and Path("/sys/fs/cgroup/cgroup.controllers").exists()
-        )
+        self._cgroups_available = _resource_cgroups_available()
 
     # ------------------------------------------------------------------
     # Public API
@@ -451,7 +566,7 @@ class ApptainerSandbox:
         for cache_dir in [
             f"{home}/.cache/torch",
             os.getenv("HF_HOME", f"{home}/.cache/huggingface"),
-            os.getenv("PATHLAB_CKPT_DIR", ""),
+            str(_pathlab_extractor_checkpoint_root() or ""),
         ]:
             if cache_dir and Path(cache_dir).exists():
                 cmd.extend(["--bind", f"{cache_dir}:{cache_dir}:rw"])
@@ -475,7 +590,10 @@ class ApptainerSandbox:
         # prepared_root if needed. Skip entries whose host path is missing
         # or already bound (workspace/output/fixed roots) so the command
         # stays idempotent and tidy.
-        for host_path, container_path in (data_mounts or {}).items():
+        for host_path, container_path in _dedupe_data_mounts_by_container_target(
+            data_mounts,
+            workspace_dir=workspace_dir,
+        ):
             host_str = str(host_path)
             if host_str in bound_hosts:
                 continue
@@ -510,9 +628,10 @@ class ApptainerSandbox:
         env["APPTAINERENV_TORCH_CUDNN_V8_API_DISABLED"] = "1"
 
         # Model cache forwarding
-        ckpt_dir = os.getenv("PATHLAB_CKPT_DIR", "")
-        if ckpt_dir:
-            env["APPTAINERENV_PATHLAB_CKPT_DIR"] = ckpt_dir
+        ckpt_dir = _pathlab_extractor_checkpoint_root()
+        if ckpt_dir is not None and ckpt_dir.exists():
+            env["PATHLAB_CKPT_DIR"] = str(ckpt_dir)
+            env["APPTAINERENV_PATHLAB_CKPT_DIR"] = str(ckpt_dir)
         hf_home = os.getenv("HF_HOME", "")
         if hf_home:
             env["APPTAINERENV_HF_HOME"] = hf_home

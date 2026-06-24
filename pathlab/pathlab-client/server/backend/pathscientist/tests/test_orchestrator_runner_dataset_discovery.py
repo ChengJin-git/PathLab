@@ -988,6 +988,27 @@ def test_pathlab_registered_contract_preserves_original_slide_stems(tmp_path):
     assert set(stems).issubset(set(splits["labels"]))
     assert payload["contract"]["features_dir"] == "/data/nanfang_gc_im/features/virchow2"
 
+def test_pathlab_registered_container_paths_are_workspace_scoped():
+    from pathscientist.orchestrator.runner import _pathlab_registered_container_paths
+
+    slug = "nanfang_gc_im_ff0a3171"
+    data_a, contract_a = _pathlab_registered_container_paths(
+        slug,
+        Path("/tmp/autoresearch_sessions/session_aaaaaaaaaaaa"),
+    )
+    data_b, contract_b = _pathlab_registered_container_paths(
+        slug,
+        Path("/tmp/autoresearch_sessions/session_bbbbbbbbbbbb"),
+    )
+
+    assert data_a != data_b
+    assert contract_a != contract_b
+    assert data_a.endswith(f"/{slug}")
+    assert contract_a.endswith(f"/{slug}_contract")
+    assert "/session_aaaaaaaaaaaa/" in data_a
+    assert "/session_bbbbbbbbbbbb/" in data_b
+
+
 def test_runner_filters_transient_discovered_pathlab_rows():
     """Historical discovered PathLab rows must not seed new acquisition registries."""
     from pathscientist.orchestrator.runner import (

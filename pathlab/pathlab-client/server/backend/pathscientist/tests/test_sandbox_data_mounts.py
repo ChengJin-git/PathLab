@@ -161,8 +161,7 @@ def test_sandbox_binds_symlink_target_chain_for_data_mounts(tmp_path, monkeypatc
     cmd_str = " ".join(cmd)
 
     assert f"{dataset}:/data:rw" in cmd_str
-    assert f"{middle}:{middle}:ro" in cmd_str
-    assert f"{final}:{final}:ro" in cmd_str
+    assert f"{tmp_path}:{tmp_path}:ro" in cmd_str
 
 
 def test_sandbox_can_disable_cgroup_limits(tmp_path, monkeypatch):
@@ -179,6 +178,95 @@ def test_sandbox_can_disable_cgroup_limits(tmp_path, monkeypatch):
     assert "--memory" not in cmd
     assert "--cpus" not in cmd
     assert f"{workspace}:{workspace}:rw" in " ".join(cmd)
+
+
+def test_sandbox_cgroup_detection_can_be_forced_on(monkeypatch):
+    """Admins can force Apptainer resource flags on known-good hosts."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    monkeypatch.setattr(sandbox_module.Path, "exists", lambda self: False)
+
+    assert sandbox_module._resource_cgroups_available("1") is True
+    assert sandbox_module._resource_cgroups_available("force") is True
+
+
+def test_sandbox_cgroup_detection_can_be_disabled_even_when_files_exist(monkeypatch):
+    """Explicit disable wins over detected cgroup files."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    monkeypatch.setattr(sandbox_module.Path, "exists", lambda self: True)
+
+    assert sandbox_module._resource_cgroups_available("0") is False
+    assert sandbox_module._resource_cgroups_available("disabled") is False
+
+
+def test_sandbox_auto_enables_cgroup_limits_when_resource_files_exist(monkeypatch):
+    """Auto mode uses Apptainer resource flags only when all required cgroup files exist."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    monkeypatch.setattr(sandbox_module.Path, "exists", lambda self: True)
+
+    assert sandbox_module._resource_cgroups_available("auto") is True
+
+
+def test_sandbox_auto_disables_cgroup_limits_when_resource_files_missing(tmp_path, monkeypatch):
+    """Auto mode must not pass Apptainer cgroup flags on incomplete user.slice cgroups."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    original_exists = sandbox_module.Path.exists
+
+    def fake_exists(self):
+        path = str(self)
+        if path == "/sys/fs/cgroup/cgroup.controllers":
+            return True
+        if path in {"/sys/fs/cgroup/cpu.max", "/sys/fs/cgroup/memory.max"}:
+            return False
+        return original_exists(self)
+
+    monkeypatch.delenv("PATHSCIENTIST_SANDBOX_CGROUPS", raising=False)
+    monkeypatch.setattr(sandbox_module.Path, "exists", fake_exists)
+
+    s = ApptainerSandbox()
+    workspace = tmp_path / "ws"
+    output = tmp_path / "ws" / "output"
+    workspace.mkdir(parents=True)
+    output.mkdir(parents=True)
+
+    cmd = s._build_exec_cmd(workspace, output)
+
+    assert "--memory" not in cmd
+    assert "--cpus" not in cmd
+    assert f"{workspace}:{workspace}:rw" in " ".join(cmd)
+
+
+def test_sandbox_inherits_pathlab_extractor_checkpoint_root(tmp_path, monkeypatch):
+    """PathScientist sandboxes should inherit PathLab's extractor checkpoints."""
+    import pathscientist.runtime.sandbox as sandbox_module
+
+    uploads = tmp_path / "pathlab_uploads"
+    ckpt_root = uploads / "extractor_checkpoints"
+    (ckpt_root / "UNI").mkdir(parents=True)
+    (ckpt_root / "UNI" / "pytorch_model.bin").write_bytes(b"fake-weights")
+
+    class FakeConfig:
+        @staticmethod
+        def get_uploads_dir():
+            return uploads
+
+    monkeypatch.delenv("PATHLAB_CKPT_DIR", raising=False)
+    monkeypatch.setattr(sandbox_module, "_PathLabConfig", FakeConfig)
+
+    s = _build_sandbox_for_test(monkeypatch)
+    workspace = tmp_path / "ws"
+    output = tmp_path / "ws" / "output"
+    workspace.mkdir(parents=True)
+    output.mkdir(parents=True)
+
+    cmd = s._build_exec_cmd(workspace, output)
+    env = s._build_env()
+
+    assert f"{ckpt_root}:{ckpt_root}:rw" in " ".join(cmd)
+    assert env["APPTAINERENV_PATHLAB_CKPT_DIR"] == str(ckpt_root)
 
 
 def test_sandbox_skips_data_mount_when_host_path_missing(tmp_path):
@@ -231,6 +319,31 @@ def test_sandbox_supports_multiple_data_mounts(tmp_path):
     cmd_str = " ".join(cmd)
     assert f"{a}:/data/a:rw" in cmd_str
     assert f"{b}:/data/b:rw" in cmd_str
+
+
+def test_sandbox_prefers_workspace_contract_when_container_mount_target_duplicates(tmp_path):
+    s = _build_sandbox_for_test(None)
+    workspace = tmp_path / "autoresearch_sessions" / "session_abc"
+    output = workspace / "output"
+    current_contract = workspace / ".dataset" / "pathlab_registered" / "nanfang_contract"
+    stale_contract = tmp_path / "pathlab_datasets" / "session_inputs" / "old" / "nanfang_contract"
+    current_contract.mkdir(parents=True)
+    stale_contract.mkdir(parents=True)
+    output.mkdir(parents=True)
+
+    cmd = s._build_exec_cmd(
+        workspace,
+        output,
+        data_mounts={
+            str(stale_contract): "/data/nanfang_contract",
+            str(current_contract): "/data/nanfang_contract",
+        },
+    )
+    cmd_str = " ".join(cmd)
+
+    assert f"{current_contract}:/data/nanfang_contract:rw" in cmd_str
+    assert f"{stale_contract}:/data/nanfang_contract:rw" not in cmd_str
+    assert cmd_str.count(":/data/nanfang_contract:rw") == 1
 
 
 def test_sandbox_data_mounts_default_none_keeps_existing_binds(tmp_path):

@@ -31,6 +31,79 @@ def test_cache_persists_unavailable_and_dataset_rollup(tmp_path, monkeypatch):
     assert rollup["total_count"] == 2
 
 
+def test_dataset_rollup_loads_cache_once(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    availability.record_many_from_scan(
+        {
+            "available": [
+                {"wsi_id": "wsi-ok-1", "dataset_id": "ds-external"},
+                {"wsi_id": "wsi-ok-2", "dataset_id": "ds-external"},
+            ],
+            "unavailable": [
+                {"wsi_id": "wsi-bad", "dataset_id": "ds-external", "reason": "File not found"}
+            ],
+        }
+    )
+
+    original_load_cache = availability._load_cache
+    load_calls = []
+
+    def _count_load():
+        load_calls.append(True)
+        return original_load_cache()
+
+    monkeypatch.setattr(availability, "_load_cache", _count_load)
+
+    rollup = availability.roll_up_dataset_availability(
+        ["wsi-ok-1", "wsi-ok-2", "wsi-bad", "wsi-unknown"]
+    )
+
+    assert rollup["status"] == "unavailable"
+    assert rollup["total_count"] == 4
+    assert rollup["available_count"] == 2
+    assert rollup["unavailable_count"] == 1
+    assert rollup["unknown_count"] == 1
+    assert len(load_calls) == 1
+
+
+def test_dataset_batch_rollup_loads_cache_once(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    availability.record_many_from_scan(
+        {
+            "available": [
+                {"wsi_id": "wsi-ok-1", "dataset_id": "ds-a"},
+                {"wsi_id": "wsi-ok-2", "dataset_id": "ds-b"},
+            ],
+            "unavailable": [
+                {"wsi_id": "wsi-bad", "dataset_id": "ds-b", "reason": "File not found"}
+            ],
+        }
+    )
+
+    original_load_cache = availability._load_cache
+    load_calls = []
+
+    def _count_load():
+        load_calls.append(True)
+        return original_load_cache()
+
+    monkeypatch.setattr(availability, "_load_cache", _count_load)
+
+    rollups = availability.roll_up_datasets_availability(
+        {"ds-a": ["wsi-ok-1"], "ds-b": ["wsi-ok-2", "wsi-bad", "wsi-unknown"]}
+    )
+
+    assert rollups["ds-a"]["status"] == "available"
+    assert rollups["ds-b"]["status"] == "unavailable"
+    assert rollups["ds-b"]["total_count"] == 3
+    assert rollups["ds-b"]["unknown_count"] == 1
+    assert len(load_calls) == 1
+
+
 def test_corrupted_cache_is_ignored(tmp_path, monkeypatch):
     from backend.storage import external_availability as availability
 

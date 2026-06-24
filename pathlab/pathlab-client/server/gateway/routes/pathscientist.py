@@ -1931,11 +1931,24 @@ def _dataset_match_aliases(value: str) -> set[str]:
     if not normalized:
         return set()
     aliases: set[str] = set()
-    token_stop = {"dataset", "local", "pathscientist"}
+    token_stop = {"dataset", "data", "local", "pathscientist"}
+    role_only_tokens = {
+        "internal",
+        "external",
+        "validation",
+        "validate",
+        "test",
+        "training",
+        "train",
+        "cohort",
+    }
 
     def add_phrase(phrase: str) -> None:
         phrase = " ".join(str(phrase or "").split())
         if not phrase:
+            return
+        phrase_tokens = [token for token in phrase.split() if token]
+        if phrase_tokens and all(token in role_only_tokens for token in phrase_tokens):
             return
         aliases.add(phrase)
         aliases.add(phrase.replace(" ", ""))
@@ -1959,6 +1972,16 @@ def _dataset_alias_score(alias: str) -> int:
 
 
 _DATASET_LLM_CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
+_DATASET_LLM_ROLES = {"internal", "external"}
+
+
+def _normalize_pathlab_dataset_role(value: Any) -> str:
+    role = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if role in {"train", "training", "internal_training", "internal_dataset"}:
+        return "internal"
+    if role in {"validation", "external_validation", "external_test", "test", "external_dataset"}:
+        return "external"
+    return role if role in _DATASET_LLM_ROLES else ""
 
 
 def _match_pathlab_datasets_from_question(
@@ -2005,6 +2028,60 @@ def _match_pathlab_datasets_from_question(
             matches.append((first_pos, -score, dataset_id))
     matches.sort(key=lambda item: (item[0], item[1]))
     return [dataset_id for _pos, _score, dataset_id in matches]
+
+
+def _infer_pathlab_dataset_role_from_question(question: str, dataset: dict[str, Any] | None) -> str:
+    if not dataset:
+        return ""
+    aliases: set[str] = set()
+    for key in ("dataset_name", "name", "parent_dataset_name", "dataset_id"):
+        aliases.update(_dataset_match_aliases(str(dataset.get(key) or "")))
+    if not aliases:
+        return ""
+    match = _role_match_for_alias_occurrences(
+        question,
+        _alias_occurrences_in_question(question, aliases),
+    )
+    return match[0] if match else ""
+
+
+def _fill_pathlab_dataset_roles_from_question(
+    question: str,
+    dataset_ids: list[str],
+    datasets_by_id: dict[str, dict[str, Any]],
+    selected_roles: dict[str, str],
+) -> None:
+    for dataset_id in dataset_ids:
+        if selected_roles.get(dataset_id):
+            continue
+        role = _infer_pathlab_dataset_role_from_question(question, datasets_by_id.get(dataset_id))
+        if role:
+            selected_roles[dataset_id] = role
+
+
+def _append_pathlab_fallback_datasets_for_missing_roles(
+    question: str,
+    selected_ids: list[str],
+    visible_datasets: list[dict[str, Any]],
+    datasets_by_id: dict[str, dict[str, Any]],
+    selected_roles: dict[str, str],
+) -> None:
+    if len(selected_ids) >= 2:
+        return
+    selected_set = set(selected_ids)
+    selected_role_values = {role for role in selected_roles.values() if role}
+    for dataset_id in _match_pathlab_datasets_from_question(question, visible_datasets):
+        if dataset_id in selected_set:
+            continue
+        role = _infer_pathlab_dataset_role_from_question(question, datasets_by_id.get(dataset_id))
+        if not role or role in selected_role_values:
+            continue
+        selected_set.add(dataset_id)
+        selected_ids.append(dataset_id)
+        selected_roles[dataset_id] = role
+        selected_role_values.add(role)
+        if len(selected_role_values) >= len(_DATASET_LLM_ROLES):
+            break
 
 
 def _pathscientist_dataset_match_llm_caller() -> Callable[[str], str] | None:
@@ -2087,7 +2164,7 @@ def _call_dataset_match_llm_with_timeout(caller: Callable[[str], str], prompt: s
     raise value
 
 
-def _parse_pathlab_dataset_llm_matches(raw_text: str, allowed_ids: set[str]) -> list[str]:
+def _parse_pathlab_dataset_llm_match_items(raw_text: str, allowed_ids: set[str]) -> list[dict[str, str]]:
     try:
         from backend.pathscientist.structured_output import extract_json
         payload = extract_json(raw_text)
@@ -2105,7 +2182,7 @@ def _parse_pathlab_dataset_llm_matches(raw_text: str, allowed_ids: set[str]) -> 
     if not isinstance(raw_matches, list):
         return []
 
-    selected: list[str] = []
+    selected: list[dict[str, str]] = []
     seen: set[str] = set()
     for item in raw_matches:
         if not isinstance(item, dict):
@@ -2117,16 +2194,29 @@ def _parse_pathlab_dataset_llm_matches(raw_text: str, allowed_ids: set[str]) -> 
         if _DATASET_LLM_CONFIDENCE_RANK.get(confidence, 0) < _DATASET_LLM_CONFIDENCE_RANK["medium"]:
             continue
         seen.add(dataset_id)
-        selected.append(dataset_id)
+        selected.append(
+            {
+                "dataset_id": dataset_id,
+                "role": _normalize_pathlab_dataset_role(
+                    item.get("role") or item.get("data_role") or item.get("usage")
+                ),
+                "confidence": confidence,
+                "reason": str(item.get("reason") or "").strip(),
+            }
+        )
         if len(selected) >= 3:
             break
     return selected
 
 
-def _match_pathlab_datasets_with_llm(
+def _parse_pathlab_dataset_llm_matches(raw_text: str, allowed_ids: set[str]) -> list[str]:
+    return [item["dataset_id"] for item in _parse_pathlab_dataset_llm_match_items(raw_text, allowed_ids)]
+
+
+def _match_pathlab_datasets_with_llm_details(
     question: str,
     datasets: list[dict[str, Any]],
-) -> list[str]:
+) -> list[dict[str, str]]:
     question = str(question or "").strip()
     if not question or not datasets:
         return []
@@ -2151,11 +2241,16 @@ def _match_pathlab_datasets_with_llm(
         "You match a user's PathScientist request to registered PathLab datasets.\n"
         "Choose only from the candidate list. Do not invent dataset IDs.\n"
         "Use semantic clues such as organ, disease, task type, data type, labels, "
-        "parent dataset, split counts, and cohort size.\n"
-        "Prefer a registered PathLab dataset when it clearly satisfies the user's request.\n"
+        "parent dataset, split counts, cohort size, and whether the user asks for "
+        "internal training or external validation.\n"
+        "Assign role=internal to the training/internal cohort and role=external to "
+        "the external validation/test cohort when the request implies those roles.\n"
+        "A candidate name containing 'external' is not enough by itself; only select "
+        "that candidate when the user semantically requested that cohort.\n"
+        "Prefer registered PathLab datasets when they clearly satisfy the user's request.\n"
         "If no candidate is a good match, return {\"matches\": []}.\n"
         "Return ONLY JSON with this schema:\n"
-        "{\"matches\":[{\"dataset_id\":\"...\",\"confidence\":\"high|medium|low\",\"reason\":\"...\"}]}\n\n"
+        "{\"matches\":[{\"dataset_id\":\"...\",\"role\":\"internal|external|unspecified\",\"confidence\":\"high|medium|low\",\"reason\":\"...\"}]}\n\n"
         f"User request:\n{question}\n\n"
         "Candidate datasets:\n"
         f"{json.dumps(candidates, ensure_ascii=False)}"
@@ -2168,10 +2263,20 @@ def _match_pathlab_datasets_with_llm(
         return []
     if raw_text is None:
         return []
-    selected_ids = _parse_pathlab_dataset_llm_matches(raw_text, allowed_ids)
-    if selected_ids:
-        logger.info("PathScientist matched PathLab datasets by LLM semantics: %s", selected_ids)
-    return selected_ids
+    matches = _parse_pathlab_dataset_llm_match_items(raw_text, allowed_ids)
+    if matches:
+        logger.info(
+            "PathScientist matched PathLab datasets by LLM semantics: %s",
+            [(item["dataset_id"], item.get("role", "")) for item in matches],
+        )
+    return matches
+
+
+def _match_pathlab_datasets_with_llm(
+    question: str,
+    datasets: list[dict[str, Any]],
+) -> list[str]:
+    return [item["dataset_id"] for item in _match_pathlab_datasets_with_llm_details(question, datasets)]
 
 
 def _question_requests_external_dataset_match(question: str) -> bool:
@@ -2248,6 +2353,7 @@ async def _resolve_pathlab_dataset_mounts(
                 if callable(getattr(user, "is_admin", None))
                 else []
             )
+            selected_roles: dict[str, str] = {}
             if not selected_ids:
                 visible_datasets = []
                 visible_dataset_ids: set[str] = set()
@@ -2264,10 +2370,46 @@ async def _resolve_pathlab_dataset_mounts(
                             continue
                         visible_dataset_ids.add(dataset_id)
                         visible_datasets.append(dataset_row)
-                selected_ids = _match_pathlab_datasets_from_question(question, visible_datasets)
+
+                datasets_by_id = {
+                    str(dataset_row.get("dataset_id") or "").strip(): dataset_row
+                    for dataset_row in visible_datasets
+                    if str(dataset_row.get("dataset_id") or "").strip()
+                }
+                llm_matches = _match_pathlab_datasets_with_llm_details(question, visible_datasets)
+                selected_ids = [item["dataset_id"] for item in llm_matches]
+                selected_roles = {
+                    item["dataset_id"]: item["role"]
+                    for item in llm_matches
+                    if item.get("role")
+                }
+                _fill_pathlab_dataset_roles_from_question(
+                    question,
+                    selected_ids,
+                    datasets_by_id,
+                    selected_roles,
+                )
                 if not selected_ids:
-                    selected_ids = _match_pathlab_datasets_with_llm(question, visible_datasets)
-                elif len(selected_ids) < 2 and _question_requests_external_dataset_match(question):
+                    selected_ids = _match_pathlab_datasets_from_question(question, visible_datasets)
+                    _fill_pathlab_dataset_roles_from_question(
+                        question,
+                        selected_ids,
+                        datasets_by_id,
+                        selected_roles,
+                    )
+                else:
+                    _append_pathlab_fallback_datasets_for_missing_roles(
+                        question,
+                        selected_ids,
+                        visible_datasets,
+                        datasets_by_id,
+                        selected_roles,
+                    )
+                if (
+                    len(selected_ids) < 2
+                    and _question_requests_external_dataset_match(question)
+                    and "external" not in set(selected_roles.values())
+                ):
                     selected_set = set(selected_ids)
                     remaining_datasets = [
                         dataset_row
@@ -2280,11 +2422,13 @@ async def _resolve_pathlab_dataset_mounts(
                         "Only choose additional registered datasets that the user requested "
                         "as external validation or external test cohorts."
                     )
-                    for dataset_id in _match_pathlab_datasets_with_llm(external_question, remaining_datasets)[:1]:
+                    for item in _match_pathlab_datasets_with_llm_details(external_question, remaining_datasets)[:1]:
+                        dataset_id = item["dataset_id"]
                         if dataset_id in selected_set:
                             continue
                         selected_set.add(dataset_id)
                         selected_ids.append(dataset_id)
+                        selected_roles[dataset_id] = item.get("role") or "external"
             if not selected_ids:
                 return {}
             for dataset_id in selected_ids:
@@ -2323,25 +2467,31 @@ async def _resolve_pathlab_dataset_mounts(
                 if dataset_data_type == "wsi":
                     data_container = _unique_container_mount(f"/data/{slug}", used_containers)
                     contract_container = _unique_container_mount(f"{data_container}_contract", used_containers)
-                    direct_mount = _prepare_pathlab_registered_wsi_dataset_root(
-                        dataset=dataset,
-                        slides=slides,
-                        sidecar_dir=view_session_dir / f"{slug}_contract",
-                        data_container=data_container,
-                        contract_container=contract_container,
-                        question=question,
-                    )
+                    direct_mount_kwargs = {
+                        "dataset": dataset,
+                        "slides": slides,
+                        "sidecar_dir": view_session_dir / f"{slug}_contract",
+                        "data_container": data_container,
+                        "contract_container": contract_container,
+                        "question": question,
+                    }
+                    if selected_roles.get(dataset_id):
+                        direct_mount_kwargs["data_role"] = selected_roles[dataset_id]
+                    direct_mount = _prepare_pathlab_registered_wsi_dataset_root(**direct_mount_kwargs)
                     if direct_mount is not None:
                         data_root, contract_dir = direct_mount
                         mounts[str(data_root)] = data_container
                         mounts[str(contract_dir)] = contract_container
                         continue
-                view_dir = _prepare_pathlab_dataset_view(
-                    dataset=dataset,
-                    slides=slides,
-                    view_dir=view_session_dir / slug,
-                    question=question,
-                )
+                view_kwargs = {
+                    "dataset": dataset,
+                    "slides": slides,
+                    "view_dir": view_session_dir / slug,
+                    "question": question,
+                }
+                if selected_roles.get(dataset_id):
+                    view_kwargs["data_role"] = selected_roles[dataset_id]
+                view_dir = _prepare_pathlab_dataset_view(**view_kwargs)
                 mounts[str(view_dir)] = _unique_container_mount(f"/data/{slug}", used_containers)
     except HTTPException:
         raise
@@ -2721,6 +2871,7 @@ def _prepare_pathlab_dataset_view(
     slides: list[Any],
     view_dir: Path,
     question: str = "",
+    data_role: str = "",
 ) -> Path:
     view_dir.mkdir(parents=True, exist_ok=True)
     is_patch_dataset = _dataset_data_type_value(dataset) == "patch"
@@ -2902,6 +3053,7 @@ def _prepare_pathlab_dataset_view(
         "dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
         "pathlab_dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
         "dataset_name": str(getattr(dataset, "name", "") or ""),
+        "data_role": _normalize_pathlab_dataset_role(data_role),
         "layout": "pathlab_dataset_view",
         "data_type": "patch" if is_patch_dataset else "wsi",
         "wsi_dir": "wsi_files",
@@ -3048,14 +3200,25 @@ def _alias_occurrences_in_question(question: str, aliases: set[str]) -> list[tup
     return occurrences
 
 
-def _role_for_alias_occurrences(
+_ROLE_CONTEXT_BOUNDARY_RE = re.compile(r"[.;。！？!?\n]")
+
+
+def _role_marker_can_reach_alias(question: str, marker_pos: int, start: int, end: int) -> bool:
+    raw = str(question or "")
+    segment = raw[marker_pos:start] if marker_pos <= start else raw[end:marker_pos]
+    return _ROLE_CONTEXT_BOUNDARY_RE.search(segment) is None
+
+
+def _role_match_for_alias_occurrences(
     question: str,
     occurrences: list[tuple[int, int]],
-) -> str:
+) -> tuple[str, int] | None:
     markers = _role_marker_positions(question)
     best: tuple[int, int, str] | None = None
     for start, end in occurrences:
         for marker_pos, role in markers:
+            if not _role_marker_can_reach_alias(question, marker_pos, start, end):
+                continue
             if marker_pos <= start:
                 distance = start - marker_pos
                 if distance > 120:
@@ -3069,31 +3232,43 @@ def _role_for_alias_occurrences(
             candidate = (distance + side_penalty, 0 if role == "internal" else 1, role)
             if best is None or candidate < best:
                 best = candidate
-    return best[2] if best is not None else ""
+    return (best[2], best[0]) if best is not None else None
+
+
+def _role_for_alias_occurrences(
+    question: str,
+    occurrences: list[tuple[int, int]],
+) -> str:
+    match = _role_match_for_alias_occurrences(question, occurrences)
+    return match[0] if match else ""
 
 
 def _classify_pathlab_mount_roles(question: str, mounts: dict[str, str]) -> dict[str, dict[str, str]]:
-    roles: dict[str, dict[str, str]] = {}
+    role_matches: dict[str, tuple[int, dict[str, str]]] = {}
     for host, container in mounts.items():
         view_dir = Path(str(host))
         manifest = _pathlab_view_manifest(view_dir)
         dataset_name = str(manifest.get("dataset_name") or view_dir.name).strip()
-        aliases = _dataset_match_aliases(dataset_name) | _dataset_match_aliases(view_dir.name)
-        role = _role_for_alias_occurrences(
-            question,
-            _alias_occurrences_in_question(question, aliases),
-        )
-        lower_name = _normalize_dataset_match_text(dataset_name)
-        lower_view = _normalize_dataset_match_text(view_dir.name)
-        if not role and (" external " in f" {lower_name} " or " external " in f" {lower_view} "):
-            role = "external"
-        if role:
-            roles[role] = {
-                "host": str(host),
-                "container": str(container).rstrip("/"),
-                "dataset_name": dataset_name,
-            }
-    return roles
+        role = _normalize_pathlab_dataset_role(manifest.get("data_role") or manifest.get("role"))
+        score = -10_000 if role else 0
+        if not role:
+            aliases = _dataset_match_aliases(dataset_name) | _dataset_match_aliases(view_dir.name)
+            match = _role_match_for_alias_occurrences(
+                question,
+                _alias_occurrences_in_question(question, aliases),
+            )
+            if match is None:
+                continue
+            role, score = match
+        info = {
+            "host": str(host),
+            "container": str(container).rstrip("/"),
+            "dataset_name": dataset_name,
+        }
+        existing = role_matches.get(role)
+        if existing is None or score < existing[0]:
+            role_matches[role] = (score, info)
+    return {role: info for role, (_score, info) in role_matches.items()}
 
 
 def _pathlab_dataset_contract_updates(host: str, container: str) -> dict[str, str]:
@@ -4604,6 +4779,80 @@ def _add_external_run_files_to_zip(
                 _add_file_to_zip(archive, existing, source, f"{prefix}/artifacts/{name}")
 
 
+_RUN_ZIP_CORE_ARTIFACT_NAMES = frozenset({
+    "best_model.pth",
+    "metrics.json",
+    "run_metadata.json",
+    "train.log",
+    "external_test_report.json",
+    "predictions.csv",
+})
+_RUN_ZIP_EXCLUDED_PATH_PARTS = frozenset({
+    "feature_cache",
+    "features_cache",
+    "cached_features",
+    "patch_feature_cache",
+    "patch_features",
+    "patch_cache",
+})
+
+
+def _artifact_is_feature_cache(artifact: dict[str, Any], source: Path | None = None) -> bool:
+    values = [
+        str(artifact.get("path") or ""),
+        str(artifact.get("name") or ""),
+    ]
+    if source is not None:
+        values.append(source.as_posix())
+    for value in values:
+        parts = {part.lower() for part in value.replace("\\", "/").split("/") if part}
+        if parts & _RUN_ZIP_EXCLUDED_PATH_PARTS:
+            return True
+    return False
+
+
+def _should_include_run_zip_artifact(artifact: dict[str, Any], source: Path | None = None) -> bool:
+    storage_mode = str(artifact.get("storage_mode") or "")
+    if storage_mode == "cache_summary":
+        return False
+    name = _safe_zip_component(artifact.get("name"), source.name if source is not None else "artifact")
+    if name in _RUN_ZIP_CORE_ARTIFACT_NAMES:
+        return True
+    if _artifact_is_feature_cache(artifact, source):
+        return False
+    return storage_mode != "manifest"
+
+
+def _run_output_dir_for_zip(workspace: Path, run_id: str, record_data: dict[str, Any]) -> Path:
+    run_dir = str(record_data.get("run_dir") or "").strip()
+    if run_dir:
+        candidate = Path(run_dir).expanduser()
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
+        candidate = candidate.resolve(strict=False)
+        if _path_under(candidate, workspace):
+            return candidate
+    return (workspace / "output" / "runs" / run_id).resolve(strict=False)
+
+
+def _add_core_run_output_files_to_zip(
+    archive: zipfile.ZipFile,
+    existing: set[str],
+    *,
+    workspace: Path,
+    run_id: str,
+    record_data: dict[str, Any],
+) -> None:
+    run_dir = _run_output_dir_for_zip(workspace, run_id, record_data)
+    if not _path_under(run_dir, workspace):
+        return
+    for filename in ("best_model.pth", "metrics.json", "run_metadata.json", "train.log"):
+        arcname = f"artifacts/{filename}"
+        if arcname in existing:
+            continue
+        _add_file_to_zip(archive, existing, run_dir / filename, arcname)
+
+
 def _zip_writestr_json(archive: zipfile.ZipFile, name: str, value: Any) -> None:
     archive.writestr(
         name,
@@ -4771,18 +5020,26 @@ def _build_run_artifact_zip(record: SessionRecord, workspace: Path, run_id: str)
             for item in artifacts:
                 if not isinstance(item, dict):
                     continue
-                if str(item.get("storage_mode") or "") == "cache_summary":
-                    continue
                 source = _resolve_artifact_source(
                     workspace=workspace,
                     evidence_run_dir=evidence_run_dir,
                     record_data=record_data,
                     artifact=item,
                 )
+                if not _should_include_run_zip_artifact(item, source):
+                    continue
                 if source is None:
                     continue
                 name = _safe_zip_component(item.get("name"), source.name)
                 _add_file_to_zip(archive, existing, source, f"artifacts/{name}")
+
+        _add_core_run_output_files_to_zip(
+            archive,
+            existing,
+            workspace=workspace,
+            run_id=run_id,
+            record_data=record_data,
+        )
 
         for external_entry in _external_run_entries_for_zip(state, run_id):
             external_run_id = str(external_entry.get("run_id") or "").strip()
@@ -4861,6 +5118,7 @@ def _prepare_pathlab_registered_wsi_dataset_root(
     data_container: str,
     contract_container: str,
     question: str = "",
+    data_role: str = "",
 ) -> tuple[Path, Path] | None:
     """Prepare a registered WSI dataset without writing into its durable root."""
     roots: set[Path] = set()
@@ -4966,6 +5224,7 @@ def _prepare_pathlab_registered_wsi_dataset_root(
         "dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
         "pathlab_dataset_id": str(getattr(dataset, "dataset_id", "") or ""),
         "dataset_name": str(getattr(dataset, "name", "") or ""),
+        "data_role": _normalize_pathlab_dataset_role(data_role),
         "layout": "pathlab_registered_dataset_root",
         "data_type": "wsi",
         "pathlab_uploads_dir": data_container,

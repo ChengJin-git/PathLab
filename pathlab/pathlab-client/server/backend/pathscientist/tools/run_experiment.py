@@ -31,6 +31,7 @@ from ..runtime.data_protocol import (
     extract_data_protocol,
     locked_data_protocol_from_tracker,
 )
+from ..runtime.sandbox import _dedupe_data_mounts_by_container_target
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
@@ -136,6 +137,15 @@ def _host_path_for_mounted_container_path(path_text: str, data_mounts: dict | No
         if raw_norm.startswith(prefix):
             return Path(host) / raw_norm[len(prefix):]
     return None
+
+
+def _deduped_data_mounts_for_workspace(data_mounts: dict | None, workspace_root: Path) -> dict[str, str]:
+    return dict(
+        _dedupe_data_mounts_by_container_target(
+            data_mounts or {},
+            workspace_dir=Path(workspace_root),
+        )
+    )
 
 
 def _candidate_data_output_roots(*, config, data_output_dir: str) -> list[Path]:
@@ -1255,7 +1265,12 @@ class RunExperimentExecutor(ToolExecutor):
             env_vars["PATHLAB_MAX_TEST_SAMPLES"] = "64"
 
         script_type = _normalize_script_type(action.script_path, action.script_type)
-        data_mounts = getattr(self._config, "data_mounts", {}) or {}
+        data_mounts = _deduped_data_mounts_for_workspace(
+            getattr(self._config, "data_mounts", {}) or {},
+            self._workspace.root,
+        )
+        if isinstance(getattr(self._config, "data_mounts", None), dict):
+            self._config.data_mounts = data_mounts
         timeout = (
             _resolve_quick_check_timeout(
                 config=self._config,

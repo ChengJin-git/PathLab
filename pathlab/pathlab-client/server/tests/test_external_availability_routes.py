@@ -94,11 +94,14 @@ async def test_wsi_route_rolls_up_external_dataset_availability_without_file_che
     )
     monkeypatch.setattr(
         wsi_routes.external_availability,
-        "roll_up_dataset_availability",
-        lambda wsi_ids: {
-            "status": "unavailable" if "wsi-1" in wsi_ids else "unknown",
-            "unavailable_count": 1 if "wsi-1" in wsi_ids else 0,
-            "total_count": len(wsi_ids),
+        "roll_up_datasets_availability",
+        lambda wsi_ids_by_dataset: {
+            dataset_id: {
+                "status": "unavailable" if "wsi-1" in wsi_ids else "unknown",
+                "unavailable_count": 1 if "wsi-1" in wsi_ids else 0,
+                "total_count": len(wsi_ids),
+            }
+            for dataset_id, wsi_ids in wsi_ids_by_dataset.items()
         },
     )
 
@@ -140,8 +143,11 @@ async def test_wsi_route_requests_external_only_dataset_refs(monkeypatch):
     )
     monkeypatch.setattr(
         wsi_routes.external_availability,
-        "roll_up_dataset_availability",
-        lambda wsi_ids: {"status": "available", "total_count": len(wsi_ids)},
+        "roll_up_datasets_availability",
+        lambda wsi_ids_by_dataset: {
+            dataset_id: {"status": "available", "total_count": len(wsi_ids)}
+            for dataset_id, wsi_ids in wsi_ids_by_dataset.items()
+        },
     )
 
     await wsi_routes._attach_dataset_availability(None, datasets)

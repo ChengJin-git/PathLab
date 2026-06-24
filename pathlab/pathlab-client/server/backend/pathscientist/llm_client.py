@@ -57,6 +57,52 @@ def _normalize_openai_model(model: str) -> str:
     return f"openai/{model}"
 
 
+def _chat_content_text(content: Any) -> str:
+    """Flatten OpenAI Responses-style text parts for chat-completions relays."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        content_type = str(content.get("type") or "").lower()
+        if content_type in {"text", "input_text", "output_text"}:
+            return str(content.get("text") or "")
+        for key in ("text", "output_text", "content"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (list, tuple, dict)):
+                nested = _chat_content_text(value)
+                if nested:
+                    return nested
+        return ""
+    if isinstance(content, (list, tuple)):
+        parts = [_chat_content_text(part).strip() for part in content]
+        return "\n".join(part for part in parts if part)
+    return str(content)
+
+
+def sanitize_messages_for_chat_completion(messages: Sequence[Any] | None) -> list[Any]:
+    """Return chat-completions-compatible messages without mutating inputs.
+
+    OpenHands can persist Responses-style message content such as
+    ``[{"type": "text", "text": ...}]`` and assistant tool-call messages
+    with ``content=None``. Some OpenAI-compatible relays reject those shapes on
+    ``/chat/completions`` with ``Unsupported content type``. Normalize only the
+    message content field and preserve tool calls/tool_call_id metadata.
+    """
+    sanitized: list[Any] = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            sanitized.append(message)
+            continue
+        normalized = dict(message)
+        if "content" in normalized:
+            normalized["content"] = _chat_content_text(normalized.get("content"))
+        sanitized.append(normalized)
+    return sanitized
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text())
@@ -289,6 +335,8 @@ def _build_streaming_llm_class():
             stream_enabled = bool(kwargs.get("stream", False)) or bool(self.stream)
             if stream_enabled and on_token is None:
                 on_token = lambda _token: None  # noqa: E731
+            if "messages" in kwargs:
+                kwargs["messages"] = sanitize_messages_for_chat_completion(kwargs.get("messages"))
             return super().completion(*args, on_token=on_token, **kwargs)
 
         # Models that report ``uses_responses_api() == True`` (e.g. gpt-5.5)
@@ -299,6 +347,8 @@ def _build_streaming_llm_class():
             stream_enabled = bool(kwargs.get("stream", False)) or bool(self.stream)
             if stream_enabled and on_token is None:
                 on_token = lambda _token: None  # noqa: E731
+            if "messages" in kwargs:
+                kwargs["messages"] = sanitize_messages_for_chat_completion(kwargs.get("messages"))
             return super().responses(*args, on_token=on_token, **kwargs)
 
         # Codex relay (relay.1hui.wang) has a bug in its Responses API
@@ -383,6 +433,7 @@ def invoke_chat_llm(
     **kwargs: Any,
 ):
     """Call an OpenHands LLM through the correct wire API."""
+    messages = sanitize_messages_for_chat_completion(messages)
     resolved_wire = (wire_api or getattr(llm, "_pathscientist_wire_api", "") or "").lower()
     profile = (getattr(llm, "_pathscientist_llm_profile", "") or "").lower()
     if profile == "codex-relay" and resolved_wire == "responses":
