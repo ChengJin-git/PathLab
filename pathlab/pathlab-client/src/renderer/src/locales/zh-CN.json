@@ -1588,12 +1588,11 @@
       "runningStatus": "运行中"
     },
     "grounding": {
-      "title": "Grounding 文献",
+      "title": "文献调研",
       "paperFound": "找到 {{count}} 篇论文",
       "papersFound": "找到 {{count}} 篇论文",
       "taskProfile": "任务画像",
-      "selectedSkill": "选中技能",
-      "noPapers": "本次 grounding 未返回论文标题。"
+      "noPapers": "本次文献调研未返回论文标题。"
     },
     "acquisition": {
       "title": "数据获取",

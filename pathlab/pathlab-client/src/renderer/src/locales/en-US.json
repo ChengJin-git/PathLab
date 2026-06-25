@@ -1592,7 +1592,6 @@
       "paperFound": "{{count}} paper found",
       "papersFound": "{{count}} papers found",
       "taskProfile": "Task profile",
-      "selectedSkill": "Selected skill",
       "noPapers": "No paper titles were returned for this grounding run."
     },
     "acquisition": {

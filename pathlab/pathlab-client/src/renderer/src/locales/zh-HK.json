@@ -1588,12 +1588,11 @@
       "runningStatus": "運行中"
     },
     "grounding": {
-      "title": "Grounding 文獻",
+      "title": "文獻調研",
       "paperFound": "找到 {{count}} 篇論文",
       "papersFound": "找到 {{count}} 篇論文",
       "taskProfile": "任務畫像",
-      "selectedSkill": "選中技能",
-      "noPapers": "本次 grounding 未返回論文標題。"
+      "noPapers": "本次文獻調研未返回論文標題。"
     },
     "acquisition": {
       "title": "數據獲取",
@@ -2257,6 +2256,7 @@
     "noDatasetsDescription": "註冊您的第一個資料集以開始分析。",
     "editDataset": "編輯資料集",
     "public": "公開",
+    "private": "私有",
     "makePublic": "設為公開",
     "makePrivate": "設為私有",
     "makePublicSuccess": "資料集已設為公開",
@@ -2307,13 +2307,6 @@
       "listView": "列表視圖"
     },
     "derivedFrom": "匯出自",
-    "public": "公開",
-    "private": "私有",
-    "makePublic": "設為公開",
-    "makePrivate": "設為私有",
-    "makePublicSuccess": "資料集已設為公開",
-    "makePrivateSuccess": "資料集已設為私有",
-    "failedUpdateVisibility": "更新可見性失敗",
     "newDataset": "新建資料集",
     "newDatasetDescription": "註冊切片以建立新資料集",
     "externalUnavailable": "不可用",
