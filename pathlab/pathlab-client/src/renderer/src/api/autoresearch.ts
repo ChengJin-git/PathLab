@@ -5,7 +5,6 @@ import type {
   AutoResearchSessionDetail,
   AutoResearchSessionListResponse,
   AutoResearchSessionSummary,
-  AutoResearchSkillListResponse,
   StartAutoResearchSessionRequest,
 } from '../types/autoresearch'
 
@@ -22,15 +21,6 @@ interface AutoResearchAccessTokenResponse {
 
 function autoResearchBase(): string {
   return `${API_BASE}/autoresearch`
-}
-
-export function listAutoResearchSkills(): Promise<AutoResearchSkillListResponse> {
-  return apiFetch(
-    `${autoResearchBase()}/skills`,
-    undefined,
-    'List AutoResearch skills',
-    true
-  )
 }
 
 export function startAutoResearchSession(

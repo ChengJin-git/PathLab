@@ -34,7 +34,6 @@ export default function AutoResearchNewSessionPage() {
     try {
       const session = await startAutoResearchSession({
         question: question.trim(),
-        skill: '',
         max_iter: parseMaxIter(maxIterInput),
         model: DEFAULT_MODEL,
       })

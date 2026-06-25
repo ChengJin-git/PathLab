@@ -1,16 +1,5 @@
-export interface AutoResearchSkill {
-  id: string
-  name: string
-  description?: string
-}
-
-export interface AutoResearchSkillListResponse {
-  items: AutoResearchSkill[]
-}
-
 export interface StartAutoResearchSessionRequest {
   question: string
-  skill?: string
   mode?: 'research' | 'code'
   max_iter?: number
   metric?: string
