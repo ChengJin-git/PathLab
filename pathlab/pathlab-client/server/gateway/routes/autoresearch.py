@@ -29,7 +29,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
 from backend.auth import (
@@ -89,8 +89,9 @@ def _reject_invalid_autoresearch_question(question: str) -> None:
 class StartAutoResearchSessionRequest(BaseModel):
     """Request body for starting a AutoResearch session."""
 
+    model_config = ConfigDict(extra="forbid")
+
     question: str = Field(..., min_length=1, max_length=4000)
-    skill: str = ""
     mode: str = "research"
     max_iter: int = Field(5, ge=1, le=20)
     metric: str = "auc"
@@ -3420,13 +3421,14 @@ def _external_task_type_from_request(req: StartAutoResearchSessionRequest) -> st
     explicit = str((req.external_test_contract or {}).get("external_task_type") or "").strip()
     if explicit:
         return explicit
-    skill = str(req.skill or "").strip()
-    if skill in {"patch_classification", "mil_classification", "survival", "segmentation"}:
-        return skill
     question = f" {_normalize_dataset_match_text(req.question)} "
+    if any(token in question for token in (" survival ", " c-index ", " cindex ", " concordance ")):
+        return "wsi_survival"
+    if any(token in question for token in (" segment ", " segmentation ", " mask ", " dice ", " iou ")):
+        return "patch_segmentation"
     if any(token in question for token in (" patch ", " patch level ", " patch classification ")):
         return "patch_classification"
-    return "mil_classification"
+    return "wsi_classification"
 
 
 def _apply_external_contract_from_pathlab_mounts(req: StartAutoResearchSessionRequest, config: Any) -> None:
@@ -3625,7 +3627,8 @@ def _build_config(req: StartAutoResearchSessionRequest):
     config.data_mounts = data_mounts
     config.pathlab_selected_datasets = list(req.dataset_ids or [])
     config.llm_model = config.llm_model or DEFAULT_MODEL
-    config.skill_name = req.skill or ("external_test" if req.mode == "external_test" else config.skill_name)
+    if req.mode == "external_test":
+        config.skill_name = "external_test"
     config.max_iterations = req.max_iter
     config.primary_metric = req.metric or config.primary_metric
     config.manual_approval = req.manual_approval
@@ -3788,27 +3791,6 @@ def _load_runner():
 
 
 _SESSION_MANAGER = AutoResearchSessionManager()
-
-
-@router.get("/skills")
-def list_skills():
-    try:
-        from backend.autoresearch.domain.skills import registry
-
-        items = [
-            {
-                "id": skill.name,
-                "name": skill.name,
-                "description": getattr(skill, "description", ""),
-            }
-            for skill in registry.list_skills()
-        ]
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"AutoResearch skills unavailable: {exc}",
-        ) from exc
-    return {"items": items}
 
 
 @router.post("/sessions")

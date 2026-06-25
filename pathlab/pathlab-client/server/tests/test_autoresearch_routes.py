@@ -405,15 +405,24 @@ def test_autoresearch_events_require_single_purpose_access_token():
     assert rejected.status_code == 403
 
 
-def test_lists_registered_skills():
+def test_does_not_publicly_list_internal_skills():
     client = TestClient(make_app())
 
     response = client.get("/autoresearch/skills")
 
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert any(item["id"] == "mil_classification" for item in data["items"])
+    assert response.status_code == 404
+
+
+def test_start_session_request_has_no_public_skill_field():
+    route_module = load_route_module()
+
+    fields = getattr(
+        route_module.StartAutoResearchSessionRequest,
+        "model_fields",
+        getattr(route_module.StartAutoResearchSessionRequest, "__fields__", {}),
+    )
+
+    assert "skill" not in fields
 
 
 def test_create_session_returns_default_codex_relay_model(monkeypatch):
@@ -467,7 +476,27 @@ def test_create_session_returns_default_codex_relay_model(monkeypatch):
     data = response.json()
     assert data["session_id"]
     assert data["model"] == "gpt-5.5"
-    assert data["status"] in {"queued", "running", "completed"}
+
+
+def test_create_session_rejects_legacy_skill_payload(monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(
+        route_module.Config,
+        "get_global_settings",
+        staticmethod(lambda: {}),
+    )
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.post(
+        "/autoresearch/sessions",
+        json={"question": "quick smoke", "skill": "mil_classification"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_manager_marks_completed_workflow_without_committed_run_as_failed(monkeypatch, tmp_path):
@@ -662,7 +691,6 @@ def test_create_session_preserves_patch_external_task_type(monkeypatch, tmp_path
         "/autoresearch/sessions",
         json={
             "question": "Train a patch-level classifier on internal_patch_dataset, then validate on external_patch_dataset.",
-            "skill": "patch_classification",
         },
     )
 
