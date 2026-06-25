@@ -12,13 +12,14 @@ decision time.
 This selector closes that gap:
 
   1. env override wins (CI / debugging path)
-  2. JSON cache by (organ, target, task_type)
-  3. LLM picks from the tiered catalog using:
+  2. LLM picks from the tiered catalog using:
        - task_profile (organ, prediction_target, task_type)
        - grounded papers (so LLM sees what others tried)
        - baseline rows (so LLM sees which extractor reached the best
          metric on the same dataset)
        - SOTA target (the published winner's method, if known)
+  3. JSON cache by (organ, target, task_type), only when LLM is unavailable
+     or invalid
   4. domain rule fallback (high-specificity pairings like cytology →
      SmartCyto) only when no valid LLM choice is available
   5. fallback: selector default (``Virchow2`` unless configured) — never
@@ -43,7 +44,9 @@ logger = logging.getLogger(__name__)
 
 # Cache v1 stored broad task-level LLM picks and could pin future runs to
 # stale extractors after default policy changes. v2 invalidates those entries.
-CACHE_VERSION = 2
+# v3 makes cache a fallback behind the LLM, so old v2 entries cannot keep
+# pinning new runs after installed checkpoints or policy change.
+CACHE_VERSION = 3
 _ALLOWED_CONFIDENCE = {"high", "medium", "low"}
 
 # Domain rules — fallback mappings. Only fire when both organ and target
@@ -96,8 +99,10 @@ Rules:
 1. Never pick an imagenet_baseline (ResNet50, ViT-L/16) as the primary extractor.
 2. Pick pathology_specialized only when the task matches its declared domain.
 3. Pick vision_language only when the task explicitly needs text alignment.
-4. Default to pathology_foundation. Among them, prefer extractors that
-   appear in the grounded literature with strong reported metrics.
+4. Default to pathology_foundation. If organ/target are unspecified or
+   grounded evidence does not name a specific extractor, choose Virchow2.
+5. Among non-default pathology_foundation models, pick only when task/domain
+   signal or grounded literature/baselines specifically support them.
 
 Return ONLY a JSON object:
 {{"name": "<canonical name from the catalog>", "reason": "<<=25 words>", "confidence": "high|medium|low"}}
@@ -170,17 +175,12 @@ class FeatureExtractorSelector:
                 confidence="high",
             )
 
-        # 2. Cache lookup. Cache entries are created from validated LLM picks.
         cache_key = self._cache_key(organ, target, task_type)
-        cached = self._lookup_cache(cache_key)
-        if cached is not None:
-            # ``ts`` is a cache-only field; strip before re-hydrating.
-            entry = {k: v for k, v in cached.items() if k != "ts"}
-            return ExtractorSelection(**entry, source="cache")
 
-        # 3. LLM pick. The LLM is the primary decision maker when configured;
+        # 2. LLM pick. The LLM is the primary decision maker when configured;
         # keyword/domain rules are only fallbacks for missing or invalid LLM
-        # output.
+        # output. Cache must not outrank LLM, because checkpoint inventory and
+        # policy can change between sessions.
         if self._llm is not None:
             llm_pick = self._llm_pick(
                 organ=organ, target=target, task_type=task_type,
@@ -196,6 +196,30 @@ class FeatureExtractorSelector:
                     "confidence": llm_pick.confidence,
                 })
                 return llm_pick
+
+        # 3. Cache lookup. Cache entries are created from validated LLM picks,
+        # but only used when the LLM is unavailable or invalid.
+        cached = self._lookup_cache(cache_key)
+        if cached is not None:
+            # ``ts`` is a cache-only field; strip before re-hydrating.
+            entry = {k: v for k, v in cached.items() if k != "ts"}
+            cached_selection = ExtractorSelection(**entry, source="cache")
+            if not self._should_reject_generic_foundation_pick(
+                cached_selection.canonical,
+                organ=organ,
+                target=target,
+                task_type=task_type,
+                papers=papers or [],
+                baselines=baselines or [],
+                sota_target=sota_target,
+            ):
+                return cached_selection
+            logger.info(
+                "Selector: ignored unsupported generic cached extractor %s for "
+                "unspecified %s; falling back to policy/default",
+                cached_selection.canonical,
+                task_type or "task",
+            )
 
         # 4. Domain rules
         for predicate, canonical in _DOMAIN_RULES:
@@ -322,11 +346,51 @@ class FeatureExtractorSelector:
                 raw_name,
             )
             return None
+        if self._should_reject_generic_foundation_pick(
+            canonical,
+            organ=organ,
+            target=target,
+            task_type=task_type,
+            papers=papers,
+            baselines=baselines,
+            sota_target=sota_target,
+        ):
+            logger.info(
+                "Selector: ignored unsupported generic LLM extractor %s for "
+                "unspecified %s; falling back to %s",
+                canonical,
+                task_type or "task",
+                self._default,
+            )
+            return None
         return self._build_selection(
             canonical, source="llm",
             reason=reason or f"LLM pick for organ={organ}/target={target}",
             confidence=confidence,
         )
+
+    def _should_reject_generic_foundation_pick(
+        self,
+        canonical: str,
+        *,
+        organ: str,
+        target: str,
+        task_type: str,
+        papers: list[dict[str, Any]],
+        baselines: list[dict[str, Any]],
+        sota_target: dict[str, Any] | None,
+    ) -> bool:
+        default = self._resolve_canonical(self._default)
+        if canonical.lower() == default.lower():
+            return False
+        tier = self._name_to_tier.get(canonical.lower(), "")
+        if tier != "pathology_foundation":
+            return False
+        if organ.strip() or target.strip():
+            return False
+        if task_type.strip() not in {"", "classification", "patch_classification", "mil_classification"}:
+            return False
+        return not _evidence_mentions_extractor(canonical, papers, baselines, sota_target)
 
     # ---- cache I/O ---------------------------------------------------
 
@@ -494,6 +558,26 @@ def _format_catalog(catalog: dict[str, list[dict[str, str]]]) -> str:
             lines.append(f"  {tier}: {', '.join(names)}")
     return "\n".join(lines) if lines else "  (catalog empty)"
 
+
+
+def _evidence_mentions_extractor(
+    canonical: str,
+    papers: list[dict[str, Any]],
+    baselines: list[dict[str, Any]],
+    sota: dict[str, Any] | None,
+) -> bool:
+    key = _mention_key(canonical)
+    if not key:
+        return False
+
+    def mentions(value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(mentions(v) for v in value.values())
+        if isinstance(value, (list, tuple)):
+            return any(mentions(v) for v in value)
+        return key in _mention_key(str(value or ""))
+
+    return mentions(papers) or mentions(baselines) or mentions(sota or {})
 
 def _parse_json(raw: str):
     s = (raw or "").strip()

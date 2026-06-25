@@ -67,6 +67,24 @@ _TRAINING_METRIC_RE = re.compile(
     r"\b([A-Za-z][A-Za-z0-9_]*)=([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
 )
 
+_UI_PLACEHOLDER_QUESTIONS = {
+    "structured autoresearch execution console for this run.",
+    "describe the computational pathology task. autoresearch will start a backend session and stream live events into the run detail page.",
+}
+
+
+def _normalized_question_for_validation(question: str) -> str:
+    return " ".join(str(question or "").strip().lower().split())
+
+
+def _reject_invalid_autoresearch_question(question: str) -> None:
+    normalized = _normalized_question_for_validation(question)
+    if normalized in _UI_PLACEHOLDER_QUESTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail="Please enter a real research question instead of the AutoResearch UI description.",
+        )
+
 
 class StartAutoResearchSessionRequest(BaseModel):
     """Request body for starting a AutoResearch session."""
@@ -3630,7 +3648,7 @@ def _set_env_default(name: str, value: str) -> bool:
 
 
 def _pathlab_feature_checkpoint_dir() -> Path:
-    return SERVER_ROOT / "backend" / "ai" / "extractors" / "checkpoints"
+    return Config.get_uploads_dir() / "extractor_checkpoints"
 
 
 def _normalize_autoresearch_model(model: str) -> str:
@@ -3724,7 +3742,7 @@ def _apply_autoresearch_gateway_defaults(config: Any) -> None:
     _apply_autoresearch_llm_defaults(config)
 
     _apply_pathlab_huggingface_token(config)
-    _set_env_default("PATHLAB_CKPT_DIR", str(_pathlab_feature_checkpoint_dir()))
+    os.environ["PATHLAB_CKPT_DIR"] = str(_pathlab_feature_checkpoint_dir())
     canonical_base_dir = str(_resolve_autoresearch_base_dir())
     os.environ["AUTORESEARCH_BASE_DIR"] = canonical_base_dir
 
@@ -3798,6 +3816,7 @@ async def create_session(
     req: StartAutoResearchSessionRequest,
     user: User = Depends(current_active_user),
 ):
+    _reject_invalid_autoresearch_question(req.question)
     try:
         dataset_mounts = await _resolve_pathlab_dataset_mounts(
             req.dataset_ids,
@@ -4818,6 +4837,7 @@ _RUN_ZIP_CORE_ARTIFACT_NAMES = frozenset({
     "best_model.pth",
     "metrics.json",
     "run_metadata.json",
+    "training.log",
     "train.log",
     "external_test_report.json",
     "predictions.csv",
@@ -4881,7 +4901,7 @@ def _add_core_run_output_files_to_zip(
     run_dir = _run_output_dir_for_zip(workspace, run_id, record_data)
     if not _path_under(run_dir, workspace):
         return
-    for filename in ("best_model.pth", "metrics.json", "run_metadata.json", "train.log"):
+    for filename in ("best_model.pth", "metrics.json", "run_metadata.json", "training.log", "train.log"):
         arcname = f"artifacts/{filename}"
         if arcname in existing:
             continue

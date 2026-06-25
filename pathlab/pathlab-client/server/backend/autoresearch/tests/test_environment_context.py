@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import sys
 import types
+import builtins
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -123,6 +124,36 @@ def test_detect_hf_model_cache_defaults_to_pathlab_upload_checkpoints(tmp_path, 
 
     assert str(ckpts_root) in out
     assert 'get_extractor("uni")' in out
+
+
+def test_detect_hf_model_cache_uses_pathlab_uploads_env_when_config_import_fails(
+    tmp_path,
+    monkeypatch,
+):
+    """If backend.common.config is not importable in an agent context,
+    still inherit PathLab checkpoints through PATHLAB_UPLOADS_DIR."""
+    uploads = tmp_path / "uploads"
+    ckpts_root = uploads / "extractor_checkpoints"
+    _make_fake_checkpoints(
+        ckpts_root,
+        [("Virchow2", "pytorch_model.bin", 2_400_000_000)],
+    )
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.common.config":
+            raise ImportError("backend.common.config blocked for test")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", blocked_import)
+    monkeypatch.setenv("PATHLAB_UPLOADS_DIR", str(uploads))
+    monkeypatch.delenv("PATHLAB_CKPT_DIR", raising=False)
+
+    out = detect_hf_model_cache()
+
+    assert str(ckpts_root) in out
+    assert 'get_extractor("virchow2")' in out
 
 
 def test_detect_hf_model_cache_skips_missing_ckpt_dirs(tmp_path):

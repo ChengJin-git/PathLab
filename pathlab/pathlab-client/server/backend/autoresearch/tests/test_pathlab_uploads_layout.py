@@ -1273,6 +1273,15 @@ def test_patch_template_keeps_msi_h_as_binary_positive_class(tmp_path, monkeypat
     assert splits["test"] == [(non_msih, 0)]
 
 
+def test_patch_template_writes_standard_training_log(tmp_path, monkeypatch):
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "run"))
+
+    _load_template_module("patch_classification_template.py")
+
+    assert (tmp_path / "run" / "training.log").exists()
+    assert not (tmp_path / "run" / "train.log").exists()
+
+
 def test_patch_template_builds_patch_smoke_metrics_payload(tmp_path):
     module = _load_template_module("patch_classification_template.py")
     checkpoint = tmp_path / "best_model.pth"

@@ -1248,4 +1248,48 @@ describe('autoresearch event selectors', () => {
 
     expect(view.runSummary.externalTest?.primaryMetric).toEqual({ name: 'auc', value: 0.5556 })
   })
+
+  it('preserves patch classification dataset names in internal and external summaries', () => {
+    const session = {
+      session_id: 's-patch-result-datasets',
+      title: 'Patch classification',
+      question: 'Run patch classification with external validation.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'auc' },
+        best_metric_value: 0.978,
+        best_run_id: 'run_patch',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_patch',
+            metric_name: 'auc',
+            metric_value: 0.978,
+            committed: true,
+            status: 'completed',
+            dataset_name: 'Nanfang-GC-IM',
+            metrics: { test: { auc: 0.978, n_test: 57 } },
+          },
+        ],
+        external_test_history: [
+          {
+            run_id: 'run_external',
+            status: 'completed',
+            committed: true,
+            dataset_name: 'PWH-GC-IM',
+            metrics: { auc: 0.944, n_samples: 2697 },
+          },
+        ],
+      },
+      events: [],
+    } satisfies AutoResearchSessionDetail
+
+    const view = buildAutoResearchExecutionView(session, [])
+
+    expect(view.runSummary.internalTest?.datasetName).toBe('Nanfang-GC-IM')
+    expect(view.runSummary.internalTest?.sampleCount).toBe(57)
+    expect(view.runSummary.externalTest?.datasetName).toBe('PWH-GC-IM')
+    expect(view.runSummary.externalTest?.sampleCount).toBe(2697)
+  })
 })

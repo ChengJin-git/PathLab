@@ -2404,6 +2404,22 @@ def test_create_session_returns_pending_title_without_waiting_for_llm_title():
     assert queued == [data["session_id"]]
 
 
+
+def test_create_session_rejects_ui_description_as_question():
+    route_module = load_route_module()
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.post(
+        "/autoresearch/sessions",
+        json={"question": "Structured AutoResearch execution console for this run."},
+    )
+
+    assert response.status_code == 422
+    assert "real research question" in response.json()["detail"].lower()
+
 def test_create_session_rejects_overlong_question():
     route_module = load_route_module()
     app = FastAPI()
@@ -3116,6 +3132,44 @@ def test_session_summary_includes_training_progress_from_latest_run_log(tmp_path
     assert progress["updated_at"] == 2000
 
 
+def test_session_summary_parses_patch_template_training_progress(tmp_path):
+    route_module = load_route_module()
+    workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "patch-training-progress")
+    run_dir = workspace / "output" / "runs" / "run_patch"
+    run_dir.mkdir(parents=True)
+    log_path = run_dir / "training.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "2026-06-25 09:20:00 | INFO | epoch 1/50  loss=0.5300  val_auc=0.7200  val_acc=0.6700",
+                "2026-06-25 09:21:00 | INFO | epoch 2/50  loss=0.4100  val_auc=0.8100  val_acc=0.7400",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.utime(log_path, (2000, 2000))
+    record = route_module.SessionRecord(
+        session_id="s-patch-training-progress",
+        conversation_id="",
+        question="patch classification progress",
+        model="gpt-5.5",
+        status="running",
+        stage="execution",
+        state={"workspace_dir": str(workspace)},
+    )
+
+    progress = record.summary()["training_progress"]
+
+    assert progress["run_id"] == "run_patch"
+    assert progress["current_epoch"] == 2
+    assert progress["total_epochs"] == 50
+    assert progress["current_val_auc"] == 0.81
+    assert progress["current_val_acc"] == 0.74
+    assert progress["best_val_auc"] == 0.81
+    assert progress["log_path"] == str(log_path.resolve())
+
+
 def test_session_summary_marks_quick_check_training_progress(tmp_path):
     route_module = load_route_module()
     workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "training-progress-quick")
@@ -3361,6 +3415,23 @@ def test_default_autoresearch_base_dir_uses_settings_autoresearch_root(monkeypat
     assert base_dir == uploads_dir / "autoresearch"
     assert not str(base_dir).startswith("/project/")
     assert route_module._resolve_autoresearch_base_dir() == base_dir.resolve()
+
+
+def test_autoresearch_gateway_defaults_overwrite_stale_checkpoint_root(monkeypatch, tmp_path):
+    uploads_dir = tmp_path / "settings-uploads"
+    stale_code_checkpoints = (
+        tmp_path / "repo" / "server" / "backend" / "ai" / "extractors" / "checkpoints"
+    )
+    monkeypatch.setenv("PATHLAB_UPLOADS_DIR", str(uploads_dir))
+    monkeypatch.setenv("PATHLAB_CKPT_DIR", str(stale_code_checkpoints))
+    route_module = load_route_module()
+
+    config = SimpleNamespace()
+    route_module._apply_autoresearch_gateway_defaults(config)
+
+    expected = uploads_dir / "extractor_checkpoints"
+    assert route_module._pathlab_feature_checkpoint_dir() == expected
+    assert os.environ["PATHLAB_CKPT_DIR"] == str(expected)
 
 
 def test_autoresearch_session_create_uses_autoresearch_sessions_subdir(monkeypatch, tmp_path):

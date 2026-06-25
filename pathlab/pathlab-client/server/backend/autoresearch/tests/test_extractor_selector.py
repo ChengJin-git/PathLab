@@ -27,6 +27,9 @@ def _write_cached_pick(
     *,
     name: str = "UNI",
     version: int = CACHE_VERSION,
+    organ: str = "lung",
+    target: str = "nsclc_subtype",
+    task_type: str = "mil_classification",
 ) -> Path:
     cache_path = tmp_path / "extractor_choice_cache.json"
     cache_path.write_text(
@@ -34,7 +37,7 @@ def _write_cached_pick(
             {
                 "version": version,
                 "entries": {
-                    "lung|nsclc_subtype|mil_classification": {
+                    f"{organ}|{target}|{task_type}": {
                         "name": name.lower(),
                         "canonical": name,
                         "reason": "cached literature pick",
@@ -89,7 +92,9 @@ def test_multiple_explicit_extractors_do_not_freeze_single_extractor(
 ):
     monkeypatch.delenv("AUTORESEARCH_FEATURE_EXTRACTOR", raising=False)
     selector = FeatureExtractorSelector(
-        llm_parser=None,
+        llm_parser=lambda _prompt: json.dumps(
+            {"name": "Virchow2", "reason": "LLM current pick", "confidence": "high"}
+        ),
         catalog=_CATALOG,
         cache_path=_write_cached_pick(tmp_path, name="UNI"),
     )
@@ -103,8 +108,37 @@ def test_multiple_explicit_extractors_do_not_freeze_single_extractor(
         }
     )
 
-    assert selection.name == "uni"
-    assert selection.source == "cache"
+    assert selection.name == "virchow2"
+    assert selection.source == "llm"
+
+
+def test_llm_pick_takes_precedence_over_stale_extractor_cache(tmp_path, monkeypatch):
+    monkeypatch.delenv("AUTORESEARCH_FEATURE_EXTRACTOR", raising=False)
+    selector = FeatureExtractorSelector(
+        llm_parser=lambda _prompt: json.dumps(
+            {"name": "Virchow2", "reason": "LLM sees current checkpoints", "confidence": "high"}
+        ),
+        catalog=_CATALOG,
+        cache_path=_write_cached_pick(
+            tmp_path,
+            name="UNI",
+            organ="colorectal",
+            target="microsatellite_instability",
+            task_type="patch_classification",
+        ),
+    )
+
+    selection = selector.select(
+        task_profile={
+            "organ": "colorectal",
+            "prediction_target": "microsatellite_instability",
+            "task_type": "patch_classification",
+        }
+    )
+
+    assert selection.name == "virchow2"
+    assert selection.canonical == "Virchow2"
+    assert selection.source == "llm"
 
 
 def test_legacy_extractor_cache_does_not_override_current_default(
@@ -128,3 +162,33 @@ def test_legacy_extractor_cache_does_not_override_current_default(
     assert selection.name == "virchow2"
     assert selection.canonical == "Virchow2"
     assert selection.source == "default"
+
+def test_unspecified_patch_task_rejects_generic_uni_llm_pick(tmp_path, monkeypatch):
+    monkeypatch.delenv("AUTORESEARCH_FEATURE_EXTRACTOR", raising=False)
+    selector = FeatureExtractorSelector(
+        llm_parser=lambda _prompt: json.dumps(
+            {
+                "name": "UNI",
+                "reason": "General pathology foundation model suited to unspecified patch classification",
+                "confidence": "medium",
+            }
+        ),
+        catalog=_CATALOG,
+        cache_path=tmp_path / "extractor_choice_cache.json",
+    )
+
+    selection = selector.select(
+        task_profile={
+            "organ": "",
+            "prediction_target": "",
+            "task_type": "patch_classification",
+            "question": "Run a experiment on BCFC, I want optimal performance",
+        },
+        baselines=[],
+        papers=[],
+    )
+
+    assert selection.name == "virchow2"
+    assert selection.canonical == "Virchow2"
+    assert selection.source == "default"
+

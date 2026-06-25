@@ -107,7 +107,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(OUTPUT_DIR / "train.log", mode="w"),
+        logging.FileHandler(OUTPUT_DIR / "training.log", mode="w"),
     ],
 )
 

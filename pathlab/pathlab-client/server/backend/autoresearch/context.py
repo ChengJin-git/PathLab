@@ -26,6 +26,10 @@ def pathlab_extractor_checkpoint_root() -> Path:
     except Exception:
         logger.debug("Could not resolve PathLab uploads checkpoint root", exc_info=True)
 
+    uploads_dir = os.environ.get("PATHLAB_UPLOADS_DIR", "").strip()
+    if uploads_dir:
+        return Path(uploads_dir).expanduser() / "extractor_checkpoints"
+
     return Path(__file__).resolve().parents[1] / "ai" / "extractors" / "checkpoints"
 
 

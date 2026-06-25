@@ -4,6 +4,7 @@ import { useAutoResearchTranslation } from '../../../lib/useAutoResearchTranslat
 import { ChevronDown, Circle, Loader2, Play, Square, Trash2 } from 'lucide-react'
 import { Button } from '../../ui/button'
 import AutoResearchExecutionConsole from '../AutoResearchExecutionConsole'
+import RunSummaryCard from '../RunSummaryCard'
 import SimpleProgressSteps from './SimpleProgressSteps'
 import { buildAutoResearchExecutionView } from '../../../lib/autoresearchEventSelectors'
 import {
@@ -11,6 +12,7 @@ import {
   formatClinicalMetric,
   isLiveClinicalStatus,
 } from '../../../lib/autoresearchClinicalSteps'
+import { trainingProgressConsoleLabel } from '../../../lib/autoresearchSessions'
 import type { AutoResearchEvent, AutoResearchSessionDetail } from '../../../types/autoresearch'
 import type { SessionStreamStatus } from '../useSessionStream'
 
@@ -117,6 +119,8 @@ export default function AutoResearchClinicalSessionView({
     view.bestMetric?.name,
     view.bestMetric?.value ?? null,
   )
+  const trainingProgressLabel = trainingProgressConsoleLabel(session?.training_progress)
+  const showResultSummary = Boolean(view.runSummary.internalTest || view.runSummary.externalTest)
 
   const isTerminal = ['completed', 'failed', 'interrupted'].includes(latestStatus)
 
@@ -176,6 +180,7 @@ export default function AutoResearchClinicalSessionView({
           <OverviewTile label={t('autoResearch.clinical.bestMetric')} value={bestMetricLabel} />
           <OverviewTile label={t('autoResearch.clinical.currentIteration')} value={iterationLabel} />
           <OverviewTile label={t('autoResearch.clinical.runStatus')} value={clinicalStatusLabel(latestStatus, t)} />
+          {trainingProgressLabel && <OverviewTile label="Training progress" value={trainingProgressLabel} />}
         </div>
       </section>
 
@@ -185,6 +190,14 @@ export default function AutoResearchClinicalSessionView({
         </div>
       ) : (
         <>
+          {showResultSummary && (
+            <RunSummaryCard
+              summary={view.runSummary}
+              compactHeader
+              className="border-blue-100 bg-gradient-to-br from-white via-blue-50/50 to-emerald-50/40"
+            />
+          )}
+
           <SimpleProgressSteps steps={progressSteps} />
 
           <section className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">

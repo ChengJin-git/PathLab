@@ -1041,6 +1041,7 @@ function externalRecordFromRunHistory(state: Record<string, unknown>): Record<st
       run_id: asString(record.run_id).trim(),
       status: asString(record.external_test_status || record.status).trim() || (committed ? 'completed' : ''),
       committed,
+      dataset_name: asString(record.dataset_name || record.datasetName || record.dataset || record.dataset_id || record.datasetId).trim(),
       model_path: asString(record.model_path || pathlab.model_path).trim(),
       run_dir: asString(record.run_dir).trim(),
       metrics: externalMetrics,
@@ -1157,6 +1158,7 @@ function internalRecordFromRunHistory(state: Record<string, unknown>): Record<st
       run_id: asString(record.run_id).trim(),
       status: asString(record.status).trim() || (committed ? 'completed' : ''),
       committed,
+      dataset_name: asString(record.dataset_name || record.datasetName || record.dataset || record.dataset_id || record.datasetId).trim(),
       model_path: asString(record.model_path || pathlab.model_path).trim(),
       run_dir: asString(record.run_dir).trim(),
       metrics: {
