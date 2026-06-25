@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+test_data/
+*.pyc
+
+# Historical AutoResearch planning docs kept locally only
+docs/achieve/

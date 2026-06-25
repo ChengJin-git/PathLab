@@ -11,7 +11,7 @@ from gateway.app_setup import include_api_routers, mount_static_routes
 
 
 def _route_paths(app: FastAPI) -> set[str]:
-    paths: set[str] = set()
+    paths = set(app.openapi().get("paths", {}))
     for route in app.routes:
         path = getattr(route, "path", None)
         if isinstance(path, str):
@@ -27,7 +27,7 @@ def test_include_api_routers_registers_expected_paths():
     paths = _route_paths(app)
     assert "/settings" in paths
     assert "/auth/secure-login" in paths
-    assert "/pathscientist/sessions" in paths
+    assert "/autoresearch/sessions" in paths
     assert "/health" not in paths
 
 
@@ -39,7 +39,7 @@ def test_include_api_routers_also_registers_api_prefixed_paths():
     paths = _route_paths(app)
     assert "/api/settings" in paths
     assert "/api/auth/secure-login" in paths
-    assert "/api/pathscientist/sessions" in paths
+    assert "/api/autoresearch/sessions" in paths
 
 
 def test_mount_static_routes_mounts_avatars_only_when_renderer_dist_missing(

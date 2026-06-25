@@ -17,33 +17,33 @@ def test_deploy_scripts_allow_explicit_python_override_before_conda():
         assert text.index("PATHLAB_PYTHON") < text.index("CONDA_PREFIX")
 
 
-def test_deploy_scripts_prefer_pathscientist_venv_before_conda():
+def test_deploy_scripts_prefer_autoresearch_venv_before_conda():
     for script in ("start.sh", "hot-reload.sh"):
         text = _deploy_script_text(script)
 
-        expected = 'PATHSCIENTIST_PYTHON="$SERVER_DIR/backend/pathscientist/.venv/bin/python"'
+        expected = 'AUTORESEARCH_PYTHON="$SERVER_DIR/backend/autoresearch/.venv/bin/python"'
         assert expected in text
-        assert text.index("PATHSCIENTIST_PYTHON") < text.index("CONDA_PREFIX")
+        assert text.index("AUTORESEARCH_PYTHON") < text.index("CONDA_PREFIX")
 
 
-def test_start_script_checks_pathscientist_runtime_dependencies():
+def test_start_script_checks_autoresearch_runtime_dependencies():
     text = _deploy_script_text("start.sh")
 
-    assert "check_pathscientist_environment" in text
+    assert "check_autoresearch_environment" in text
     for module_name in ("openhands.sdk", "openhands.tools", "torch", "kaggle"):
         assert module_name in text
 
 
-def test_start_script_installs_pathscientist_requirements_before_failing_preflight():
+def test_start_script_installs_autoresearch_requirements_before_failing_preflight():
     text = _deploy_script_text("start.sh")
 
-    assert "install_pathscientist_python_packages" in text
+    assert "install_autoresearch_python_packages" in text
     assert "../../requirements.txt" in text
     assert "../../requirements-test.txt" in text
     assert "requirements.txt" in text
-    assert """if ! check_pathscientist_python_packages; then
-        install_pathscientist_python_packages
-        check_pathscientist_python_packages
+    assert """if ! check_autoresearch_python_packages; then
+        install_autoresearch_python_packages
+        check_autoresearch_python_packages
     fi""" in text
 
 
@@ -57,39 +57,39 @@ def test_start_script_preflight_checks_kaggle_presence_without_authentication():
 def test_start_script_checks_apptainer_and_sandbox_image():
     text = _deploy_script_text("start.sh")
 
-    assert "PATHSCIENTIST_SANDBOX" in text
-    assert "PATHSCIENTIST_SANDBOX_IMAGE" in text
+    assert "AUTORESEARCH_SANDBOX" in text
+    assert "AUTORESEARCH_SANDBOX_IMAGE" in text
     assert "apptainer" in text.lower()
     assert "sandbox image" in text.lower()
 
 
-def test_start_script_runs_pathscientist_preflight_before_service_cleanup():
+def test_start_script_runs_autoresearch_preflight_before_service_cleanup():
     text = _deploy_script_text("start.sh")
 
-    assert "check_pathscientist_environment\n\n# ========== Step 1" in text
+    assert "check_autoresearch_environment\n\n# ========== Step 1" in text
 
 
-def test_pathscientist_sandbox_build_script_is_documented_and_configurable():
-    script = CLIENT_ROOT / "deploy" / "build-pathscientist-sandbox.sh"
+def test_autoresearch_sandbox_build_script_is_documented_and_configurable():
+    script = CLIENT_ROOT / "deploy" / "build-autoresearch-sandbox.sh"
     text = script.read_text()
     deploy_readme = (CLIENT_ROOT / "deploy" / "README.md").read_text()
-    pathscientist_readme = (CLIENT_ROOT / "server" / "backend" / "pathscientist" / "README.md").read_text()
+    autoresearch_readme = (CLIENT_ROOT / "server" / "backend" / "autoresearch" / "README.md").read_text()
 
     assert "pathlab-sandbox.def" in text
-    assert "PATHSCIENTIST_SANDBOX_IMAGE" in text
+    assert "AUTORESEARCH_SANDBOX_IMAGE" in text
     assert "APPTAINER_TMPDIR" in text
     assert "apptainer build" in text
     assert "apptainer exec --nv" in text
-    assert "deploy/build-pathscientist-sandbox.sh" in deploy_readme
-    assert "deploy/build-pathscientist-sandbox.sh" in pathscientist_readme
+    assert "deploy/build-autoresearch-sandbox.sh" in deploy_readme
+    assert "deploy/build-autoresearch-sandbox.sh" in autoresearch_readme
 
 
-def test_pathscientist_sandbox_definition_avoids_build_time_tmp_chmod():
+def test_autoresearch_sandbox_definition_avoids_build_time_tmp_chmod():
     definition = (
         CLIENT_ROOT
         / "server"
         / "backend"
-        / "pathscientist"
+        / "autoresearch"
         / "runtime"
         / "containers"
         / "pathlab-sandbox.def"
@@ -111,12 +111,12 @@ def test_pathscientist_sandbox_definition_avoids_build_time_tmp_chmod():
     assert all("/tmp" not in line for line in chmod_lines)
 
 
-def test_pathscientist_requirements_file_contains_agent_only_dependencies():
-    requirements = (CLIENT_ROOT / "server" / "backend" / "pathscientist" / "requirements.txt").read_text()
+def test_autoresearch_requirements_file_contains_agent_only_dependencies():
+    requirements = (CLIENT_ROOT / "server" / "backend" / "autoresearch" / "requirements.txt").read_text()
     deploy_readme = (CLIENT_ROOT / "deploy" / "README.md").read_text()
-    pathscientist_readme = (CLIENT_ROOT / "server" / "backend" / "pathscientist" / "README.md").read_text()
+    autoresearch_readme = (CLIENT_ROOT / "server" / "backend" / "autoresearch" / "README.md").read_text()
 
     for package in ("openhands-sdk", "openhands-tools", "kaggle"):
         assert package in requirements
-    assert "backend/pathscientist/requirements.txt" in deploy_readme
-    assert "backend/pathscientist/requirements.txt" in pathscientist_readme
+    assert "backend/autoresearch/requirements.txt" in deploy_readme
+    assert "backend/autoresearch/requirements.txt" in autoresearch_readme

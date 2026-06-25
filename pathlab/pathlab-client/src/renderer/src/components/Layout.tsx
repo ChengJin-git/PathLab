@@ -49,9 +49,9 @@ export default function Layout({ children }: LayoutProps) {
 
   // Check if current page is Dashboard (ChatGPT-style home page)
   const isAIChatPage = location.pathname.startsWith('/dashboard')
-  const isPathScientistPage = location.pathname.startsWith('/pathscientist')
+  const isAutoResearchPage = location.pathname.startsWith('/autoresearch')
   const isRegisterPage = location.pathname === '/register'
-  const isFullHeightPage = isAIChatPage || isPathScientistPage || location.pathname === '/task-setup'
+  const isFullHeightPage = isAIChatPage || isAutoResearchPage || location.pathname === '/task-setup'
 
   const handleLogout = async () => {
     await logout()

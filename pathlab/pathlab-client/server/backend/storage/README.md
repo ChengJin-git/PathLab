@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`server/backend/storage/` 负责文件系统层面的统计、迁移、配置与清理工作，是数据库状态与 `uploads/` 目录之间的一层维护工具。`2026-06-23` 加入的 AutoResearch（实现 codename：PathScientist）也复用这一上传根目录策略来定位默认 workspace 与 artifact 根目录。
+`server/backend/storage/` 负责文件系统层面的统计、迁移、配置与清理工作，是数据库状态与 `uploads/` 目录之间的一层维护工具。`2026-06-23` 加入的 AutoResearch（实现 codename：AutoResearch）也复用这一上传根目录策略来定位默认 workspace 与 artifact 根目录。
 
 ## 当前模块结构
 
@@ -51,9 +51,9 @@
 
 - `uploads/annotations/`：Preprocessing 为数据集写出 `*_coco.json` 缓存时创建
 - `uploads/pdf_cache/`：聊天 / PDF 相关逻辑按需使用
-- `uploads/autoresearch/`：PathScientist Web session 的默认 `PATHSCIENTIST_BASE_DIR`，用于 conversations、session workspace、logs 与 artifact；可通过环境变量覆盖
+- `uploads/autoresearch/`：AutoResearch Web session 的默认 `AUTORESEARCH_BASE_DIR`，用于 conversations、session workspace、logs 与 artifact；可通过环境变量覆盖
 
-另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同；AI 结果以 `{task_id}.zarr.zip` bundle 形式存放在 `uploads/ai_results_bundles/`，临时 staging 目录位于 `uploads/ai_results_bundles/.staging/`。PathScientist 大型 workspace/artifact 以磁盘为权威，数据库只保存可查询索引、compact summary 和路径。
+另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同；AI 结果以 `{task_id}.zarr.zip` bundle 形式存放在 `uploads/ai_results_bundles/`，临时 staging 目录位于 `uploads/ai_results_bundles/.staging/`。AutoResearch 大型 workspace/artifact 以磁盘为权威，数据库只保存可查询索引、compact summary 和路径。
 
 这已经超出“只存切片文件”的阶段，当前实现同时管理模型、训练结果、日志、缓存和用户上传衍生物。
 

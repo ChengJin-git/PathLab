@@ -37,7 +37,7 @@ from .settings import router as settings_router
 from .gpu import router as gpu_router
 from .annotation import router as annotation_router
 from .training_options import router as training_options_router
-from .pathscientist import router as pathscientist_router
+from .autoresearch import router as autoresearch_router
 
 __all__ = [
     "auth_router",
@@ -57,5 +57,5 @@ __all__ = [
     "gpu_router",
     "annotation_router",
     "training_options_router",
-    "pathscientist_router",
+    "autoresearch_router",
 ]

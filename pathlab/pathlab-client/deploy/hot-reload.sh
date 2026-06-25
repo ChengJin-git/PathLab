@@ -17,9 +17,9 @@ RENDERER_DIR="$PROJECT_DIR/src/renderer"
 LOG_DIR="$PROJECT_DIR/logs"
 
 # Auto-detect Python path.
-# Priority: explicit override > PathScientist venv > project venv > conda > system.
-# The PathScientist venv is preferred because it carries OpenHands/agent deps.
-PATHSCIENTIST_PYTHON="$SERVER_DIR/backend/pathscientist/.venv/bin/python"
+# Priority: explicit override > AutoResearch venv > project venv > conda > system.
+# The AutoResearch venv is preferred because it carries OpenHands/agent deps.
+AUTORESEARCH_PYTHON="$SERVER_DIR/backend/autoresearch/.venv/bin/python"
 PROJECT_VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 
 if [ -n "${PATHLAB_PYTHON:-}" ]; then
@@ -31,8 +31,8 @@ if [ -n "${PATHLAB_PYTHON:-}" ]; then
         echo "Error: PATHLAB_PYTHON is set but not executable/found: $PATHLAB_PYTHON"
         exit 1
     fi
-elif [ -x "$PATHSCIENTIST_PYTHON" ]; then
-    PYTHON="$PATHSCIENTIST_PYTHON"
+elif [ -x "$AUTORESEARCH_PYTHON" ]; then
+    PYTHON="$AUTORESEARCH_PYTHON"
 elif [ -x "$PROJECT_VENV_PYTHON" ]; then
     PYTHON="$PROJECT_VENV_PYTHON"
 elif [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python3" ]; then

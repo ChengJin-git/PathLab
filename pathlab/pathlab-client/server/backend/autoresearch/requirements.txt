@@ -1,0 +1,9 @@
+# AutoResearch-only Python dependencies layered on top of server/requirements.txt.
+# Keep this file small: shared PathLab runtime packages stay in server/requirements.txt.
+
+# Agent runtime. Pinned to the same OpenHands SDK commit used by PathLab.
+openhands-sdk @ git+https://github.com/OpenHands/software-agent-sdk.git@b2e583ba88a44d1795c1ecfba27831dca05fa3ee#subdirectory=openhands-sdk
+openhands-tools @ git+https://github.com/OpenHands/software-agent-sdk.git@b2e583ba88a44d1795c1ecfba27831dca05fa3ee#subdirectory=openhands-tools
+
+# Dataset acquisition providers used by AutoResearch.
+kaggle>=1.7.4

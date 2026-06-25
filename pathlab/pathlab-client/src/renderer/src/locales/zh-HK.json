@@ -1342,7 +1342,7 @@
       "randomSplitUnavailable": "隨機分割不可用"
     }
   },
-  "pathScientist": {
+  "autoResearch": {
     "backToChat": "返回對話",
     "newSession": "新建會話",
     "sessions": "會話列表",

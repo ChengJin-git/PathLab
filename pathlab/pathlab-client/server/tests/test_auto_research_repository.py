@@ -47,7 +47,7 @@ def install_lightweight_repositories_import():
 
 
 AutoResearchRepository = install_lightweight_repositories_import()
-from gateway import pathscientist_persistence
+from gateway import autoresearch_persistence
 
 
 class _ScalarResult:
@@ -241,22 +241,22 @@ async def test_persist_event_syncs_session_summary_from_state_event(monkeypatch)
         return SimpleNamespace(**payload)
 
     monkeypatch.setattr(
-        pathscientist_persistence,
+        autoresearch_persistence,
         "safe_session",
         lambda: _SafeSession(db),
     )
     monkeypatch.setattr(
-        pathscientist_persistence.AutoResearchRepository,
+        autoresearch_persistence.AutoResearchRepository,
         "append_event_once",
         fake_append_event_once,
     )
     monkeypatch.setattr(
-        pathscientist_persistence.AutoResearchRepository,
+        autoresearch_persistence.AutoResearchRepository,
         "upsert_session",
         fake_upsert_session,
     )
 
-    await pathscientist_persistence._persist_event(
+    await autoresearch_persistence._persist_event(
         session_id="s1",
         sequence=11,
         event={
@@ -283,7 +283,7 @@ async def test_persist_event_syncs_session_summary_from_state_event(monkeypatch)
 
 
 def test_state_event_status_infers_terminal_stage_without_explicit_status():
-    status = pathscientist_persistence._event_status(
+    status = autoresearch_persistence._event_status(
         {"kind": "state"},
         state={"stage": "completed"},
         existing_status="running",
@@ -312,7 +312,7 @@ def test_session_payload_keeps_large_artifacts_as_paths_and_metrics_as_json():
         ],
     }
 
-    payload = pathscientist_persistence._session_payload(
+    payload = autoresearch_persistence._session_payload(
         session_id="s1",
         user_id="u1",
         question="train model",
@@ -350,7 +350,7 @@ def test_session_payload_records_recovery_metadata_and_review_content(tmp_path):
         "integrity_report": {"status": "passed"},
     }
 
-    payload = pathscientist_persistence._session_payload(
+    payload = autoresearch_persistence._session_payload(
         session_id="s1",
         user_id="u1",
         question="resume me",
@@ -373,7 +373,7 @@ def test_session_payload_records_recovery_metadata_and_review_content(tmp_path):
 
 
 def test_experiment_payload_uses_run_id_as_training_task_id():
-    payloads = pathscientist_persistence._experiment_payloads(
+    payloads = autoresearch_persistence._experiment_payloads(
         session_id="s1",
         state={
             "run_history": [
@@ -407,7 +407,7 @@ def test_experiment_payload_uses_run_id_as_training_task_id():
 
 
 def test_experiment_payload_records_pathlab_artifact_linkage():
-    payloads = pathscientist_persistence._experiment_payloads(
+    payloads = autoresearch_persistence._experiment_payloads(
         session_id="s1",
         state={
             "run_history": [
@@ -417,7 +417,7 @@ def test_experiment_payload_records_pathlab_artifact_linkage():
                     "metrics": {"auc": 0.91},
                     "committed": True,
                     "run_kind": "training",
-                    "run_dir": "uploads/pathscientist/session_abc/output/runs/run_a",
+                    "run_dir": "uploads/autoresearch/session_abc/output/runs/run_a",
                     "model_path": "uploads/training/task_123/models/best_model.pth",
                     "data_output_dir": "uploads/features/conch/abc123",
                     "data_output_artifacts": [
@@ -467,7 +467,7 @@ def test_session_payload_compact_run_exposes_pathlab_linkage():
         ],
     }
 
-    payload = pathscientist_persistence._session_payload(
+    payload = autoresearch_persistence._session_payload(
         session_id="s1",
         user_id="u1",
         question="train model",
@@ -496,8 +496,8 @@ async def test_persist_session_state_records_pathlab_model_registration(monkeypa
     async def fake_register(_db, **kwargs):
         return {
             "registered": True,
-            "training_task_id": "pathscientist_s1_run_a",
-            "model_id": "pathscientist_s1_run_a_model",
+            "training_task_id": "autoresearch_s1_run_a",
+            "model_id": "autoresearch_s1_run_a_model",
         }
 
     async def fake_upsert_session(_db, payload):
@@ -509,27 +509,27 @@ async def test_persist_session_state_records_pathlab_model_registration(monkeypa
         return SimpleNamespace(**payload)
 
     monkeypatch.setattr(
-        pathscientist_persistence,
+        autoresearch_persistence,
         "safe_session",
         lambda: _SafeSession(db),
     )
     monkeypatch.setattr(
-        pathscientist_persistence,
+        autoresearch_persistence,
         "_safe_register_pathlab_trained_model",
         fake_register,
     )
     monkeypatch.setattr(
-        pathscientist_persistence.AutoResearchRepository,
+        autoresearch_persistence.AutoResearchRepository,
         "upsert_session",
         fake_upsert_session,
     )
     monkeypatch.setattr(
-        pathscientist_persistence.AutoResearchRepository,
+        autoresearch_persistence.AutoResearchRepository,
         "upsert_experiment_by_run_id",
         fake_upsert_experiment_by_run_id,
     )
 
-    await pathscientist_persistence._persist_session_state(
+    await autoresearch_persistence._persist_session_state(
         session_id="s1",
         user_id="u1",
         question="train model",
@@ -546,10 +546,10 @@ async def test_persist_session_state_records_pathlab_model_registration(monkeypa
         "pathlab_model_registration"
     ]
     assert registration["registered"] is True
-    assert registration["model_id"] == "pathscientist_s1_run_a_model"
+    assert registration["model_id"] == "autoresearch_s1_run_a_model"
 
 
-def test_pathscientist_model_candidate_requires_completed_training_model(tmp_path):
+def test_autoresearch_model_candidate_requires_completed_training_model(tmp_path):
     model_path = tmp_path / "best_model.pth"
     model_path.write_text("weights", encoding="utf-8")
 
@@ -583,7 +583,7 @@ def test_pathscientist_model_candidate_requires_completed_training_model(tmp_pat
         ],
     }
 
-    candidate = pathscientist_persistence._pathlab_model_candidate(
+    candidate = autoresearch_persistence._pathlab_model_candidate(
         state=state,
         status="completed",
         stage="completed",
@@ -594,11 +594,11 @@ def test_pathscientist_model_candidate_requires_completed_training_model(tmp_pat
     assert candidate["model_path"] == str(model_path)
 
 
-def test_pathscientist_model_candidate_skips_non_terminal_or_missing_model(tmp_path):
+def test_autoresearch_model_candidate_skips_non_terminal_or_missing_model(tmp_path):
     missing_path = tmp_path / "missing.pth"
 
     assert (
-        pathscientist_persistence._pathlab_model_candidate(
+        autoresearch_persistence._pathlab_model_candidate(
             state={
                 "run_history": [
                     {
@@ -616,7 +616,7 @@ def test_pathscientist_model_candidate_skips_non_terminal_or_missing_model(tmp_p
     )
 
     assert (
-        pathscientist_persistence._pathlab_model_candidate(
+        autoresearch_persistence._pathlab_model_candidate(
             state={
                 "run_history": [
                     {
@@ -634,8 +634,8 @@ def test_pathscientist_model_candidate_skips_non_terminal_or_missing_model(tmp_p
     )
 
 
-def test_pathscientist_model_classes_extracts_common_mapping_shapes():
-    assert pathscientist_persistence._model_classes(
+def test_autoresearch_model_classes_extracts_common_mapping_shapes():
+    assert autoresearch_persistence._model_classes(
         {},
         {
             "metrics": {
@@ -644,7 +644,7 @@ def test_pathscientist_model_classes_extracts_common_mapping_shapes():
         },
     ) == ["LUAD", "LUSC"]
 
-    assert pathscientist_persistence._model_classes(
+    assert autoresearch_persistence._model_classes(
         {},
         {
             "metrics": {
@@ -655,7 +655,7 @@ def test_pathscientist_model_classes_extracts_common_mapping_shapes():
 
 
 @pytest.mark.asyncio
-async def test_register_pathscientist_model_links_features_and_marks_wsi_extracted(
+async def test_register_autoresearch_model_links_features_and_marks_wsi_extracted(
     tmp_path, monkeypatch
 ):
     features_dir = tmp_path / "features" / "virchow2" / "paramsabc"
@@ -697,19 +697,19 @@ async def test_register_pathscientist_model_links_features_and_marks_wsi_extract
         captured_feature_flags["extracted"] = extracted
         return len(wsi_ids)
 
-    monkeypatch.setattr(pathscientist_persistence, "_get_by_pk", fake_get_by_id)
+    monkeypatch.setattr(autoresearch_persistence, "_get_by_pk", fake_get_by_id)
     monkeypatch.setattr(
-        pathscientist_persistence.DataGroupRepository,
+        autoresearch_persistence.DataGroupRepository,
         "get_or_create",
         fake_get_or_create,
     )
     monkeypatch.setattr(
-        pathscientist_persistence.WSIRepository,
+        autoresearch_persistence.WSIRepository,
         "bulk_update_feature_extracted",
         fake_bulk_update_feature_extracted,
     )
 
-    result = await pathscientist_persistence._register_pathlab_trained_model(
+    result = await autoresearch_persistence._register_pathlab_trained_model(
         db,
         session_id="session-abc",
         user_id="user-1",
@@ -737,7 +737,7 @@ async def test_register_pathscientist_model_links_features_and_marks_wsi_extract
     task_features_dir = (
         tmp_path
         / "training"
-        / "pathscientist_session-abc_run_a"
+        / "autoresearch_session-abc_run_a"
         / "features"
     )
     assert result["features_registered"] == 2
@@ -750,12 +750,12 @@ async def test_register_pathscientist_model_links_features_and_marks_wsi_extract
         "wsi_ids": ["slide_001", "slide_002"],
         "extracted": True,
     }
-    task = db.by_type[TrainingTask]["pathscientist_session-abc_run_a"]
+    task = db.by_type[TrainingTask]["autoresearch_session-abc_run_a"]
     assert task.preprocessing_config["task_features_dir"] == str(task_features_dir)
 
 
 @pytest.mark.asyncio
-async def test_register_pathscientist_model_upserts_training_task_and_model(
+async def test_register_autoresearch_model_upserts_training_task_and_model(
     monkeypatch, tmp_path
 ):
     db = _ModelRegistrationDB()
@@ -788,17 +788,17 @@ async def test_register_pathscientist_model_upserts_training_task_and_model(
         return SimpleNamespace(group_id="group_wsi_file_classification")
 
     monkeypatch.setattr(
-        pathscientist_persistence,
+        autoresearch_persistence,
         "_get_by_pk",
         fake_get_by_id,
     )
     monkeypatch.setattr(
-        pathscientist_persistence.DataGroupRepository,
+        autoresearch_persistence.DataGroupRepository,
         "get_or_create",
         fake_get_or_create,
     )
 
-    result = await pathscientist_persistence._register_pathlab_trained_model(
+    result = await autoresearch_persistence._register_pathlab_trained_model(
         db,
         session_id="session-abc",
         user_id="user-1",
@@ -831,21 +831,21 @@ async def test_register_pathscientist_model_upserts_training_task_and_model(
     )
 
     assert result["registered"] is True
-    assert result["training_task_id"] == "pathscientist_session-abc_run_a"
-    assert result["model_id"] == "pathscientist_session-abc_run_a_model"
+    assert result["training_task_id"] == "autoresearch_session-abc_run_a"
+    assert result["model_id"] == "autoresearch_session-abc_run_a_model"
     assert captured_group["data_type"] == "wsi"
     assert captured_group["aggregation_level"] == "file"
     assert captured_group["task_type"] == "classification"
 
-    task = db.by_type[TrainingTask]["pathscientist_session-abc_run_a"]
-    assert task.task_name == "PathScientist: train tcga nsclc with ABMIL"
+    task = db.by_type[TrainingTask]["autoresearch_session-abc_run_a"]
+    assert task.task_name == "AutoResearch: train tcga nsclc with ABMIL"
     assert task.status == "completed"
     assert task.progress == 100
-    assert task.preprocessing_config["source"] == "pathscientist"
+    assert task.preprocessing_config["source"] == "autoresearch"
     assert task.preprocessing_config["features_dir"].endswith("features")
     assert task.model_config["aggregator"] == "ABMIL"
 
-    model = db.by_type[TrainedModel]["pathscientist_session-abc_run_a_model"]
+    model = db.by_type[TrainedModel]["autoresearch_session-abc_run_a_model"]
     assert model.task_id == task.task_id
     assert model.user_id == "user-1"
     assert model.model_path == str(model_path)

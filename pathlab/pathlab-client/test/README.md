@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-本目录包含 PathLab 前端的单元测试套件，覆盖 API 客户端、工具函数、Context、页面和组件等主要业务模块。`2026-06-23` 加入的 AutoResearch（实现 codename：PathScientist）前端也通过本测试树覆盖。
+本目录包含 PathLab 前端的单元测试套件，覆盖 API 客户端、工具函数、Context、页面和组件等主要业务模块。`2026-06-23` 加入的 AutoResearch（实现 codename：AutoResearch）前端也通过本测试树覆盖。
 
 当前测试清单以 `test/**/*.test.{ts,tsx}` 为准；README 只记录稳定的目录分层和代表性测试对象，不把所有测试文件数量写死。
 
@@ -55,7 +55,7 @@ test/
     │   ├── export.test.ts
     │   ├── feedback.test.ts
     │   ├── grants.test.ts
-    │   ├── pathscientist.test.ts
+    │   ├── autoresearch.test.ts
     │   ├── queue.test.ts
     │   ├── settings.test.ts
     │   ├── storage.test.ts
@@ -70,7 +70,7 @@ test/
         └── **/*.test.tsx
 ```
 
-PathScientist 前端测试分布在 `unit/api/pathscientist.test.ts`、`unit/pages/PathScientist*.test.tsx`、`unit/components/pathscientist/**/*.test.tsx` 与 `unit/lib/pathscientist*.test.ts(x)`。后端 pytest 套件位于 `server/tests/`，覆盖 Gateway 路由、权限边界、任务队列、存储、分析、AI 结果、PathScientist 路由/进程注册与 GPU/模型 smoke；PathScientist package 自身测试位于 `server/backend/pathscientist/tests/`，详见 `server/README.md`。
+AutoResearch 前端测试分布在 `unit/api/autoresearch.test.ts`、`unit/pages/AutoResearch*.test.tsx`、`unit/components/autoresearch/**/*.test.tsx` 与 `unit/lib/autoresearch*.test.ts(x)`。后端 pytest 套件位于 `server/tests/`，覆盖 Gateway 路由、权限边界、任务队列、存储、分析、AI 结果、AutoResearch 路由/进程注册与 GPU/模型 smoke；AutoResearch package 自身测试位于 `server/backend/autoresearch/tests/`，详见 `server/README.md`。
 
 ---
 

@@ -1342,7 +1342,7 @@
       "randomSplitUnavailable": "Random split is not available"
     }
   },
-  "pathScientist": {
+  "autoResearch": {
     "backToChat": "Back to Chat",
     "newSession": "New Session",
     "sessions": "Sessions",

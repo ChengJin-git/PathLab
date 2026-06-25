@@ -1,0 +1,163 @@
+name: feature_extraction
+coarse_task_type: feature_extraction
+description: >
+  Extract patch-level features from Whole Slide Images using PathLab's real pipeline:
+  1. TissueSegmenter (CLAM-style HSV + Otsu + morphology → tissue contours)
+  2. WSITiler (contour-based tiling with MPP-aware patch sizing → coords.h5)
+  3. WSIPatchDataset (load patches by HDF5 coordinates → DataLoader)
+  4. Extractor (batch forward pass through pretrained backbone → features.pt)
+
+template: feature_extraction_template.py
+template_files:
+  feature_extraction_launcher.sh: feature_extraction_launcher.sh
+  feature_extraction_worker.py: feature_extraction_worker.py
+  feature_extraction_aggregate.py: feature_extraction_aggregate.py
+
+task_types: [feature_extraction, preprocessing]
+
+modifiable_zones:
+  - extractor       # backbone model: 20 pretrained or custom
+  - preprocessing   # seg_params, filter_params, patch_size, MPP handling
+  - augmentation    # stain normalization, TTA, color jitter
+  - hyperparams     # batch_size, num_workers, min_patches, contour_fn
+
+environment:
+  extra_packages:
+    - openslide-python
+    - timm
+    - opencv-python-headless
+    - h5py
+
+dataset:
+  format: whole_slide_images
+  pipeline:
+    step1_segmentation:
+      method: "CLAM-style HSV + Otsu/binary + morphological closing + contour hierarchy"
+      code: "common/preprocessing/tiling.py → TissueSegmenter"
+      params: [sthresh, mthresh, close, use_otsu, a_t, a_h, max_n_holes]
+    step2_tiling:
+      method: "Contour-based grid tiling with MPP-aware patch/stride auto-adjustment"
+      code: "common/preprocessing/tiling.py → WSITiler"
+      params: [patch_size, stride, contour_fn, use_padding, native_mpp]
+      mpp_mapping:
+        "20x (mpp≈0.5)": "patch=256, stride=256"
+        "40x (mpp≈0.25)": "patch=512, stride=512"
+        "80x (mpp≈0.125)": "patch=1024, stride=1024"
+    step3_loading:
+      method: "HDF5 coordinate-based patch reading via WSIPatchDataset"
+      code: "common/dataset.py → WSIPatchDataset + build_dataloader"
+      output: "coords.h5 with shape (N,2) int32 + preprocessing attrs"
+    step4_extraction:
+      method: "Frozen pretrained encoder batch forward pass"
+      code: "common/extractors/registry.py → get_extractor(name)"
+      output: "features.pt with shape (N_patches, D)"
+  structure:
+    wsi_files: "wsi_files/{wsi_id}.svs"
+    coordinates: "coordinates/{wsi_id}_coords.h5"
+    features: "features/{extractor_name}/{wsi_id}.pt"
+  supported_formats: [svs, ndpi, tiff, tif, mrxs, scn, bif]
+  csv_format:
+    required_columns: [filename]
+    optional_columns: [label, case_id, split]
+    example: |
+      filename,label,case_id
+      slide_001.svs,Tumor,CASE001
+      slide_002.ndpi,Normal,CASE002
+
+inputs:
+  wsi_dir: /data/wsi_files
+  output_dir: /results
+
+outputs:
+  features: /results/features/{extractor_name}/{wsi_id}.pt
+  coordinates: /results/coordinates/{wsi_id}_coords.h5
+  metadata: /results/extraction_meta.json
+  metrics: /results/metrics.json
+
+output_convention: >
+  When DATA_OUTPUT_DIR is a PathLab uploads repository, features and coordinates
+  are saved following PathLab's canonical cache convention:
+    {output_dir}/features/{extractor_name}/{wsi_id}.pt
+    {output_dir}/coordinates/{wsi_id}_coords.h5
+  Non-PathLab standalone datasets may still use the legacy fallback
+  {output_dir}/pt_files/{extractor_name} and {output_dir}/patches.
+
+evaluation:
+  primary_metric: patches_extracted
+  secondary_metrics: [extraction_time, patches_per_slide]
+
+constraints:
+  - "Before extraction, check if output already has matching feature and coordinate files for all WSIs — skip entirely if counts match"
+  - "For PathLab uploads repositories, save features to {output_dir}/features/{extractor_name}/{wsi_id}.pt"
+  - "For PathLab uploads repositories, save coordinates to {output_dir}/coordinates/{wsi_id}_coords.h5"
+  - "Feature tensor shape must be (N_patches, D) where D is extractor output_dim"
+  - "Must save extraction_meta.json and metrics.json in output_dir"
+  - "Must use torch.no_grad() during extraction (frozen encoder, no training)"
+  - "Must handle GPU memory: process patches in batches"
+  - "Default to a pathology foundation model (UNI2/CONCH/Virchow2/H-Optimus-1/GPFM) — do NOT pick ImageNet ResNet50/ViT-L/16 as the primary extractor; they are ablation-only"
+  - "Use PathLab's TissueSegmenter for tissue detection (not simple thresholding)"
+  - "Use WSITiler for coordinate generation (supports MPP-aware auto-sizing)"
+  - "Coordinates saved as HDF5 with preprocessing params in attrs"
+  - "Do NOT generate synthetic/mock/demo/dummy slides, coordinates, features, or metrics when input WSIs are missing; fail with a data-readiness error instead."
+  - "Script must have extract() function or if __name__ == '__main__' entry point"
+  - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
+  - "For raw WSI feature extraction, use feature_extraction_launcher.sh via run_experiment with script_type=bash and run_kind=feature_extraction."
+  - "Default feature extraction to one Python worker on the first visible GPU; use slide-level sharding only when AUTORESEARCH_FEATURE_GPUS is explicitly set to all or a GPU list."
+  - "Do not use pgrep or log-tail success detection; use worker status JSON plus process exit codes."
+  - "Use atomic writes for .pt and .h5 artifacts to avoid stale partial caches."
+  - "PathLab uploads layout: when DATA_DIR points at PathLab's upload repository, raw slides live in wsi_files/, global feature cache lives in features/<extractor>/{wsi_id}.pt, task feature views may live in training/<task_id>/features/{wsi_id}.pt, coordinates in coordinates/{wsi_id}_coords.h5, and slide metadata in metadata/{wsi_id}.json."
+
+reference_code:
+  tissue_segmenter: common/preprocessing/tiling.py
+  wsi_tiler: common/preprocessing/tiling.py
+  coords_utils: common/preprocessing/coords_utils.py
+  patch_dataset: common/dataset.py
+  extractor_base: common/extractors/base.py
+  extractor_registry: common/extractors/registry.py
+  transforms: common/extractors/transforms.py
+  pathlab_trainer: server/backend/ai/tasks/wsi_classification/trainer.py
+
+extractors_available:
+  pathology_foundation:           # General histology foundation models — preferred default
+    - {name: UNI,           dim: 1024, size: 224, origin: "Mahmood Lab"}
+    - {name: UNI2,          dim: 1536, size: 224, origin: "Mahmood Lab"}
+    - {name: CONCH,         dim: 512,  size: 224, origin: "Mahmood Lab"}
+    - {name: "CONCH 1.5",   dim: 512,  size: 224, origin: "Mahmood Lab"}
+    - {name: Virchow,       dim: 1280, size: 224, origin: "Paige AI"}
+    - {name: Virchow2,      dim: 1280, size: 224, origin: "Paige AI"}
+    - {name: Phikon,        dim: 1024, size: 224, origin: "Owkin"}
+    - {name: Phikon2,       dim: 1024, size: 224, origin: "Owkin"}
+    - {name: mSTAR,         dim: 1024, size: 224, origin: "HKUST Smart Lab"}
+    - {name: GPFM,          dim: 1024, size: 224, origin: "HKUST Smart Lab"}
+    - {name: "H-Optimus-0", dim: 1536, size: 224, origin: "Bioptimus"}
+    - {name: "H-Optimus-1", dim: 1536, size: 224, origin: "Bioptimus"}
+    - {name: OpenMidnight,  dim: 1536, size: 224, origin: "SophontAI"}
+  vision_language:                # Vision-language pretrained — for zero-shot or text-aware tasks
+    - {name: PLIP,          dim: 512,  size: 224, origin: "James Zou Group"}
+    - {name: PathoCLIP,     dim: 512,  size: 224, origin: "Hong Bu Lab"}
+  pathology_specialized:          # Domain-specific FMs — pick only when task matches domain
+    - {name: SmartCCS,      dim: 1024, size: 224, origin: "HKUST Smart Lab", domain: "cervical cancer screening"}
+    - {name: SmartCyto,     dim: 768,  size: 224, origin: "HKUST Smart Lab", domain: "cytology"}
+    - {name: CytoFM,        dim: 768,  size: 224, origin: "HKUST Smart Lab", domain: "cytology"}
+  imagenet_baseline:              # ImageNet-pretrained — only for ablation / comparison
+    - {name: ResNet50,      dim: 2048, size: 224, origin: "ImageNet"}
+    - {name: "ViT-L/16",    dim: 1024, size: 224, origin: "ImageNet"}
+
+default_extractor: Virchow2
+
+extractor_selection_guidance: >
+  By default, pick a pathology_foundation extractor (Virchow2 / UNI2 / CONCH /
+  H-Optimus-1 / GPFM are strong general-purpose choices). Pathology FMs
+  consistently outperform ImageNet backbones on histology tasks.
+
+  Use vision_language extractors (PLIP, PathoCLIP) only when the task needs
+  text alignment (zero-shot classification, retrieval, captioning).
+
+  Use pathology_specialized only when the task explicitly matches their domain:
+    - cervical cancer screening → SmartCCS
+    - cytology smears → SmartCyto / CytoFM
+
+  Use imagenet_baseline (ResNet50, ViT-L/16) ONLY as ablation baselines for
+  comparison. Never select an ImageNet backbone as the primary extractor.
+
+knowhow_tags: [feature_extraction, WSI, tiling, preprocessing, encoder, backbone, foundation_model, UNI, CONCH, Virchow, Phikon, H-Optimus, GPFM, mSTAR, CLAM, tissue_segmentation]

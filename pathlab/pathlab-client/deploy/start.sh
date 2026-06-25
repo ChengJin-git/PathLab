@@ -13,9 +13,9 @@ LOG_DIR="$PROJECT_DIR/logs"
 FRONTEND_BUILD_LOG="$LOG_DIR/frontend-build.log"
 
 # Auto-detect Python path.
-# Priority: explicit override > PathScientist venv > project venv > conda > system.
-# The PathScientist venv is preferred because it carries OpenHands/agent deps.
-PATHSCIENTIST_PYTHON="$SERVER_DIR/backend/pathscientist/.venv/bin/python"
+# Priority: explicit override > AutoResearch venv > project venv > conda > system.
+# The AutoResearch venv is preferred because it carries OpenHands/agent deps.
+AUTORESEARCH_PYTHON="$SERVER_DIR/backend/autoresearch/.venv/bin/python"
 PROJECT_VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
 
 if [ -n "${PATHLAB_PYTHON:-}" ]; then
@@ -27,8 +27,8 @@ if [ -n "${PATHLAB_PYTHON:-}" ]; then
         echo "Error: PATHLAB_PYTHON is set but not executable/found: $PATHLAB_PYTHON"
         exit 1
     fi
-elif [ -x "$PATHSCIENTIST_PYTHON" ]; then
-    PYTHON="$PATHSCIENTIST_PYTHON"
+elif [ -x "$AUTORESEARCH_PYTHON" ]; then
+    PYTHON="$AUTORESEARCH_PYTHON"
 elif [ -x "$PROJECT_VENV_PYTHON" ]; then
     PYTHON="$PROJECT_VENV_PYTHON"
 elif [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python3" ]; then
@@ -48,7 +48,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 
-load_pathscientist_env_file() {
+load_autoresearch_env_file() {
     local env_file="$1"
     if [ ! -f "$env_file" ]; then
         return 0
@@ -73,7 +73,7 @@ load_pathscientist_env_file() {
         key="${key%"${key##*[![:space:]]}"}"
         value="${value#"${value%%[![:space:]]*}"}"
         value="${value%"${value##*[![:space:]]}"}"
-        if [[ "$key" != PATHSCIENTIST_* && "$key" != APPTAINER_BIN && "$key" != PATHLAB_SANDBOX_IMAGE ]]; then
+        if [[ "$key" != AUTORESEARCH_* && "$key" != APPTAINER_BIN && "$key" != PATHLAB_SANDBOX_IMAGE ]]; then
             continue
         fi
         if [[ "$value" == \"*\" && "$value" == *\" ]]; then
@@ -112,9 +112,9 @@ resolve_apptainer_bin() {
     return 1
 }
 
-resolve_pathscientist_sandbox_image() {
-    if [ -n "${PATHSCIENTIST_SANDBOX_IMAGE:-}" ]; then
-        echo "$PATHSCIENTIST_SANDBOX_IMAGE"
+resolve_autoresearch_sandbox_image() {
+    if [ -n "${AUTORESEARCH_SANDBOX_IMAGE:-}" ]; then
+        echo "$AUTORESEARCH_SANDBOX_IMAGE"
         return 0
     fi
     if [ -n "${PATHLAB_SANDBOX_IMAGE:-}" ]; then
@@ -124,18 +124,18 @@ resolve_pathscientist_sandbox_image() {
 
     local candidate
     for candidate in \
-        "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox-transformers.sif" \
-        "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif"; do
+        "$PROJECT_DIR/.local/autoresearch/sandbox/pathlab-sandbox-transformers.sif" \
+        "$PROJECT_DIR/.local/autoresearch/sandbox/pathlab-sandbox.sif"; do
         if [ -f "$candidate" ]; then
             echo "$candidate"
             return 0
         fi
     done
 
-    echo "$PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif"
+    echo "$PROJECT_DIR/.local/autoresearch/sandbox/pathlab-sandbox.sif"
 }
 
-check_pathscientist_python_packages() {
+check_autoresearch_python_packages() {
     OPENHANDS_SUPPRESS_BANNER=1 "$PYTHON" - <<'PYCODE'
 import importlib
 import importlib.util
@@ -149,23 +149,23 @@ for module_name in required:
         missing.append((module_name, "module not installed"))
 
 if missing:
-    print("Missing PathScientist Python dependencies:")
+    print("Missing AutoResearch Python dependencies:")
     for module_name, exc in missing:
         print(f"  - {module_name}: {exc}")
     sys.exit(1)
 
 import torch
 print(
-    "  PathScientist Python packages OK "
+    "  AutoResearch Python packages OK "
     f"(torch={torch.__version__}, cuda_available={torch.cuda.is_available()})"
 )
 PYCODE
 }
 
-install_pathscientist_python_packages() {
-    local package_dir="$SERVER_DIR/backend/pathscientist"
+install_autoresearch_python_packages() {
+    local package_dir="$SERVER_DIR/backend/autoresearch"
 
-    echo -e "  ${YELLOW}[!]${NC} PathScientist Python dependencies missing, installing..."
+    echo -e "  ${YELLOW}[!]${NC} AutoResearch Python dependencies missing, installing..."
     if ! "$PYTHON" -m pip --version > /dev/null 2>&1; then
         "$PYTHON" -m ensurepip --upgrade
     fi
@@ -180,17 +180,17 @@ install_pathscientist_python_packages() {
     )
 }
 
-check_pathscientist_sandbox() {
-    local sandbox_mode="${PATHSCIENTIST_SANDBOX:-auto}"
+check_autoresearch_sandbox() {
+    local sandbox_mode="${AUTORESEARCH_SANDBOX:-auto}"
     case "$sandbox_mode" in
         local)
-            echo -e "  ${YELLOW}[!]${NC} PATHSCIENTIST_SANDBOX=local, skip Apptainer check"
+            echo -e "  ${YELLOW}[!]${NC} AUTORESEARCH_SANDBOX=local, skip Apptainer check"
             return 0
             ;;
         auto|apptainer|"")
             ;;
         *)
-            echo -e "${RED}[✗]${NC} Unsupported PATHSCIENTIST_SANDBOX=$sandbox_mode (expected auto, apptainer, or local)"
+            echo -e "${RED}[✗]${NC} Unsupported AUTORESEARCH_SANDBOX=$sandbox_mode (expected auto, apptainer, or local)"
             return 1
             ;;
     esac
@@ -206,21 +206,21 @@ check_pathscientist_sandbox() {
     fi
 
     local sandbox_image
-    sandbox_image=$(resolve_pathscientist_sandbox_image)
+    sandbox_image=$(resolve_autoresearch_sandbox_image)
     if [ ! -f "$sandbox_image" ]; then
-        echo -e "${RED}[✗]${NC} PathScientist sandbox image not found: $sandbox_image"
-        echo -e "    Build it with: apptainer build --fakeroot --force $PROJECT_DIR/.local/pathscientist/sandbox/pathlab-sandbox.sif $SERVER_DIR/backend/pathscientist/runtime/containers/pathlab-sandbox.def"
+        echo -e "${RED}[✗]${NC} AutoResearch sandbox image not found: $sandbox_image"
+        echo -e "    Build it with: apptainer build --fakeroot --force $PROJECT_DIR/.local/autoresearch/sandbox/pathlab-sandbox.sif $SERVER_DIR/backend/autoresearch/runtime/containers/pathlab-sandbox.def"
         return 1
     fi
 
-    export PATHSCIENTIST_SANDBOX="$sandbox_mode"
-    export PATHSCIENTIST_SANDBOX_IMAGE="$sandbox_image"
+    export AUTORESEARCH_SANDBOX="$sandbox_mode"
+    export AUTORESEARCH_SANDBOX_IMAGE="$sandbox_image"
     echo -e "  ${GREEN}[✓]${NC} Apptainer OK: $apptainer_bin"
-    echo -e "  ${GREEN}[✓]${NC} PathScientist sandbox image: $sandbox_image"
+    echo -e "  ${GREEN}[✓]${NC} AutoResearch sandbox image: $sandbox_image"
 }
 
-check_pathscientist_environment() {
-    echo -e "${YELLOW}[0/5]${NC} 检查 PathScientist 环境..."
+check_autoresearch_environment() {
+    echo -e "${YELLOW}[0/5]${NC} 检查 AutoResearch 环境..."
 
     if [ -f "$SERVER_DIR/.env" ]; then
         set -a
@@ -228,14 +228,14 @@ check_pathscientist_environment() {
         set +a
     fi
 
-    load_pathscientist_env_file "${PATHSCIENTIST_ENV_FILE:-$SERVER_DIR/backend/pathscientist/.env.local}"
+    load_autoresearch_env_file "${AUTORESEARCH_ENV_FILE:-$SERVER_DIR/backend/autoresearch/.env.local}"
 
-    if ! check_pathscientist_python_packages; then
-        install_pathscientist_python_packages
-        check_pathscientist_python_packages
+    if ! check_autoresearch_python_packages; then
+        install_autoresearch_python_packages
+        check_autoresearch_python_packages
     fi
-    check_pathscientist_sandbox
-    echo -e "${GREEN}[✓]${NC} PathScientist 环境检查通过"
+    check_autoresearch_sandbox
+    echo -e "${GREEN}[✓]${NC} AutoResearch 环境检查通过"
 }
 
 echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
@@ -253,7 +253,7 @@ if systemctl is-active --quiet pathlab 2>/dev/null; then
     exit 1
 fi
 
-check_pathscientist_environment
+check_autoresearch_environment
 
 # ========== Step 1: 停止旧进程 ==========
 echo -e "${YELLOW}[1/5]${NC} 停止旧进程..."

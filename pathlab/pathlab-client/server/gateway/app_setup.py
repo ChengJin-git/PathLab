@@ -17,7 +17,7 @@ from .routes import (
     gpu_router,
     heatmap_router,
     models_router,
-    pathscientist_router,
+    autoresearch_router,
     queue_router,
     results_router,
     settings_router,
@@ -48,7 +48,7 @@ API_ROUTERS: tuple[APIRouter, ...] = (
     gpu_router,
     annotation_router,
     training_options_router,
-    pathscientist_router,
+    autoresearch_router,
 )
 
 

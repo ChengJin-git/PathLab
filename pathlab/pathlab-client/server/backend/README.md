@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`server/backend/` 存放 Gateway 共享的核心后端模块、两个内部 FastAPI 服务（Preprocessing / AI）的具体实现，以及 AutoResearch（实现 codename：PathScientist）的后端运行时。PathScientist 于 `2026-06-23` 加入当前代码库。
+`server/backend/` 存放 Gateway 共享的核心后端模块、两个内部 FastAPI 服务（Preprocessing / AI）的具体实现，以及 AutoResearch（实现 codename：AutoResearch）的后端运行时。AutoResearch 于 `2026-06-23` 加入当前代码库。
 
 ## 当前模块划分
 
@@ -13,7 +13,7 @@ backend/
 ├── common/           # 配置、Redis、端口与通用工具
 ├── database/         # SQLAlchemy 模型、Session、Repository
 ├── annotation/       # 协作标注 pubsub、presence、COCO/summary 辅助
-├── pathscientist/    # AutoResearch runtime、实验编排、持久化、sandbox 与技能模板
+├── autoresearch/    # AutoResearch runtime、实验编排、持久化、sandbox 与技能模板
 ├── preprocessing/    # WSI 信息 / 图像 / DZI / Tile / Heatmap 服务
 └── storage/          # 存储统计、迁移、孤立文件处理
 ```
@@ -57,21 +57,21 @@ backend/
 
 它本身不是独立服务，而是由 Gateway 标注路由与 Preprocessing 的 ROI / COCO 相关流程复用。
 
-## PathScientist / AutoResearch 现状
+## AutoResearch / AutoResearch 现状
 
-入口目录：`backend/pathscientist/`
+入口目录：`backend/autoresearch/`
 
-PathScientist 是 AutoResearch 的实现 codename。它不是独立 HTTP 服务，而是由 Gateway 的 `pathscientist_router` 调用后端 package 来创建、恢复、停止和导出自动研究会话。
+AutoResearch 是 AutoResearch 的实现 codename。它不是独立 HTTP 服务，而是由 Gateway 的 `autoresearch_router` 调用后端 package 来创建、恢复、停止和导出自动研究会话。
 
 当前目录承担的主要职责包括：
 
-- CLI/headless runtime 与 OpenHands/PathScientist 会话编排
+- CLI/headless runtime 与 OpenHands/AutoResearch 会话编排
 - 基于 PathLab dataset 的数据集获取、workspace 准备与 artifact 归档
 - 文献检索、RAG、domain skills/templates、实验综合报告与 know-how 记录
 - session/run 生命周期、事件投影、resume metadata 与 DB best-effort persistence
 - Apptainer / sandbox runtime recipes 与部署 quickstart 文档
 
-完整架构、运行命令、部署 quickstart 与 Apptainer sandbox 说明见 [PathScientist README](pathscientist/README.md)。
+完整架构、运行命令、部署 quickstart 与 Apptainer sandbox 说明见 [AutoResearch README](autoresearch/README.md)。
 
 ## Shared Infrastructure
 
@@ -111,12 +111,12 @@ PathScientist 是 AutoResearch 的实现 codename。它不是独立 HTTP 服务�
 - `backend/common/config.py` 会确保 `avatars`、`coordinates`、`masks`、`features`、`ai_results_bundles`、`training`、`models`、`extractor_checkpoints`、`logs`、`wsi_files`、`metadata`、`progress` 等目录存在
 - `backend/annotation/` 当前已成为标注协作与 COCO/summary 辅助逻辑的独立共享模块
 - 长任务执行边界当前在 `server/task_worker/`，`backend/ai/` 提供任务实现、模型注册和训练 / 推理内部能力
-- AutoResearch/PathScientist 的用户态会话由 Gateway 暴露，后端 package 保留完整 workspace/artifact 于磁盘，同时将 compact 历史与事件投影写入数据库便于列表、恢复和回放
+- AutoResearch/AutoResearch 的用户态会话由 Gateway 暴露，后端 package 保留完整 workspace/artifact 于磁盘，同时将 compact 历史与事件投影写入数据库便于列表、恢复和回放
 
 ## 相关文档
 
 - [Server README](../README.md)
 - [Gateway README](../gateway/README.md)
-- [PathScientist README](pathscientist/README.md)
+- [AutoResearch README](autoresearch/README.md)
 - [Database README](database/README.md)
 - [Storage README](storage/README.md)

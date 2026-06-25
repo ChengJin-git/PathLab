@@ -673,7 +673,7 @@ async def init_db():
                 "ON auto_research_events (session_id, sequence)"
             )
         )
-        logger.info("auto_research PathScientist recovery columns and event index ensured")
+        logger.info("auto_research AutoResearch recovery columns and event index ensured")
 
     await _enforce_data_group_task_taxonomy_constraint()
     await _create_default_admin()

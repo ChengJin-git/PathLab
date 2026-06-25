@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。`2026-06-23` 起，AutoResearch（实现 codename：PathScientist）也通过 Gateway 暴露用户态会话 API。
+Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。`2026-06-23` 起，AutoResearch（实现 codename：AutoResearch）也通过 Gateway 暴露用户态会话 API。
 
 ## 当前应用行为
 
@@ -51,7 +51,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 15. `gpu`
 16. `annotation`
 17. `training_options`
-18. `pathscientist`
+18. `autoresearch`
 
 这些 router 覆盖了当前主要公开能力：
 
@@ -62,7 +62,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 - AI 对话、会话历史、网页检索、PDF 缓存 / 向量检索与反馈
 - 存储统计、扫描、清理与配置
 - GPU 信息、热图、标注、系统设置
-- AutoResearch / PathScientist 技能列表、会话创建、恢复、停止、删除、历史回放、SSE 事件流与 artifact 下载
+- AutoResearch / AutoResearch 技能列表、会话创建、恢复、停止、删除、历史回放、SSE 事件流与 artifact 下载
 
 ## 路由目录现状
 
@@ -119,25 +119,25 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 
 因此 `/storage` 不是单一文件，而是一组聚合后的存储管理路由。
 
-## PathScientist 路由（AutoResearch）
+## AutoResearch 路由（AutoResearch）
 
-`routes/pathscientist.py` 当前定义 `APIRouter(prefix="/pathscientist", tags=["pathscientist"])`。`app_setup.py` 会同时直接注册 router，并以 `/api` prefix 再注册一次，因此浏览器/API 客户端可访问 `/pathscientist/...` 与 `/api/pathscientist/...` 两套路径。
+`routes/autoresearch.py` 当前定义 `APIRouter(prefix="/autoresearch", tags=["autoresearch"])`。`app_setup.py` 会同时直接注册 router，并以 `/api` prefix 再注册一次，因此浏览器/API 客户端可访问 `/autoresearch/...` 与 `/api/autoresearch/...` 两套路径。
 
 当前公开端点包括：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/pathscientist/skills` | 列出可用 AutoResearch / PathScientist skills |
-| `POST` | `/pathscientist/sessions` | 创建自动研究 session；可解析 PathLab dataset mounts |
-| `GET` | `/pathscientist/sessions` | 列出当前用户可见 session，可选包含持久化历史 |
-| `GET` | `/pathscientist/sessions/{session_id}` | 读取 session 摘要、状态与事件投影 |
-| `POST` | `/pathscientist/sessions/{session_id}/resume` | 恢复可恢复 session |
-| `POST` | `/pathscientist/sessions/{session_id}/stop` | 停止运行中 session |
-| `DELETE` | `/pathscientist/sessions/{session_id}` | 删除可删除 session |
-| `POST` | `/pathscientist/sessions/{session_id}/access-token` | 为 SSE/download 场景签发 PathScientist 专用短期 access token |
-| `GET` | `/pathscientist/sessions/{session_id}/events` | SSE 事件流；使用 PathScientist access token |
-| `GET` | `/pathscientist/sessions/{session_id}/download` | 下载 session workspace/artifact zip |
-| `GET` | `/pathscientist/sessions/{session_id}/runs/{run_id}/download` | 下载单个 run artifact zip |
+| `GET` | `/autoresearch/skills` | 列出可用 AutoResearch / AutoResearch skills |
+| `POST` | `/autoresearch/sessions` | 创建自动研究 session；可解析 PathLab dataset mounts |
+| `GET` | `/autoresearch/sessions` | 列出当前用户可见 session，可选包含持久化历史 |
+| `GET` | `/autoresearch/sessions/{session_id}` | 读取 session 摘要、状态与事件投影 |
+| `POST` | `/autoresearch/sessions/{session_id}/resume` | 恢复可恢复 session |
+| `POST` | `/autoresearch/sessions/{session_id}/stop` | 停止运行中 session |
+| `DELETE` | `/autoresearch/sessions/{session_id}` | 删除可删除 session |
+| `POST` | `/autoresearch/sessions/{session_id}/access-token` | 为 SSE/download 场景签发 AutoResearch 专用短期 access token |
+| `GET` | `/autoresearch/sessions/{session_id}/events` | SSE 事件流；使用 AutoResearch access token |
+| `GET` | `/autoresearch/sessions/{session_id}/download` | 下载 session workspace/artifact zip |
+| `GET` | `/autoresearch/sessions/{session_id}/runs/{run_id}/download` | 下载单个 run artifact zip |
 
 权限边界：除 artifact/SSE 使用专用 access token 外，session 管理端点依赖 `current_active_user`，并用 session owner/admin 逻辑过滤访问；历史索引通过 `AutoResearchRepository` 与 `auto_research_*` 表 best-effort 回放，完整 workspace/artifact 保留在磁盘。
 
@@ -174,7 +174,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 
 - Preprocessing：提供 WSI 信息、图像、缩略图、DZI、瓦片等底层接口
 - AI：提供训练、推理等内部能力
-- PathScientist：通过 `backend/pathscientist/` 提供 AutoResearch 编排、workspace、artifact 与持久化辅助，不作为独立 sidecar 暴露
+- AutoResearch：通过 `backend/autoresearch/` 提供 AutoResearch 编排、workspace、artifact 与持久化辅助，不作为独立 sidecar 暴露
 - Database / Storage：通过 `backend/` 共享模块提供 ORM、仓储、文件系统能力
 
 ## 阅读建议

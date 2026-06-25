@@ -16,12 +16,12 @@ import RegisterPage from './pages/UploadPage'
 import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
 import ToolsPage from './pages/ToolsPage'
-import PathScientistLayout from './components/pathscientist/PathScientistLayout'
-import PathScientistSessionsPage from './pages/PathScientistSessionsPage'
-import PathScientistWorkspaceLayout from './components/pathscientist/PathScientistWorkspaceLayout'
-import PathScientistNewSessionPage from './pages/PathScientistNewSessionPage'
-import PathScientistSessionPage from './pages/PathScientistSessionPage'
-import { isPathScientistStandaloneMode } from './lib/pathscientistStandalone'
+import AutoResearchLayout from './components/autoresearch/AutoResearchLayout'
+import AutoResearchSessionsPage from './pages/AutoResearchSessionsPage'
+import AutoResearchWorkspaceLayout from './components/autoresearch/AutoResearchWorkspaceLayout'
+import AutoResearchNewSessionPage from './pages/AutoResearchNewSessionPage'
+import AutoResearchSessionPage from './pages/AutoResearchSessionPage'
+import { isAutoResearchStandaloneMode } from './lib/autoresearchStandalone'
 
 function NotFoundPage() {
   const { t } = useTranslation()
@@ -36,40 +36,40 @@ function NotFoundPage() {
 }
 
 interface AppProps {
-  pathScientistStandalone?: boolean
+  autoResearchStandalone?: boolean
 }
 
-function pathScientistRouteElements(useMainLayout: boolean) {
-  const workspace = <PathScientistWorkspaceLayout />
+function autoResearchRouteElements(useMainLayout: boolean) {
+  const workspace = <AutoResearchWorkspaceLayout />
   const shell = useMainLayout ? (
     <ProtectedRoute>
       <Layout>{workspace}</Layout>
     </ProtectedRoute>
   ) : (
-    <PathScientistLayout>{workspace}</PathScientistLayout>
+    <AutoResearchLayout>{workspace}</AutoResearchLayout>
   )
 
   return (
-    <Route path="/pathscientist" element={shell}>
+    <Route path="/autoresearch" element={shell}>
       <Route index element={<Navigate to="new" replace />} />
-      <Route path="new" element={<PathScientistNewSessionPage />} />
-      <Route path="sessions/:id" element={<PathScientistSessionPage />} />
+      <Route path="new" element={<AutoResearchNewSessionPage />} />
+      <Route path="sessions/:id" element={<AutoResearchSessionPage />} />
     </Route>
   )
 }
 
-export default function App({ pathScientistStandalone }: AppProps = {}) {
-  const standalone = pathScientistStandalone ?? isPathScientistStandaloneMode({
+export default function App({ autoResearchStandalone }: AppProps = {}) {
+  const standalone = autoResearchStandalone ?? isAutoResearchStandaloneMode({
     isElectron: !!(window as any).electron || window.location.protocol === 'file:',
   })
 
   if (standalone) {
     return (
       <Routes>
-        <Route path="/" element={<Navigate to="/pathscientist/new" replace />} />
-        <Route path="/login" element={<Navigate to="/pathscientist/new" replace />} />
-        {pathScientistRouteElements(false)}
-        <Route path="*" element={<Navigate to="/pathscientist/new" replace />} />
+        <Route path="/" element={<Navigate to="/autoresearch/new" replace />} />
+        <Route path="/login" element={<Navigate to="/autoresearch/new" replace />} />
+        {autoResearchRouteElements(false)}
+        <Route path="*" element={<Navigate to="/autoresearch/new" replace />} />
       </Routes>
     )
   }
@@ -81,7 +81,7 @@ export default function App({ pathScientistStandalone }: AppProps = {}) {
       <Route path="/login" element={<LoginPage />} />
 
       {/* Protected Routes - Require Authentication */}
-      {pathScientistRouteElements(true)}
+      {autoResearchRouteElements(true)}
       <Route path="/dashboard" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/dashboard/:conversationId" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><Layout><ToolsPage /></Layout></ProtectedRoute>} />

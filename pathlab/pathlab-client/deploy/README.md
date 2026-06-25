@@ -2,9 +2,9 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-如果目标是给新服务器部署完整的 PathLab + AutoResearch（实现 codename：PathScientist）Web 服务，先看
-[`../server/backend/pathscientist/README.md`](../server/backend/pathscientist/README.md) 中的 `Deployment Quickstart` 与 `Apptainer Sandbox Reference`。本文档主要解释
-`deploy/` 脚本、桌面打包和固定端口部署细节。AutoResearch / PathScientist 于 `2026-06-23` 加入当前代码库。
+如果目标是给新服务器部署完整的 PathLab + AutoResearch（实现 codename：AutoResearch）Web 服务，先看
+[`../server/backend/autoresearch/README.md`](../server/backend/autoresearch/README.md) 中的 `Deployment Quickstart` 与 `Apptainer Sandbox Reference`。本文档主要解释
+`deploy/` 脚本、桌面打包和固定端口部署细节。AutoResearch / AutoResearch 于 `2026-06-23` 加入当前代码库。
 
 本文档分两部分：
 1. **桌面打包**（Electron AppImage / DMG / NSIS）— `scripts/` + `npm run build:linux|mac|win`
@@ -110,30 +110,30 @@ PostgreSQL 由 `embedded-postgres` npm 包在运行时自动管理，无需预�
 - 服务：PostgreSQL 和 Redis。
 - WSI 运行库：OpenSlide、OpenGL/GLib 运行库。
 - GPU：与目标 Torch wheel 匹配的 NVIDIA driver/CUDA stack。
-- PathScientist sandbox：Apptainer，以及由 `deploy/build-pathscientist-sandbox.sh` 构建的 `.sif`。
-- PathLab Settings：Web PathScientist 继承 PathLab 的 LLM 和 Hugging Face 设置，不需要单独配置 `PATHSCIENTIST_LLM_*`。
+- AutoResearch sandbox：Apptainer，以及由 `deploy/build-autoresearch-sandbox.sh` 构建的 `.sif`。
+- PathLab Settings：Web AutoResearch 继承 PathLab 的 LLM 和 Hugging Face 设置，不需要单独配置 `AUTORESEARCH_LLM_*`。
 
-推荐的 PathScientist Python 安装层：
+推荐的 AutoResearch Python 安装层：
 
 ```bash
-cd pathlab/pathlab-client/server/backend/pathscientist
+cd pathlab/pathlab-client/server/backend/autoresearch
 uv venv .venv --python 3.12
 uv pip install -r ../../requirements.txt
 uv pip install -r ../../requirements-test.txt
-uv pip install -r requirements.txt  # server/backend/pathscientist/requirements.txt
+uv pip install -r requirements.txt  # server/backend/autoresearch/requirements.txt
 ```
 
 构建 sandbox：
 
 ```bash
 cd pathlab/pathlab-client
-./deploy/build-pathscientist-sandbox.sh
+./deploy/build-autoresearch-sandbox.sh
 ```
 
 如果 `/tmp` 空间不足：
 
 ```bash
-APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp ./deploy/build-pathscientist-sandbox.sh
+APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp ./deploy/build-autoresearch-sandbox.sh
 ```
 
 ### 当前文件用途
@@ -152,7 +152,7 @@ APPTAINER_TMPDIR=/home/<service-user>/.apptainer-tmp ./deploy/build-pathscientis
 - Preprocessing: `6101`
 - AI: `6102`
 
-这与 `PATHLAB_DEBUG=1` 下的 sidecar 端口保持一致，便于浏览器调试与反向代理复用。PathScientist 不占用额外 HTTP 端口；AutoResearch 会话 API 由 Gateway 在 `/pathscientist` 与 `/api/pathscientist` 下提供。
+这与 `PATHLAB_DEBUG=1` 下的 sidecar 端口保持一致，便于浏览器调试与反向代理复用。AutoResearch 不占用额外 HTTP 端口；AutoResearch 会话 API 由 Gateway 在 `/autoresearch` 与 `/api/autoresearch` 下提供。
 
 ### GPU 控制（CUDA_VISIBLE_DEVICES）
 
@@ -188,19 +188,19 @@ CUDA_VISIBLE_DEVICES=0,1,3
 `./deploy/start.sh` 当前会先解析 Python 解释器，优先级为：
 
 1. `PATHLAB_PYTHON` 显式指定的可执行文件或命令
-2. `server/backend/pathscientist/.venv/bin/python`
+2. `server/backend/autoresearch/.venv/bin/python`
 3. `pathlab-client/venv/bin/python3`
 4. 当前 `CONDA_PREFIX/bin/python3`
 5. 系统 `python3`
 
-这个顺序刻意把 PathScientist venv 放在 Conda 前面，避免普通 Conda
-环境缺少 OpenHands/FastAPI/PathScientist 依赖时误启动失败。需要强制使用
+这个顺序刻意把 AutoResearch venv 放在 Conda 前面，避免普通 Conda
+环境缺少 OpenHands/FastAPI/AutoResearch 依赖时误启动失败。需要强制使用
 其他环境时，设置 `PATHLAB_PYTHON=/path/to/python ./deploy/start.sh`。
 
 `./deploy/start.sh` 当前会依次执行：
 
-1. 检查 PathScientist Python 包：`openhands.sdk`、`torch`、`kaggle`
-2. 检查 `PATHSCIENTIST_SANDBOX`、Apptainer 和 `PATHSCIENTIST_SANDBOX_IMAGE` 指向的 sandbox image
+1. 检查 AutoResearch Python 包：`openhands.sdk`、`torch`、`kaggle`
+2. 检查 `AUTORESEARCH_SANDBOX`、Apptainer 和 `AUTORESEARCH_SANDBOX_IMAGE` 指向的 sandbox image
 3. 清理占用 `6100 / 6101 / 6102` 的旧进程
 4. 按进程模式补充清理旧的 `server/main.py` / uvicorn / vLLM 相关残留进程
 5. 检查并尽量启动 Redis
@@ -238,7 +238,7 @@ CUDA_VISIBLE_DEVICES=0,1,3
 
 - `/` → `src/renderer/dist`
 - `/api/` → `http://127.0.0.1:6100/`
-- `/pathscientist` 与 `/api/pathscientist/` → Gateway `6100`，由同一前端构建和 Gateway router 服务
+- `/autoresearch` 与 `/api/autoresearch/` → Gateway `6100`，由同一前端构建和 Gateway router 服务
 - `/preprocessing/` → `http://127.0.0.1:6101/`
 - `/ai/health` → `http://127.0.0.1:6102/health`
 - `/ai/` → `http://127.0.0.1:6102/api/ai/`
@@ -273,11 +273,11 @@ HTTPS 版本额外包含证书与 SSL 配置；HTTP-only 版本仅保留静态�
 - 部署日志：`logs/`
 - 后端环境变量：`server/.env`
 - 上传目录：优先由 `PATHLAB_UPLOADS_DIR` 指定；未设置时沿用 `storage.json`，再回退到系统 app data 目录
-- AutoResearch / PathScientist workspace：默认位于上传目录下的 `autoresearch/`，可通过 `PATHSCIENTIST_BASE_DIR` 覆盖；完整说明见 `server/backend/pathscientist/README.md`
+- AutoResearch / AutoResearch workspace：默认位于上传目录下的 `autoresearch/`，可通过 `AUTORESEARCH_BASE_DIR` 覆盖；完整说明见 `server/backend/autoresearch/README.md`
 
 ### 相关文档
 
 - [Project README](../../../README.md)
 - [Server README](../server/README.md)
-- [PathScientist README](../server/backend/pathscientist/README.md)
+- [AutoResearch README](../server/backend/autoresearch/README.md)
 - [Frontend README](../src/renderer/README.md)

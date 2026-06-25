@@ -12,14 +12,14 @@ import { initializeApiConfig, updateApiBase } from './config'
 import './i18n'
 import { queryClient } from './lib/queryClient'
 import { bootstrapTrainingOptions } from './constants/trainingOptionsBootstrap'
-import { isPathScientistStandaloneMode } from './lib/pathscientistStandalone'
+import { isAutoResearchStandaloneMode } from './lib/autoresearchStandalone'
 
 // Use the base URL from Vite config
 const basename = import.meta.env.BASE_URL
 
 // Detect if running in Electron (file:// protocol or electron window object)
 const isElectron = !!(window as any).electron || window.location.protocol === 'file:'
-const isPathScientistStandalone = isPathScientistStandaloneMode({ isElectron })
+const isAutoResearchStandalone = isAutoResearchStandaloneMode({ isElectron })
 
 async function unregisterServiceWorkersAndCaches(): Promise<void> {
   if (!('serviceWorker' in navigator)) return
@@ -28,7 +28,7 @@ async function unregisterServiceWorkersAndCaches(): Promise<void> {
     const registrations = await navigator.serviceWorker.getRegistrations()
     await Promise.all(registrations.map((registration) => registration.unregister()))
   } catch {
-    // Best effort: stale service workers should not block the PathScientist dev page.
+    // Best effort: stale service workers should not block the AutoResearch dev page.
   }
 
   if ('caches' in window) {
@@ -43,7 +43,7 @@ async function unregisterServiceWorkersAndCaches(): Promise<void> {
 
 // Register Service Worker for PWA support
 // Only register in browser environment (not in Electron)
-if ('serviceWorker' in navigator && !isElectron && (import.meta.env.DEV || isPathScientistStandalone)) {
+if ('serviceWorker' in navigator && !isElectron && (import.meta.env.DEV || isAutoResearchStandalone)) {
   window.addEventListener('load', () => {
     void unregisterServiceWorkersAndCaches()
   })
@@ -97,8 +97,8 @@ async function bootstrap(): Promise<void> {
   await bootstrapTrainingOptions()
   console.log('[Main] API configuration initialized')
 
-  const app = isPathScientistStandalone
-    ? <App pathScientistStandalone />
+  const app = isAutoResearchStandalone
+    ? <App autoResearchStandalone />
     : (
       <AuthProvider>
         <BackgroundTaskProvider>

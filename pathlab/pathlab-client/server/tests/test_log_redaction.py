@@ -4,14 +4,14 @@ from backend.common.log_redaction import QueryTokenRedactionFilter, redact_query
 
 
 def test_redact_query_tokens_hides_token_values_only():
-    message = 'GET /pathscientist/sessions/s1/events?token=secret.jwt&include=true HTTP/1.1'
+    message = 'GET /autoresearch/sessions/s1/events?token=secret.jwt&include=true HTTP/1.1'
 
     redacted = redact_query_tokens(message)
 
     assert "secret.jwt" not in redacted
     assert "token=[redacted]" in redacted
     assert "include=true" in redacted
-    assert "/pathscientist/sessions/s1/events" in redacted
+    assert "/autoresearch/sessions/s1/events" in redacted
 
 
 def test_query_token_redaction_preserves_numeric_log_args():
@@ -21,7 +21,7 @@ def test_query_token_redaction_preserves_numeric_log_args():
         pathname=__file__,
         lineno=1,
         msg='%s - "%s %s HTTP/%s" %d',
-        args=("127.0.0.1:1", "GET", "/pathscientist/sessions?token=secret", "1.1", 200),
+        args=("127.0.0.1:1", "GET", "/autoresearch/sessions?token=secret", "1.1", 200),
         exc_info=None,
     )
 

@@ -18,22 +18,22 @@ from backend.database.database import get_db
 from backend.database.database import safe_session
 
 
-PATHSCIENTIST_ACCESS_TOKEN_AUDIENCE = "pathscientist:access"
-PATHSCIENTIST_ACCESS_TOKEN_TTL_SECONDS = int(
-    os.getenv("PATHSCIENTIST_ACCESS_TOKEN_TTL_SECONDS", "300")
+AUTORESEARCH_ACCESS_TOKEN_AUDIENCE = "autoresearch:access"
+AUTORESEARCH_ACCESS_TOKEN_TTL_SECONDS = int(
+    os.getenv("AUTORESEARCH_ACCESS_TOKEN_TTL_SECONDS", "300")
 )
-PATHSCIENTIST_ACCESS_TOKEN_SECRET = os.getenv(
-    "PATHSCIENTIST_ACCESS_TOKEN_SECRET",
+AUTORESEARCH_ACCESS_TOKEN_SECRET = os.getenv(
+    "AUTORESEARCH_ACCESS_TOKEN_SECRET",
     JWT_SECRET,
 )
-PATHSCIENTIST_ACCESS_PURPOSES = {
+AUTORESEARCH_ACCESS_PURPOSES = {
     "events",
     "session_download",
     "run_download",
 }
 
 
-class _PathScientistTokenUser:
+class _AutoResearchTokenUser:
     def __init__(self, *, user_id: str, role: str = "", is_superuser: bool = False):
         self.id = user_id
         self.role = role
@@ -427,7 +427,7 @@ async def get_user_from_token_param(
         return await _get_user_from_jwt(token, db)
 
 
-def create_pathscientist_access_token(
+def create_autoresearch_access_token(
     *,
     user: User,
     session_id: str,
@@ -438,7 +438,7 @@ def create_pathscientist_access_token(
     purpose = str(purpose or "").strip()
     session_id = str(session_id or "").strip()
     run_id = str(run_id or "").strip()
-    if purpose not in PATHSCIENTIST_ACCESS_PURPOSES:
+    if purpose not in AUTORESEARCH_ACCESS_PURPOSES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token purpose")
     if not session_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Session id is required")
@@ -447,13 +447,13 @@ def create_pathscientist_access_token(
     if purpose != "run_download":
         run_id = ""
 
-    ttl = int(expires_in or PATHSCIENTIST_ACCESS_TOKEN_TTL_SECONDS)
-    ttl = max(1, min(ttl, PATHSCIENTIST_ACCESS_TOKEN_TTL_SECONDS))
+    ttl = int(expires_in or AUTORESEARCH_ACCESS_TOKEN_TTL_SECONDS)
+    ttl = max(1, min(ttl, AUTORESEARCH_ACCESS_TOKEN_TTL_SECONDS))
     now = int(time.time())
     payload = {
         "sub": str(user.id),
-        "aud": PATHSCIENTIST_ACCESS_TOKEN_AUDIENCE,
-        "typ": "pathscientist_access",
+        "aud": AUTORESEARCH_ACCESS_TOKEN_AUDIENCE,
+        "typ": "autoresearch_access",
         "purpose": purpose,
         "sid": session_id,
         "rid": run_id,
@@ -466,14 +466,14 @@ def create_pathscientist_access_token(
     nonce = getattr(user, "session_nonce", None)
     if nonce:
         payload["sn"] = str(nonce)
-    token = jwt.encode(payload, PATHSCIENTIST_ACCESS_TOKEN_SECRET, algorithm="HS256")
+    token = jwt.encode(payload, AUTORESEARCH_ACCESS_TOKEN_SECRET, algorithm="HS256")
     return token, ttl
 
 
-async def get_pathscientist_access_token_claims(
+async def get_autoresearch_access_token_claims(
     token: Optional[str] = Query(
         None,
-        description="Short-lived PathScientist access token",
+        description="Short-lived AutoResearch access token",
     ),
 ) -> dict[str, Any]:
     if not token:
@@ -484,31 +484,31 @@ async def get_pathscientist_access_token_claims(
     try:
         payload = jwt.decode(
             token,
-            PATHSCIENTIST_ACCESS_TOKEN_SECRET,
+            AUTORESEARCH_ACCESS_TOKEN_SECRET,
             algorithms=["HS256"],
-            audience=PATHSCIENTIST_ACCESS_TOKEN_AUDIENCE,
+            audience=AUTORESEARCH_ACCESS_TOKEN_AUDIENCE,
         )
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid PathScientist access token: {str(exc)}",
+            detail=f"Invalid AutoResearch access token: {str(exc)}",
         ) from exc
 
-    if payload.get("typ") != "pathscientist_access":
+    if payload.get("typ") != "autoresearch_access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid PathScientist access token",
+            detail="Invalid AutoResearch access token",
         )
     user_id = str(payload.get("sub") or "")
     purpose = str(payload.get("purpose") or "")
     session_id = str(payload.get("sid") or "")
     run_id = str(payload.get("rid") or "")
-    if not user_id or purpose not in PATHSCIENTIST_ACCESS_PURPOSES or not session_id:
+    if not user_id or purpose not in AUTORESEARCH_ACCESS_PURPOSES or not session_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid PathScientist access token",
+            detail="Invalid AutoResearch access token",
         )
-    payload["user"] = _PathScientistTokenUser(
+    payload["user"] = _AutoResearchTokenUser(
         user_id=user_id,
         role=str(payload.get("role") or ""),
         is_superuser=bool(payload.get("adm")),
@@ -516,11 +516,11 @@ async def get_pathscientist_access_token_claims(
     return payload
 
 
-async def get_pathscientist_header_or_access_token_claims(
+async def get_autoresearch_header_or_access_token_claims(
     token: Optional[str] = Query(
         None,
         alias="token",
-        description="Short-lived PathScientist access token",
+        description="Short-lived AutoResearch access token",
     ),
     authorization: Optional[str] = Header(None, alias="Authorization"),
     db: AsyncSession = Depends(get_db),
@@ -532,7 +532,7 @@ async def get_pathscientist_header_or_access_token_claims(
             "sid": "",
             "rid": "",
         }
-    return await get_pathscientist_access_token_claims(token=token)
+    return await get_autoresearch_access_token_claims(token=token)
 
 
 async def get_user_from_header_or_param(

@@ -94,7 +94,7 @@ pymupdf4llm
 
 # High-quality Marker PDF parsing is optional because marker-pdf 1.10.x pins
 # OpenAI/Anthropic/Pillow versions that conflict with the OpenHands/browser-use
-# runtime used by PathScientist. Install requirements-pdf-marker.txt only in a
+# runtime used by AutoResearch. Install requirements-pdf-marker.txt only in a
 # dedicated PDF parsing environment.
 
 # Email Notifications
@@ -103,7 +103,7 @@ resend>=2.0.0
 # Docker SDK (Code Agent sandbox execution)
 docker>=7.0.0
 
-# OpenHands SDK (Agent runtime for pathscientist)
+# OpenHands SDK (Agent runtime for autoresearch)
 # Not published to PyPI; install from upstream monorepo pinned to commit.
 # Local dev tip: replace either line below with an editable install, e.g.
 #   pip install -e /path/to/OpenHands-SDK/openhands-sdk
