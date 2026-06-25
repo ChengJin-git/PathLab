@@ -1142,6 +1142,25 @@ function buildExternalTestView(state: Record<string, unknown>): AutoResearchExte
   }
 }
 
+function looksLikePatchTrainingMetrics(metrics: Record<string, unknown>, record: Record<string, unknown>): boolean {
+  const runKind = asString(record.run_kind).trim().toLowerCase()
+  if (runKind && runKind !== 'training') return false
+  if (asString(metrics.external_task_type).trim()) return false
+  if (Object.keys(asRecord(metrics.external)).length > 0) return false
+  if (asString(metrics.task_level).trim().toLowerCase() === 'patch') return true
+  if (metrics.mil_aggregation === false && Object.keys(asRecord(metrics.test_metrics)).length > 0) return true
+  return false
+}
+
+function patchTrainingInternalMetrics(metrics: Record<string, unknown>, record: Record<string, unknown>): Record<string, unknown> {
+  if (!looksLikePatchTrainingMetrics(metrics, record)) return {}
+  const testMetrics = asRecord(metrics.test_metrics)
+  return {
+    ...metrics,
+    ...testMetrics,
+  }
+}
+
 function internalRecordFromRunHistory(state: Record<string, unknown>): Record<string, unknown> {
   const history = runHistory(state)
   if (history.length === 0) return {}
@@ -1150,7 +1169,12 @@ function internalRecordFromRunHistory(state: Record<string, unknown>): Record<st
     const metrics = asRecord(record.metrics)
     const explicitInternalMetrics = asRecord(metrics.internal_test)
     const testMetrics = asRecord(metrics.test)
-    const internalMetrics = Object.keys(explicitInternalMetrics).length > 0 ? explicitInternalMetrics : testMetrics
+    const patchMetrics = patchTrainingInternalMetrics(metrics, record)
+    const internalMetrics = Object.keys(explicitInternalMetrics).length > 0
+      ? explicitInternalMetrics
+      : Object.keys(testMetrics).length > 0
+        ? testMetrics
+        : patchMetrics
     if (Object.keys(internalMetrics).length === 0) return {}
     const pathlab = asRecord(record.pathlab)
     const committed = Boolean(record.committed)

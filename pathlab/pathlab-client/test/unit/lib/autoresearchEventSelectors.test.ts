@@ -1249,6 +1249,61 @@ describe('autoresearch event selectors', () => {
     expect(view.runSummary.externalTest?.primaryMetric).toEqual({ name: 'auc', value: 0.5556 })
   })
 
+
+  it('extracts internal test cards from patch template flat metrics', () => {
+    const session = {
+      session_id: 's-patch-flat-metrics',
+      title: 'CRC-MSI patch classification',
+      question: 'Use the CRC-MSI patch to train a patch-level classification model.',
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        objective: { success_metric: 'auc' },
+        selected_dataset: { name: 'CRC-MSI patch' },
+        best_metric_value: 0.7717254089,
+        best_run_id: 'run_97f2b2c1',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_97f2b2c1',
+            metric_name: 'auc',
+            metric_value: 0.7717254089,
+            committed: true,
+            run_kind: 'training',
+            status: 'completed',
+            metrics: {
+              f1: 0.6607896703,
+              auc: 0.7717254089,
+              n_val: 3998,
+              n_test: 32361,
+              n_train: 15559,
+              accuracy: 0.8068353883,
+              task_level: 'patch',
+              mil_aggregation: false,
+              test_metrics: {
+                f1: 0.6607896703,
+                auc: 0.7717254089,
+                accuracy: 0.8068353883,
+              },
+            },
+          },
+        ],
+      },
+      events: [],
+    } satisfies AutoResearchSessionDetail
+
+    const view = buildAutoResearchExecutionView(session, [])
+
+    expect(view.runSummary.internalTest).toMatchObject({
+      runId: 'run_97f2b2c1',
+      status: 'completed',
+      committed: true,
+      datasetName: 'CRC-MSI patch',
+      primaryMetric: { name: 'auc', value: 0.7717254089 },
+      sampleCount: 32361,
+    })
+  })
+
   it('preserves patch classification dataset names in internal and external summaries', () => {
     const session = {
       session_id: 's-patch-result-datasets',

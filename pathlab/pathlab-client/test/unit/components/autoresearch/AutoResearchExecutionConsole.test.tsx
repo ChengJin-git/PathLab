@@ -236,6 +236,57 @@ describe('AutoResearchExecutionConsole', () => {
     expect(screen.getByTestId('autoresearch-external-summary-badges')).toHaveClass('sm:items-end')
   })
 
+
+  it('renders patch classification flat metrics as an internal test card', () => {
+    const completedSession: AutoResearchSessionDetail = {
+      ...session,
+      status: 'completed',
+      stage: 'completed',
+      state: {
+        ...session.state,
+        objective: { success_metric: 'auc' },
+        selected_dataset: { name: 'CRC-MSI patch' },
+        best_run_id: 'run_patch',
+        run_history: [
+          {
+            iteration: 0,
+            run_id: 'run_patch',
+            metric_name: 'auc',
+            metric_value: 0.7717,
+            committed: true,
+            status: 'completed',
+            model_path: '/workspace/model_artifacts/run_patch/best_model.pth',
+            run_dir: 'output/runs/run_patch',
+            metrics: {
+              auc: 0.7717,
+              accuracy: 0.8068,
+              f1: 0.6608,
+              n_train: 15559,
+              n_val: 3998,
+              n_test: 32361,
+              task_level: 'patch',
+              mil_aggregation: false,
+              test_metrics: {
+                auc: 0.7717,
+                accuracy: 0.8068,
+                f1: 0.6608,
+              },
+            },
+          },
+        ],
+      },
+    }
+
+    render(<AutoResearchExecutionConsole session={completedSession} events={events} streamStatus="closed" />)
+
+    const internalCard = screen.getByTestId('autoresearch-internal-summary')
+    expect(internalCard).toHaveTextContent('Internal test')
+    expect(internalCard).toHaveTextContent('AUC 0.772')
+    expect(internalCard).toHaveTextContent('32361 samples')
+    expect(internalCard).toHaveTextContent('CRC-MSI patch')
+    expect(internalCard).toHaveTextContent('completed')
+  })
+
   it('renders internal test and external validation summaries when both results exist', () => {
     const completedSession: AutoResearchSessionDetail = {
       ...session,
