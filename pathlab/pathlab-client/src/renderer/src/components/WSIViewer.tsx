@@ -9,6 +9,24 @@ import { Tooltip } from './ui/tooltip'
 
 const PATCH_PREVIEW_SIZE = 512
 
+let openSeadragonPromise: Promise<any> | null = null
+
+async function loadOpenSeadragon(): Promise<any> {
+  if (typeof window !== 'undefined' && window.OpenSeadragon) {
+    return window.OpenSeadragon
+  }
+
+  openSeadragonPromise ??= import('openseadragon').then((module) => {
+    const OpenSeadragon = module.default ?? module
+    if (typeof window !== 'undefined') {
+      window.OpenSeadragon = OpenSeadragon
+    }
+    return OpenSeadragon
+  })
+
+  return openSeadragonPromise
+}
+
 function isInputFocused(): boolean {
   const el = document.activeElement as HTMLElement | null
   if (!el) return false
@@ -195,10 +213,7 @@ export default function WSIViewer({
 
         if (cancelled) return
 
-        // Wait for OpenSeadragon to load
-        while (!window.OpenSeadragon && !cancelled) {
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
+        const OpenSeadragon = await loadOpenSeadragon()
         if (cancelled) return
 
         // Determine tile source based on file type
@@ -242,9 +257,9 @@ export default function WSIViewer({
           }
         }
 
-        osdViewer = window.OpenSeadragon({
+        osdViewer = OpenSeadragon({
           element: viewerRef.current,
-          prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/5.0.1/images/',
+          prefixUrl: '/assets/openseadragon/images/',
           tileSources: tileSource,
           animationTime: 0.5,
           blendTime: 0.1,

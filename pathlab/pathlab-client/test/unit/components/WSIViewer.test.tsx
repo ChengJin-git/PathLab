@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import WSIViewer from '@renderer/components/WSIViewer'
 import { TooltipProvider } from '@renderer/components/ui/tooltip'
 
@@ -33,12 +35,6 @@ interface MockOsdViewer {
   }
 }
 
-declare global {
-  interface Window {
-    OpenSeadragon?: ReturnType<typeof vi.fn>
-  }
-}
-
 const mockFetch = vi.mocked(fetch)
 
 function renderViewer(wsiId: string) {
@@ -62,9 +58,17 @@ function createMockViewer(): MockOsdViewer {
 }
 
 describe('WSIViewer', () => {
+  const sourcePath = resolve(__dirname, '../../../src/renderer/src/components/WSIViewer.tsx')
+  const source = readFileSync(sourcePath, 'utf-8')
+
   beforeEach(() => {
     mockFetch.mockReset()
     window.OpenSeadragon = vi.fn(() => createMockViewer())
+  })
+
+  it('lazy-loads OpenSeadragon instead of importing it into the startup bundle', () => {
+    expect(source).not.toMatch(/^import\s+.*['"]openseadragon['"]/m)
+    expect(source).toMatch(/import\(['"]openseadragon['"]\)/)
   })
 
   it('shows a patch preview while the full patch image viewer is still loading', async () => {
