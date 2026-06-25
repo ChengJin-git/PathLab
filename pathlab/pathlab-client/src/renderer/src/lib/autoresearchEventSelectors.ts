@@ -53,8 +53,6 @@ export interface AutoResearchGroundingTaskProfileView {
 }
 
 export interface AutoResearchGroundingView {
-  selectedSkill: string
-  route: string
   reason: string
   literatureCount: number
   baselineCount: number
@@ -78,7 +76,6 @@ export interface AutoResearchAcquisitionPathView {
 
 export interface AutoResearchAcquisitionPlanStepView {
   id: string
-  skill: string
   title: string
   isCurrent: boolean
 }
@@ -1368,8 +1365,6 @@ function buildGroundingView(state: Record<string, unknown>): AutoResearchGroundi
   const explicitCount = asNumber(grounding.online_literature_count)
 
   return {
-    selectedSkill: asString(grounding.selected_skill).trim(),
-    route: asString(grounding.route).trim(),
     reason: asString(grounding.reason).trim(),
     literatureCount: typeof explicitCount === 'number' ? explicitCount : papers.length,
     baselineCount: baselines.length,
@@ -1501,11 +1496,10 @@ function buildAcquisitionView(state: Record<string, unknown>): AutoResearchAcqui
   const currentStep = asNumber(plan.current_step) ?? 0
   const downloadProgress = buildDownloadProgressView(state)
   const planSteps = asRecordArray(plan.steps).map((step, index) => {
-    const skill = asString(step.skill).trim()
-    const title = asString(step.title).trim() || skill || `Step ${index + 1}`
+    const stepSkill = asString(step.skill).trim()
+    const title = asString(step.title).trim() || stepSkill || `Step ${index + 1}`
     return {
-      id: asString(step.id).trim() || `${skill || 'step'}-${index + 1}`,
-      skill,
+      id: asString(step.id).trim() || `${stepSkill || 'step'}-${index + 1}`,
       title,
       isCurrent: index === currentStep,
     }

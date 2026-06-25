@@ -208,14 +208,10 @@ function GroundingDetails({ grounding }: { grounding: AutoResearchGroundingView 
       </summary>
 
       <div className="mt-3 space-y-3">
-        <div className="grid gap-2 text-xs sm:grid-cols-2">
+        <div className="grid gap-2 text-xs">
           <div className="rounded-xl bg-white/80 p-2 ring-1 ring-blue-100">
             <p className="font-bold uppercase tracking-wider text-gray-400">{t('autoResearch.grounding.taskProfile')}</p>
             <p className="mt-1 font-extrabold text-gray-900">{taskProfileLabel(grounding, t('autoResearch.common.notDetected'))}</p>
-          </div>
-          <div className="rounded-xl bg-white/80 p-2 ring-1 ring-blue-100">
-            <p className="font-bold uppercase tracking-wider text-gray-400">{t('autoResearch.grounding.selectedSkill')}</p>
-            <p className="mt-1 font-extrabold text-gray-900">{grounding.selectedSkill || t('autoResearch.common.notDetected')}</p>
           </div>
         </div>
 
@@ -370,7 +366,6 @@ function AcquisitionDetails({ acquisition }: { acquisition: AutoResearchAcquisit
                     {step.isCurrent ? t('autoResearch.acquisition.currentStep') : t('autoResearch.acquisition.stepNumber', { step: index + 1 })}
                   </span>
                 </div>
-                {step.skill && <p className="mt-1 text-xs font-semibold text-gray-500">{step.skill}</p>}
               </div>
             ))}
           </div>
