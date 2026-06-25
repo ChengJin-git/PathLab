@@ -69,6 +69,18 @@ describe('LoginPage', () => {
     expect(shell.className).toContain('to-[#f6f3ff]')
   })
 
+  it('renders the login shell while public settings are still loading', async () => {
+    mocks.getPublicSettings.mockReturnValue(new Promise(() => {}))
+
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTestId('login-page-shell')).toBeInTheDocument()
+  })
+
   it('keeps sign in disabled until Tencent captcha returns both ticket and randstr', async () => {
     mocks.getPublicSettings.mockResolvedValue({ captcha_provider: 'tencent', captcha_site_key: 'tencent-app-id' })
     const user = userEvent.setup()

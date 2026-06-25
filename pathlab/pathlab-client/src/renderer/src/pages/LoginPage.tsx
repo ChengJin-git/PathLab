@@ -468,13 +468,13 @@ export default function LoginPage() {
       })
   }, [])
 
-  if (!settingsLoaded) {
-    return null
-  }
-
   return (
     <>
-      <LoginPageInner backendUnavailable={backendUnavailable} captchaProvider={captchaProvider} captchaSiteKey={captchaSiteKey || undefined} />
+      <LoginPageInner
+        backendUnavailable={backendUnavailable && settingsLoaded}
+        captchaProvider={captchaProvider}
+        captchaSiteKey={captchaSiteKey || undefined}
+      />
       <MaintenanceNoticeModal
         isOpen={noticeOpen}
         message={noticeMessage ?? ''}
