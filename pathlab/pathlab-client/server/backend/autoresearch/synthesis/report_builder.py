@@ -101,9 +101,6 @@ def _build_sections(
     setup_lines = ["Experiments were conducted using the AutoResearch autonomous research platform."]
     if repro:
         setup_lines.append(f"Iteration budget: {repro.get('max_iterations', '?')}.")
-    grounding = context.get("grounding", {}) if "grounding" in context else {}
-    if grounding and grounding.get("selected_skill"):
-        setup_lines.append(f"Skill template: {grounding['selected_skill']}.")
     sections.append(ReportSection(
         name="experimental_setup",
         title="Experimental Setup",

@@ -61,6 +61,15 @@ def test_render_report_markdown_contains_all_sections():
     assert "transmil_2021" in md
 
 
+def test_render_report_markdown_hides_internal_execution_skill():
+    ctx = _make_context(grounding={"selected_skill": "mil_classification"})
+    report = build_report(ctx)
+    md = render_report_markdown(report)
+
+    assert "Skill template" not in md
+    assert "mil_classification" not in md
+
+
 def test_render_report_markdown_without_failures():
     ctx = _make_context(failures=[])
     report = build_report(ctx)
