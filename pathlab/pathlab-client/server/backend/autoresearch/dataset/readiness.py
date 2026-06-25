@@ -30,6 +30,12 @@ WSI_EXTS = {
 }
 FEATURE_CONSUMER_TASKS = {"mil_classification", "survival_analysis"}
 PATCH_CONSUMER_TASKS = {"patch_classification"}
+_PRIVATE_SKILL_FOR_CANONICAL_TASK = {
+    "wsi_classification": "mil_classification",
+    "patch_classification": "patch_classification",
+    "wsi_survival": "survival_analysis",
+    "patch_segmentation": "patch_segmentation",
+}
 
 
 @dataclass(frozen=True)
@@ -1325,11 +1331,10 @@ def assess_data_readiness(
     raw_wsi_ready requires a splits file. Task 4 will add deterministic
     split generation for raw WSI + labels when no split is present.
     """
-    task_type = (
-        getattr(profile, "task_type", "")
-        or getattr(profile, "preferred_skill", "")
-        or ""
-    ).strip()
+    task_type = (getattr(profile, "preferred_skill", "") or "").strip()
+    if not task_type:
+        canonical_task = (getattr(profile, "task_type", "") or "").strip()
+        task_type = _PRIVATE_SKILL_FOR_CANONICAL_TASK.get(canonical_task, canonical_task)
     candidates = collect_readiness_candidates(
         prepared_contract=prepared_contract or {},
         data_mounts=data_mounts or {},

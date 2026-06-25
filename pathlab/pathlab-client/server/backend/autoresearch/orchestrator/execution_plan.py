@@ -90,6 +90,12 @@ class ExecutionPlan:
 
 _FEATURE_CONSUMER_TASKS = {"mil_classification", "survival_analysis"}
 _PATCH_READY_STATUSES = {"patch_features_ready", "patch_images_ready"}
+_PRIVATE_SKILL_FOR_CANONICAL_TASK = {
+    "wsi_classification": "mil_classification",
+    "patch_classification": "patch_classification",
+    "wsi_survival": "survival_analysis",
+    "patch_segmentation": "patch_segmentation",
+}
 DEFAULT_FEATURE_EXTRACTOR = "virchow2"
 _FEATURE_EXTRACTOR_ALIASES = {
     "UNI2": "uni2",
@@ -118,6 +124,14 @@ def normalize_feature_extractor_name(value: str = "") -> str:
         name,
         _FEATURE_EXTRACTOR_ALIASES.get(name.upper(), name),
     )
+
+
+def _execution_skill_for_profile(profile: TaskProfile, selected_skill: str = "") -> str:
+    skill = (selected_skill or profile.preferred_skill or "").strip()
+    if skill:
+        return _PRIVATE_SKILL_FOR_CANONICAL_TASK.get(skill, skill)
+    task_type = (profile.task_type or "").strip()
+    return _PRIVATE_SKILL_FOR_CANONICAL_TASK.get(task_type, task_type)
 
 
 def _features_ready_step(
@@ -548,8 +562,8 @@ def build_execution_plan(
     external_test_contract: dict[str, Any] | None = None,
 ) -> ExecutionPlan:
     """Translate ``(profile, readiness, acquisition_status)`` into an actionable plan."""
-    skill = (selected_skill or profile.preferred_skill or "").strip()
-    primary_skill = skill or profile.task_type
+    skill = _execution_skill_for_profile(profile, selected_skill)
+    primary_skill = skill
     stop_after_skill = (stop_after_skill or "").strip()
 
     def _wrap(plan: ExecutionPlan) -> ExecutionPlan:
