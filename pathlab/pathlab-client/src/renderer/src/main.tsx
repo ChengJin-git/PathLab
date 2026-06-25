@@ -94,7 +94,6 @@ async function bootstrap(): Promise<void> {
   }
 
   updateApiBase()
-  await bootstrapTrainingOptions()
   console.log('[Main] API configuration initialized')
 
   const app = isAutoResearchStandalone
@@ -119,6 +118,8 @@ async function bootstrap(): Promise<void> {
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>
   )
+
+  void bootstrapTrainingOptions()
 }
 
 void bootstrap()
