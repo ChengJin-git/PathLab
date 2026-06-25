@@ -12,6 +12,11 @@ distinguished — every survival/segmentation/feature_extraction prompt
 collapsed to ``patch_classification`` because the keyword "patch"
 appears in many phrasings. Now the body has skill-first branches so
 the LLM-routed skill drives ``task_type`` consistency end-to-end.
+
+Public routing now emits only PathLab canonical product task ids on
+``TaskProfile.task_type``. Private AutoResearch execution skills stay on
+``preferred_skill`` so downstream planning can still load internal
+templates such as ``mil_classification`` or ``survival_analysis``.
 """
 from __future__ import annotations
 
@@ -25,6 +30,46 @@ _LUNG_MOLECULAR_MUTATION_GENES = {"egfr", "kras"}
 _NSCLC_DATASET_KEYWORDS = [
     "TCGA-LUAD", "TCGA-LUSC", "TCGA-LUNG", "NSCLC", "LUAD", "LUSC", "lung",
 ]
+_WSI_CLASSIFICATION = "wsi_classification"
+_PATCH_CLASSIFICATION = "patch_classification"
+_WSI_SURVIVAL = "wsi_survival"
+_PATCH_SEGMENTATION = "patch_segmentation"
+
+_CANONICAL_TASK_FOR_PRIVATE_SKILL = {
+    "mil_classification": _WSI_CLASSIFICATION,
+    "patch_classification": _PATCH_CLASSIFICATION,
+    "survival_analysis": _WSI_SURVIVAL,
+    "patch_segmentation": _PATCH_SEGMENTATION,
+    # feature extraction is a private prerequisite stage, not a public task type.
+    "feature_extraction": _WSI_CLASSIFICATION,
+}
+
+
+def _profile(
+    *,
+    task_type: str,
+    asset_level: str,
+    input_modality: str,
+    label_granularity: str,
+    organ: str,
+    dataset_keywords: list[str],
+    requires_feature_extraction: bool,
+    preferred_skill: str,
+    prediction_target: str,
+    required_label_keywords: list[str],
+) -> TaskProfile:
+    return TaskProfile(
+        task_type=task_type,
+        asset_level=asset_level,
+        input_modality=input_modality,
+        label_granularity=label_granularity,
+        organ=organ,
+        dataset_keywords=dataset_keywords,
+        requires_feature_extraction=requires_feature_extraction,
+        preferred_skill=preferred_skill,
+        prediction_target=prediction_target,
+        required_label_keywords=required_label_keywords,
+    )
 
 
 def infer_task_profile(
@@ -43,8 +88,8 @@ def infer_task_profile(
     # Explicit skill selection wins over keyword matching. In a raw-WSI MIL
     # plan, "feature extraction" is the setup step, not the final task type.
     if skill == "patch_segmentation":
-        return TaskProfile(
-            task_type="segmentation",
+        return _profile(
+            task_type=_PATCH_SEGMENTATION,
             asset_level="region",
             input_modality="patch_images",
             label_granularity="pixel",
@@ -57,8 +102,8 @@ def infer_task_profile(
         )
 
     if skill == "survival_analysis":
-        return TaskProfile(
-            task_type="survival_analysis",
+        return _profile(
+            task_type=_WSI_SURVIVAL,
             asset_level="slide",
             input_modality="features",
             label_granularity="slide",
@@ -71,8 +116,8 @@ def infer_task_profile(
         )
 
     if skill == "mil_classification":
-        return TaskProfile(
-            task_type="mil_classification",
+        return _profile(
+            task_type=_WSI_CLASSIFICATION,
             asset_level="slide",
             input_modality="wsi",
             label_granularity="slide",
@@ -85,8 +130,8 @@ def infer_task_profile(
         )
 
     if skill == "feature_extraction":
-        return TaskProfile(
-            task_type="feature_extraction",
+        return _profile(
+            task_type=_WSI_CLASSIFICATION,
             asset_level="slide",
             input_modality="wsi",
             label_granularity="slide",
@@ -99,8 +144,8 @@ def infer_task_profile(
         )
 
     if skill == "patch_classification":
-        return TaskProfile(
-            task_type="patch_classification",
+        return _profile(
+            task_type=_PATCH_CLASSIFICATION,
             asset_level="patch",
             input_modality="patch_images",
             label_granularity="patch",
@@ -116,8 +161,8 @@ def infer_task_profile(
     if any(
         tok in text for tok in ("segment", "segmentation", "mask", " dice", " iou")
     ):
-        return TaskProfile(
-            task_type="segmentation",
+        return _profile(
+            task_type=_PATCH_SEGMENTATION,
             asset_level="region",
             input_modality="patch_images",
             label_granularity="pixel",
@@ -132,8 +177,8 @@ def infer_task_profile(
     if any(
         tok in text for tok in ("survival", "c-index", "cindex", "concordance")
     ):
-        return TaskProfile(
-            task_type="survival_analysis",
+        return _profile(
+            task_type=_WSI_SURVIVAL,
             asset_level="slide",
             input_modality="features",
             label_granularity="slide",
@@ -148,8 +193,8 @@ def infer_task_profile(
     if any(
         tok in text for tok in ("feature extraction", "extract features", "foundation model")
     ):
-        return TaskProfile(
-            task_type="feature_extraction",
+        return _profile(
+            task_type=_WSI_CLASSIFICATION,
             asset_level="slide",
             input_modality="wsi",
             label_granularity="slide",
@@ -177,8 +222,8 @@ def infer_task_profile(
             text,
         )
     ):
-        return TaskProfile(
-            task_type="mil_classification",
+        return _profile(
+            task_type=_WSI_CLASSIFICATION,
             asset_level="slide",
             input_modality="wsi",
             label_granularity="slide",
@@ -190,8 +235,8 @@ def infer_task_profile(
             required_label_keywords=label_keywords,
         )
 
-    return TaskProfile(
-        task_type="patch_classification",
+    return _profile(
+        task_type=_PATCH_CLASSIFICATION,
         asset_level="patch",
         input_modality="patch_images",
         label_granularity="patch",

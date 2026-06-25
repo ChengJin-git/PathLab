@@ -18,7 +18,7 @@ class TaskProfile:
     matched. Now the scout requires label-semantics overlap when these
     fields are set.
     """
-    task_type: str                           # "patch_classification" | "mil_classification" | "segmentation" | "survival_analysis" | "feature_extraction"
+    task_type: str                           # PathLab canonical task id: "wsi_classification" | "patch_classification" | "wsi_survival" | "patch_segmentation"
     asset_level: str                         # "patch" | "slide" | "region"
     input_modality: str                      # "patch_images" | "wsi" | "features" | "clinical_table"
     label_granularity: str                   # "patch" | "slide" | "pixel"

@@ -19,15 +19,16 @@ from .types import TaskProfile
 logger = logging.getLogger(__name__)
 
 _ALLOWED_CONFIDENCE = {"", "low", "medium", "high"}
+_WSI_CLASSIFICATION = "wsi_classification"
+_PATCH_CLASSIFICATION = "patch_classification"
+_PATCH_SEGMENTATION = "patch_segmentation"
+_WSI_SURVIVAL = "wsi_survival"
 _ALLOWED_TASK_TYPES = {
     "",
-    "classification",
-    "patch_classification",
-    "mil_classification",
-    "segmentation",
-    "survival",
-    "survival_analysis",
-    "feature_extraction",
+    _PATCH_CLASSIFICATION,
+    _WSI_CLASSIFICATION,
+    _PATCH_SEGMENTATION,
+    _WSI_SURVIVAL,
 }
 _ALLOWED_ASSET_LEVELS = {"", "patch", "slide", "region"}
 _ALLOWED_INPUT_MODALITIES = {
@@ -239,7 +240,7 @@ def _dataset_keywords_from_candidates(
 def _task_shape_from_enrichment(
     enrichment: LLMTaskProfileEnrichment,
 ) -> dict[str, Any]:
-    """Translate coarse LLM fields into AutoResearch's concrete task shape."""
+    """Translate LLM task hints into public canonical task ids + private skills."""
     if not _conf_at_least(enrichment.task_type_confidence):
         return {}
 
@@ -247,60 +248,41 @@ def _task_shape_from_enrichment(
     asset_level = enrichment.asset_level
     input_modality = enrichment.input_modality
 
-    if task_type == "survival":
-        task_type = "survival_analysis"
-    if task_type == "classification":
-        if asset_level == "slide" or input_modality == "wsi":
-            task_type = "mil_classification"
-        elif asset_level == "patch" or input_modality in {"patch_images", "histology"}:
-            task_type = "patch_classification"
-        else:
-            return {}
-
-    if task_type == "mil_classification":
+    if task_type == _WSI_CLASSIFICATION:
         return {
-            "task_type": "mil_classification",
+            "task_type": _WSI_CLASSIFICATION,
             "asset_level": "slide",
             "input_modality": "wsi",
             "label_granularity": "slide",
             "requires_feature_extraction": True,
             "preferred_skill": "mil_classification",
         }
-    if task_type == "patch_classification":
+    if task_type == _PATCH_CLASSIFICATION:
         return {
-            "task_type": "patch_classification",
+            "task_type": _PATCH_CLASSIFICATION,
             "asset_level": "patch",
             "input_modality": "patch_images",
             "label_granularity": "patch",
             "requires_feature_extraction": False,
             "preferred_skill": "patch_classification",
         }
-    if task_type == "segmentation":
+    if task_type == _PATCH_SEGMENTATION:
         return {
-            "task_type": "segmentation",
+            "task_type": _PATCH_SEGMENTATION,
             "asset_level": "region",
             "input_modality": "patch_images",
             "label_granularity": "pixel",
             "requires_feature_extraction": False,
             "preferred_skill": "patch_segmentation",
         }
-    if task_type == "survival_analysis":
+    if task_type == _WSI_SURVIVAL:
         return {
-            "task_type": "survival_analysis",
+            "task_type": _WSI_SURVIVAL,
             "asset_level": "slide",
             "input_modality": "features",
             "label_granularity": "slide",
             "requires_feature_extraction": True,
             "preferred_skill": "survival_analysis",
-        }
-    if task_type == "feature_extraction":
-        return {
-            "task_type": "feature_extraction",
-            "asset_level": "slide",
-            "input_modality": "wsi",
-            "label_granularity": "slide",
-            "requires_feature_extraction": False,
-            "preferred_skill": "feature_extraction",
         }
     return {}
 
@@ -397,7 +379,7 @@ Use domain knowledge, but do not invent user constraints. Return ONLY JSON.
 Organ/site: return the most specific human anatomy site as a lowercase canonical term when implied by the task.
 Examples: stomach for gastritis/gastric, prostate for Gleason/ISUP, colorectal for CRC/MSI,
 brain_cns for glioma, liver for HCC, pancreas for PDAC. If uncertain, return "" and explain in reason.
-Allowed task_type values: classification, patch_classification, mil_classification, segmentation, survival_analysis, feature_extraction.
+Allowed task_type values: wsi_classification, patch_classification, wsi_survival, patch_segmentation. Do not return internal execution stage/template names such as mil_classification, survival_analysis, feature_extraction, or external_test.
 Allowed asset_level values: patch, slide, region.
 Allowed input_modality values: patch_images, wsi, features, clinical_table, histology.
 Confidence values: high, medium, low.

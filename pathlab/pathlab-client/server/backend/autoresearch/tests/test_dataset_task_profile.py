@@ -14,11 +14,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import os
 os.environ["OPENHANDS_SUPPRESS_BANNER"] = "1"
 
+# Product-level task taxonomy is shared with the PathLab AI service.
+from ai.task_taxonomy import CANONICAL_TASK_IDS
+
 # Canonical autoresearch-prefix path matches the rest of the test suite.
 from autoresearch.dataset.task_profile import infer_task_profile
 from autoresearch.dataset.llm_task_profile import (
     LLMTaskProfileEnrichment,
     merge_task_profile_enrichment,
+    parse_llm_task_profile_response,
 )
 
 # autoresearch-prefix path matches tests/test_grounding_target_integration.py.
@@ -40,7 +44,7 @@ def test_infer_task_profile_patch_for_patch_question():
 def test_infer_task_profile_mil_for_wsi_question():
     p = infer_task_profile("run WSI-level MIL classification for breast cancer slides",
                            selected_skill="mil_classification")
-    assert p.task_type == "mil_classification"
+    assert p.task_type == "wsi_classification"
     assert p.asset_level == "slide"
     assert p.input_modality == "wsi"
     assert p.organ == "breast"
@@ -62,9 +66,50 @@ def test_infer_task_profile_uses_dataset_hint_for_organ():
 def test_infer_task_profile_default_skill_when_unspecified():
     """When selected_skill is empty, preferred_skill defaults to a sensible task-shape default."""
     patch_p = infer_task_profile("train classifier on patches")
+    assert patch_p.task_type == "patch_classification"
     assert patch_p.preferred_skill == "patch_classification"
     mil_p = infer_task_profile("WSI-level MIL training")
+    assert mil_p.task_type == "wsi_classification"
     assert mil_p.preferred_skill == "mil_classification"
+
+
+def test_infer_task_profile_only_uses_product_canonical_task_ids():
+    prompts = [
+        "run WSI-level MIL classification for breast cancer slides",
+        "train a patch-level MSI classifier on colorectal H&E patches",
+        "segment tumor masks from pathology patches using Dice score",
+        "predict survival and c-index from lung cancer whole slide images",
+        "extract foundation model features before training a WSI classifier",
+    ]
+
+    observed = {infer_task_profile(prompt).task_type for prompt in prompts}
+
+    assert observed <= set(CANONICAL_TASK_IDS)
+    assert "feature_extraction" not in observed
+    assert "mil_classification" not in observed
+    assert "survival_analysis" not in observed
+    assert "segmentation" not in observed
+
+
+def test_llm_task_profile_parser_only_accepts_product_canonical_task_ids():
+    enrichment = parse_llm_task_profile_response(
+        '{"task_type": "mil_classification", "task_type_confidence": "high"}'
+    )
+
+    assert enrichment.task_type == ""
+
+
+def test_llm_merge_maps_canonical_task_to_private_execution_skill():
+    profile = infer_task_profile("predict survival and c-index from lung cancer whole slide images")
+    enrichment = parse_llm_task_profile_response(
+        '{"task_type": "wsi_survival", "task_type_confidence": "high"}'
+    )
+
+    merged, sources = merge_task_profile_enrichment(profile, enrichment)
+
+    assert merged.task_type == "wsi_survival"
+    assert merged.preferred_skill == "survival_analysis"
+    assert sources["task_shape"] == "llm"
 
 
 def test_infer_task_profile_targets_intestinal_metaplasia_for_pwh_gc_im_external():
@@ -123,7 +168,7 @@ def test_grounding_emits_mil_profile_for_wsi_prompt():
     )
     grounding = ground_objective(objective, literature_store=None)
     profile = grounding["task_profile"]
-    assert profile["task_type"] == "mil_classification"
+    assert profile["task_type"] == "wsi_classification"
     assert profile["asset_level"] == "slide"
     assert profile["requires_feature_extraction"] is True
 
