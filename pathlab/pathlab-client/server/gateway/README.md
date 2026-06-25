@@ -62,7 +62,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 - AI 对话、会话历史、网页检索、PDF 缓存 / 向量检索与反馈
 - 存储统计、扫描、清理与配置
 - GPU 信息、热图、标注、系统设置
-- AutoResearch / AutoResearch 技能列表、会话创建、恢复、停止、删除、历史回放、SSE 事件流与 artifact 下载
+- AutoResearch / AutoResearch 会话创建、恢复、停止、删除、历史回放、SSE 事件流与 artifact 下载
 
 ## 路由目录现状
 
@@ -127,7 +127,6 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/autoresearch/skills` | 列出可用 AutoResearch / AutoResearch skills |
 | `POST` | `/autoresearch/sessions` | 创建自动研究 session；可解析 PathLab dataset mounts |
 | `GET` | `/autoresearch/sessions` | 列出当前用户可见 session，可选包含持久化历史 |
 | `GET` | `/autoresearch/sessions/{session_id}` | 读取 session 摘要、状态与事件投影 |
