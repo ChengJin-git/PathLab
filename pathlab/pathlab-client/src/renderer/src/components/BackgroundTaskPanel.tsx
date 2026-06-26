@@ -137,6 +137,8 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       return t('backgroundTask.typeLabels.deleteExternal')
     case 'extraction':
       return t('backgroundTask.typeLabels.extraction')
+    case 'autoresearch':
+      return t('backgroundTask.typeLabels.autoresearch')
     default:
       return t('backgroundTask.typeLabels.task')
   }

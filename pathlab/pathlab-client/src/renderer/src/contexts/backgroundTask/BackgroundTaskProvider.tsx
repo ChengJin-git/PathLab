@@ -27,12 +27,28 @@ import {
   AUTORESEARCH_SESSION_CREATED_EVENT,
   sessionFromAutoResearchSessionCreatedEvent,
 } from '../../lib/autoresearchSessionEvents'
+import { getAutoResearchSession } from '../../api/autoresearch'
 import type {
   BackgroundTask, BackgroundTaskContextType, BackgroundTaskProviderProps,
-  DiskSpaceInfo, MetadataUploadResult
+  DiskSpaceInfo, MetadataUploadResult, TaskStatus
 } from './types'
 
 const BackgroundTaskContext = createContext<BackgroundTaskContextType | undefined>(undefined)
+
+const AUTORESEARCH_POLL_INTERVAL_MS = 3000
+
+function mapAutoResearchStatus(status: string): TaskStatus {
+  if (status === 'running') return 'running'
+  if (status === 'completed') return 'success'
+  if (status === 'failed') return 'error'
+  if (status === 'interrupted') return 'cancelled'
+  return 'pending'
+}
+
+function computeAutoResearchProgress(session: { current_iteration?: number | null; max_iterations?: number | null }): number {
+  if (!session.max_iterations) return 0
+  return Math.min(100, Math.round(((session.current_iteration || 0) / session.max_iterations) * 100))
+}
 
 export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps): React.ReactElement {
   const [localTasks, setLocalTasks] = useState<BackgroundTask[]>([])
@@ -46,6 +62,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   // Ref to track cancelled tasks
   const cancelledTasksRef = useRef<Set<string>>(new Set())
+
+  // Ref to mirror localTasks for the polling interval (avoids re-creating interval on every state change)
+  const localTasksRef = useRef<BackgroundTask[]>(localTasks)
+  useEffect(() => { localTasksRef.current = localTasks }, [localTasks])
 
   // Ref to store AbortController for each running upload task (key: taskId)
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
@@ -384,6 +404,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           totalProgress: 0,
           successCount: 0,
           failedCount: 0,
+          isServerTask: true,
         }
         return [task, ...prev]
       })
@@ -395,6 +416,37 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       window.removeEventListener(AUTORESEARCH_SESSION_CREATED_EVENT, handleSessionCreated)
     }
   }, [])
+
+  useEffect(() => {
+    const poll = async () => {
+      const arTasks = localTasksRef.current.filter(
+        t => t.type === 'autoresearch' && (t.status === 'running' || t.status === 'pending')
+      )
+      if (arTasks.length === 0) return
+      await Promise.all(arTasks.map(async (task) => {
+        try {
+          const session = await getAutoResearchSession(task.id)
+          if (!session) return
+          const nextStatus = mapAutoResearchStatus(session.status)
+          const progress = computeAutoResearchProgress(session)
+          setLocalTasks(prev => prev.map(t => {
+            if (t.id !== task.id) return t
+            if (t.status !== 'running' && t.status !== 'pending') return t
+            return {
+              ...t,
+              status: nextStatus,
+              totalProgress: progress,
+              items: t.items.map(item => ({ ...item, status: nextStatus, progress })),
+            }
+          }))
+        } catch {
+          // Next tick will retry
+        }
+      }))
+    }
+    const id = setInterval(poll, AUTORESEARCH_POLL_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [setLocalTasks])
 
   // Task action callbacks
   const {

@@ -12,6 +12,7 @@ import { uploadWSIFile, uploadWSIByPath, fetchAllDatasets, uploadDatasetSplits, 
 import { deleteTrainingTask } from '../../api/training'
 import { checkUploadSpace, cancelStorageTask, startMigration, getMigrationStatus, startDeleteWSIsTask } from '../../api/storage'
 import { cancelQueueTask } from '../../api/queue'
+import { stopAutoResearchSession } from '../../api/autoresearch'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
 import * as analysisExportApi from '../../api/export'
 import { generateId } from './helpers'
@@ -473,6 +474,11 @@ export function useTaskActions(params: TaskActionsParams) {
   // For merged external validation tasks in analysis phase, cancel the analysis task instead
   const cancelServerTask = useCallback(async (task: BackgroundTask): Promise<boolean> => {
     try {
+      if (task.type === 'autoresearch') {
+        await stopAutoResearchSession(task.id)
+        return true
+      }
+
       // Check if this is a merged external validation task in analysis phase
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const analysisTaskId = (task as any)._analysisTaskId as string | undefined
