@@ -3784,6 +3784,78 @@ def test_get_session_falls_back_to_db_record(monkeypatch):
     assert data["events"][0]["text"] == "hello"
 
 
+def test_delete_session_deletes_db_backed_history_record(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    route_module._SESSION_MANAGER = route_module.AutoResearchSessionManager()
+    record = route_module.SessionRecord(
+        session_id="db-delete",
+        conversation_id="conv-delete",
+        question="from db",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+    )
+    deleted: list[str] = []
+    route_module.autoresearch_persistence.delete_session = deleted.append
+
+    async def fake_db_record(session_id, **kwargs):
+        assert session_id == "db-delete"
+        assert kwargs["include_events"] is False
+        assert kwargs["register"] is True
+        route_module._SESSION_MANAGER.register_hydrated(record)
+        return record
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_db_record)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.delete("/autoresearch/sessions/db-delete")
+
+    assert response.status_code == 200
+    assert response.json()["deleted"] is True
+    assert deleted == ["db-delete"]
+
+
+def test_access_token_mint_does_not_replay_db_events(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    route_module._SESSION_MANAGER = route_module.AutoResearchSessionManager()
+    record = route_module.SessionRecord(
+        session_id="db-token",
+        conversation_id="conv-token",
+        question="from db",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+    )
+
+    async def fake_db_record(session_id, **kwargs):
+        assert session_id == "db-token"
+        assert kwargs["include_events"] is False
+        return record
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_db_record)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.post(
+        "/autoresearch/sessions/db-token/access-token",
+        json={"purpose": "session_download"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session_id"] == "db-token"
+
+
 def test_get_session_enriches_external_test_from_workspace_artifacts(tmp_path):
     route_module = load_route_module()
     workspace = canonical_workspace(route_module, tmp_path / "settings-uploads", "external-artifact")

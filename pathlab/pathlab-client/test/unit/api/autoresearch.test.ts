@@ -13,7 +13,6 @@ import {
   getAutoResearchSessionDownloadUrl,
   getAutoResearchSessionShareUrl,
   listAutoResearchSessions,
-  listAutoResearchSkills,
   startAutoResearchSession,
   stopAutoResearchSession,
   downloadAutoResearchSession,
@@ -29,15 +28,6 @@ beforeEach(() => {
 })
 
 describe('autoresearch api', () => {
-  it('lists skills', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ items: [{ id: 'mil_classification', name: 'MIL' }] }))
-
-    const result = await listAutoResearchSkills()
-
-    expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:6100/autoresearch/skills')
-    expect(result.items[0].id).toBe('mil_classification')
-  })
-
   it('starts a session with gpt-5.5 default when model is omitted', async () => {
     setAuthToken('session-token')
     mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', conversation_id: '', model: 'gpt-5.5', status: 'queued' }))
@@ -211,7 +201,7 @@ describe('autoresearch api', () => {
       await expect(downloadAutoResearchSession('abc')).rejects.toThrow('AutoResearch')
     })
 
-    it('returns autoresearch fallback filename on successful download without Content-Disposition', async () => {
+    it('downloads a session with a scoped access token and fallback filename', async () => {
       setAuthToken('download-token')
       const originalURL = globalThis.URL
       const originalClick = HTMLAnchorElement.prototype.click
@@ -221,14 +211,32 @@ describe('autoresearch api', () => {
           revokeObjectURL: vi.fn(),
         })
         HTMLAnchorElement.prototype.click = vi.fn()
-        mockFetch.mockResolvedValueOnce(new Response(new Blob(['zip-content']), {
-          status: 200,
-          headers: new Headers(),
-        }))
+        mockFetch
+          .mockResolvedValueOnce(ok({
+            token: 'scoped-session-token',
+            token_type: 'autoresearch_access',
+            purpose: 'session_download',
+            session_id: 'abc',
+            run_id: '',
+            expires_in: 300,
+          }))
+          .mockResolvedValueOnce(new Response(new Blob(['zip-content']), {
+            status: 200,
+            headers: new Headers(),
+          }))
 
         const result = await downloadAutoResearchSession('abc')
 
         expect(result.filename).toBe('autoresearch-abc.zip')
+        expect(mockFetch).toHaveBeenCalledTimes(2)
+        expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:6100/autoresearch/sessions/abc/access-token')
+        expect(JSON.parse(mockFetch.mock.calls[0][1]?.body as string)).toEqual({
+          purpose: 'session_download',
+          run_id: '',
+        })
+        expect(mockFetch.mock.calls[1][0]).toBe(
+          'http://localhost:6100/autoresearch/sessions/abc/download?token=scoped-session-token',
+        )
       } finally {
         vi.stubGlobal('URL', originalURL)
         HTMLAnchorElement.prototype.click = originalClick
