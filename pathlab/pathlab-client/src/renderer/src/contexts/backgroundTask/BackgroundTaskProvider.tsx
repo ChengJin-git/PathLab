@@ -23,6 +23,10 @@ import {
   isTrainingSubmissionPendingTimedOut,
   listTrainingSubmissionRecords,
 } from '../../lib/trainingSubmissionTracker'
+import {
+  AUTORESEARCH_SESSION_CREATED_EVENT,
+  sessionFromAutoResearchSessionCreatedEvent,
+} from '../../lib/autoresearchSessionEvents'
 import type {
   BackgroundTask, BackgroundTaskContextType, BackgroundTaskProviderProps,
   DiskSpaceInfo, MetadataUploadResult
@@ -353,6 +357,44 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
     checkActiveMigration()
   }, [refreshDiskSpace, isAdmin, t])
+
+  useEffect(() => {
+    const handleSessionCreated = (event: Event) => {
+      const session = sessionFromAutoResearchSessionCreatedEvent(event)
+      if (!session) return
+
+      const taskId = session.session_id
+      const title = session.title || session.question || session.session_id
+      const status: BackgroundTask['status'] = session.status === 'running' ? 'running' : 'pending'
+
+      setLocalTasks(prev => {
+        if (prev.some(t => t.id === taskId)) return prev
+        const task: BackgroundTask = {
+          id: taskId,
+          type: 'autoresearch',
+          title,
+          items: [{
+            id: taskId,
+            name: title,
+            status,
+            progress: 0,
+          }],
+          status,
+          createdAt: new Date(session.created_at ? session.created_at * 1000 : Date.now()),
+          totalProgress: 0,
+          successCount: 0,
+          failedCount: 0,
+        }
+        return [task, ...prev]
+      })
+      setIsPanelExpanded(true)
+    }
+
+    window.addEventListener(AUTORESEARCH_SESSION_CREATED_EVENT, handleSessionCreated)
+    return () => {
+      window.removeEventListener(AUTORESEARCH_SESSION_CREATED_EVENT, handleSessionCreated)
+    }
+  }, [])
 
   // Task action callbacks
   const {

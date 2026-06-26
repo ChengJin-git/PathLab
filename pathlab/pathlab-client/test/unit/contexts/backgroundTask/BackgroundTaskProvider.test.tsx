@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BackgroundTaskProvider, useBackgroundTask } from '@renderer/contexts/backgroundTask'
+import { notifyAutoResearchSessionCreated } from '@renderer/lib/autoresearchSessionEvents'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -72,6 +73,19 @@ function TaskListProbe() {
   )
 }
 
+function TaskTypesProbe() {
+  const { tasks } = useBackgroundTask()
+  return (
+    <ul data-testid="task-types">
+      {tasks.map(task => (
+        <li key={task.id} data-type={task.type} data-created-at={task.createdAt.toISOString()}>
+          {task.type}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 describe('BackgroundTaskProvider', () => {
   it('keeps page-local scan_directory tasks out of the global notification list', async () => {
     const queryClient = new QueryClient()
@@ -86,5 +100,33 @@ describe('BackgroundTaskProvider', () => {
 
     await waitFor(() => expect(screen.getByText('Batch Import')).toBeInTheDocument())
     expect(screen.queryByText('Scan Directory')).not.toBeInTheDocument()
+  })
+
+  it('exposes an autoresearch task when notifyAutoResearchSessionCreated is fired', async () => {
+    const queryClient = new QueryClient()
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BackgroundTaskProvider>
+          <TaskTypesProbe />
+        </BackgroundTaskProvider>
+      </QueryClientProvider>,
+    )
+
+    act(() => {
+      notifyAutoResearchSessionCreated({
+        session_id: 'ar-session-001',
+        question: 'Test research question',
+        status: 'running',
+        created_at: 1782403200,
+        updated_at: 1782403200,
+      })
+    })
+
+    await waitFor(() => {
+      const autoresearchItems = screen.getAllByText('autoresearch')
+      expect(autoresearchItems.length).toBeGreaterThan(0)
+    })
+    expect(screen.getByText('autoresearch')).toHaveAttribute('data-created-at', '2026-06-25T16:00:00.000Z')
   })
 })

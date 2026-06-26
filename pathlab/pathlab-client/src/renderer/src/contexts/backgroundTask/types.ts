@@ -7,7 +7,7 @@ import type { UploadSplitsResponse } from '../../api/wsi'
 import type { TaskType as CanonicalTrainingTaskType } from '../../constants/training'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_wsis' | 'delete_task' | 'training' | 'external_validation' | 'batch_inference' | 'analysis' | 'segmentation_export' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'scan_directory' | 'metadata_upload' | 'extraction'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_wsis' | 'delete_task' | 'training' | 'external_validation' | 'batch_inference' | 'analysis' | 'segmentation_export' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'scan_directory' | 'metadata_upload' | 'extraction' | 'autoresearch'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
