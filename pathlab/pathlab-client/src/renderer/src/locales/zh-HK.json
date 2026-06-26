@@ -1534,7 +1534,13 @@
       "maxIterHint": "範圍：{{min}}-{{max}}",
       "starting": "啟動中...",
       "startSession": "啟動會話",
-      "startFailed": "啟動自動實驗會話失敗"
+      "startFailed": "啟動自動實驗會話失敗",
+      "examplePrompts": {
+        "featureExtraction": "為這個 WSI 資料夾提取 Virchow2 特徵，但暫時不要訓練",
+        "classification": "在這個資料集上訓練 ResNet 分類器，區分腫瘤與正常組織",
+        "survival": "利用該佇列的臨床病理特徵構建生存預測模型",
+        "externalValidation": "在內部佇列上訓練，在外部資料集上驗證"
+      }
     },
     "sessionPage": {
       "sessionDetail": "會話詳情",

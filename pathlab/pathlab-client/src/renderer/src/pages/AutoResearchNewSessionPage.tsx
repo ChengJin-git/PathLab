@@ -12,6 +12,13 @@ const DEFAULT_MAX_ITER = 5
 const MIN_MAX_ITER = 1
 const MAX_MAX_ITER = 20
 
+const EXAMPLE_PROMPTS = [
+  { key: 'featureExtraction', labelKey: 'autoResearch.newSessionPage.examplePrompts.featureExtraction' },
+  { key: 'classification', labelKey: 'autoResearch.newSessionPage.examplePrompts.classification' },
+  { key: 'survival', labelKey: 'autoResearch.newSessionPage.examplePrompts.survival' },
+  { key: 'externalValidation', labelKey: 'autoResearch.newSessionPage.examplePrompts.externalValidation' },
+] as const
+
 function parseMaxIter(value: string): number {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed)) return DEFAULT_MAX_ITER
@@ -57,16 +64,28 @@ export default function AutoResearchNewSessionPage() {
         </div>
 
         <form className="flex flex-1 flex-col space-y-5" onSubmit={handleSubmit}>
-          <div className="space-y-2">
+          <div className="flex flex-1 flex-col space-y-2">
             <Label htmlFor="question" className="text-gray-700">{t('autoResearch.newSessionPage.researchQuestion')}</Label>
-            <div className="relative flex-1 rounded-2xl border border-gray-200 bg-white shadow-sm transition focus-within:border-blue-300 focus-within:ring-4 focus-within:ring-blue-100">
+            <div className="relative flex flex-1 flex-col rounded-2xl border border-gray-200 bg-white shadow-sm transition focus-within:border-blue-300 focus-within:ring-4 focus-within:ring-blue-100">
               <textarea
                 id="question"
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                className="h-full min-h-36 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-sm leading-6 text-gray-900 outline-none placeholder:text-gray-400"
+                className="min-h-36 flex-1 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-sm leading-6 text-gray-900 outline-none placeholder:text-gray-400"
                 placeholder={t('autoResearch.newSessionPage.questionPlaceholder')}
               />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {EXAMPLE_PROMPTS.map((prompt) => (
+                <button
+                  key={prompt.key}
+                  type="button"
+                  onClick={() => setQuestion(t(prompt.labelKey))}
+                  className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                >
+                  {t(prompt.labelKey)}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -88,8 +107,6 @@ export default function AutoResearchNewSessionPage() {
               </span>
             </div>
           </div>
-
-          <div className="flex-1" />
 
           {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</div>}
 

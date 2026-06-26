@@ -1534,7 +1534,13 @@
       "maxIterHint": "范围：{{min}}-{{max}}",
       "starting": "启动中...",
       "startSession": "启动会话",
-      "startFailed": "启动自动实验会话失败"
+      "startFailed": "启动自动实验会话失败",
+      "examplePrompts": {
+        "featureExtraction": "为这个 WSI 文件夹提取 Virchow2 特征，但暂时不要训练",
+        "classification": "在这个数据集上训练 ResNet 分类器，区分肿瘤与正常组织",
+        "survival": "利用该队列的临床病理特征构建生存预测模型",
+        "externalValidation": "在内部队列上训练，在外部数据集上验证"
+      }
     },
     "sessionPage": {
       "sessionDetail": "会话详情",

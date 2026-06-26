@@ -1534,7 +1534,13 @@
       "maxIterHint": "Range: {{min}}-{{max}}",
       "starting": "Starting...",
       "startSession": "Start session",
-      "startFailed": "Failed to start AutoResearch session"
+      "startFailed": "Failed to start AutoResearch session",
+      "examplePrompts": {
+        "featureExtraction": "Extract Virchow2 features for this WSI folder, but do not train yet",
+        "classification": "Train a ResNet classifier on this dataset to distinguish tumor from normal tissue",
+        "survival": "Build a survival prediction model using clinicopathological features from this cohort",
+        "externalValidation": "Train on this internal cohort and validate on the external dataset"
+      }
     },
     "sessionPage": {
       "sessionDetail": "Session detail",
