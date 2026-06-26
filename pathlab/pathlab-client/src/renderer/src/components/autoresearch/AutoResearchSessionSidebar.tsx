@@ -113,7 +113,7 @@ export default function AutoResearchSessionSidebar() {
 
   return (
     <nav
-      className="flex w-full max-h-[45vh] shrink-0 flex-col border-r border-gray-200 bg-gray-50 lg:h-full lg:max-h-none lg:w-72 lg:shrink-0"
+      className="flex h-full w-full flex-col border-r border-gray-200 bg-gray-50 lg:w-72 lg:shrink-0"
       aria-label={t('autoResearch.sessions')}
     >
       <div className="space-y-3 border-b border-gray-100 p-3">
