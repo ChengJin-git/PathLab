@@ -3613,7 +3613,8 @@
       "extraction": "Extraction",
       "task": "Task",
       "import": "Import",
-      "metadata": "Metadata"
+      "metadata": "Metadata",
+      "autoresearch": "AutoResearch"
     },
     "serverStatus": {
       "training": {

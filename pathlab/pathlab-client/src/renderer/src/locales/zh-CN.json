@@ -3556,7 +3556,8 @@
       "extraction": "提取区域",
       "task": "任务",
       "import": "导入",
-      "metadata": "元数据"
+      "metadata": "元数据",
+      "autoresearch": "自动研究"
     },
     "serverStatus": {
       "training": {

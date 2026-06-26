@@ -3556,7 +3556,8 @@
       "extraction": "擷取區域",
       "task": "任務",
       "import": "匯入",
-      "metadata": "中繼資料"
+      "metadata": "中繼資料",
+      "autoresearch": "自動研究"
     },
     "serverStatus": {
       "training": {
