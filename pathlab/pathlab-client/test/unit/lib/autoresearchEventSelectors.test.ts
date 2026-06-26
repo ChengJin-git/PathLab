@@ -291,6 +291,48 @@ describe('autoresearch event selectors', () => {
     })
   })
 
+  it('infers patch segmentation sessions and surfaces Dice as the primary metric', () => {
+    const events: AutoResearchEvent[] = [
+      {
+        kind: 'state',
+        status: 'completed',
+        state: {
+          stage: 'completed',
+          task_profile: { task_type: 'patch_segmentation', asset_level: 'patch' },
+          objective: { success_metric: 'dice' },
+          run_history: [
+            {
+              iteration: 0,
+              run_id: 'run_seg',
+              committed: true,
+              metric_name: 'dice',
+              metric_value: 0.8421,
+              metrics: { dice: 0.8421, iou: 0.731 },
+            },
+          ],
+        },
+      },
+    ]
+    const session = {
+      session_id: 's-segmentation',
+      title: 'Tumor mask run',
+      question: 'Train a patch segmentation model and optimize Dice.',
+      model: 'gpt-5.5',
+      status: 'completed',
+      stage: 'completed',
+      events,
+    } satisfies AutoResearchSessionDetail
+
+    const view = buildAutoResearchExecutionView(session, events)
+
+    expect(view.sessionMetadata).toMatchObject({
+      taskType: 'patch-level segmentation',
+      foundationModel: 'Not detected',
+      milMethod: null,
+    })
+    expect(view.bestMetric).toEqual({ name: 'dice', value: 0.8421, runId: 'run_seg' })
+  })
+
   it('normalizes grounding task profile and literature papers for the grounding card', () => {
     const session = {
       session_id: 's-grounding',
@@ -350,8 +392,6 @@ describe('autoresearch event selectors', () => {
     const view = buildAutoResearchExecutionView(session, session.events)
 
     expect((view as any).grounding).toMatchObject({
-      selectedSkill: 'mil_classification',
-      route: 'skill',
       literatureCount: 13,
       providers: ['openalex', 'pubmed'],
       sotaStatusLabel: 'no SOTA target found',
@@ -443,7 +483,6 @@ describe('autoresearch event selectors', () => {
       planSteps: [
         {
           id: 'train_mil',
-          skill: 'mil_classification',
           title: 'Train slide-level classifier',
           isCurrent: true,
         },

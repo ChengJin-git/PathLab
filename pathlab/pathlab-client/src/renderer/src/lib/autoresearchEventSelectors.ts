@@ -165,6 +165,7 @@ export interface AutoResearchInternalTestView {
 
 export type AutoResearchTaskTypeView =
   | 'patch-level classification'
+  | 'patch-level segmentation'
   | 'slide-level classification'
   | 'slide-level survival prediction'
   | 'Not detected'
@@ -859,13 +860,34 @@ function inferBestRunId(state: Record<string, unknown>, metricName: string, best
 
 function buildBestMetric(state: Record<string, unknown>): AutoResearchMetricView | null {
   const objective = asRecord(state.objective)
-  const value = asNumber(state.best_metric_value)
-  if (typeof value !== 'number' || value <= 0) return null
   const name = asString(objective.success_metric) || 'metric'
+  const value = asNumber(state.best_metric_value)
+  if (typeof value === 'number' && value > 0) {
+    return {
+      name: displayMetricName(name),
+      value,
+      runId: asString(state.best_run_id) || inferBestRunId(state, name, value),
+    }
+  }
+
+  let best: AutoResearchMetricView | null = null
+  runHistory(state).forEach((record) => {
+    if (record.committed === false) return
+    const metricName = asString(record.metric_name) || name
+    const recordValue = runMetricValue(record, metricName)
+    if (typeof recordValue !== 'number' || recordValue <= 0) return
+    if (!best || recordValue > (best.value ?? Number.NEGATIVE_INFINITY)) {
+      best = {
+        name: displayMetricName(metricName),
+        value: recordValue,
+        runId: asString(record.run_id) || undefined,
+      }
+    }
+  })
+  if (!best) return null
   return {
-    name: displayMetricName(name),
-    value,
-    runId: asString(state.best_run_id) || inferBestRunId(state, name, value),
+    ...best,
+    runId: asString(state.best_run_id) || best.runId,
   }
 }
 
@@ -1582,6 +1604,14 @@ function inferTaskType(corpus: string): AutoResearchTaskTypeView {
     return 'slide-level survival prediction'
   }
   if (
+    /patch[_\s-]?segmentation/.test(text) ||
+    /patch[-_\s]?level[^.\n]{0,80}segmentation/.test(text) ||
+    /segmentation[^.\n]{0,80}(dice|iou|mask)/.test(text) ||
+    /(dice|iou)[^.\n]{0,80}segmentation/.test(text)
+  ) {
+    return 'patch-level segmentation'
+  }
+  if (
     /patch[_\s-]?classification/.test(text) ||
     /patch[-_\s]?level[^.\n]{0,80}classification/.test(text) ||
     /patch[^.\n]{0,80}classifier/.test(text)
@@ -1616,6 +1646,9 @@ function explicitTaskTypeFromProfile(state: Record<string, unknown>): AutoResear
     const combined = `${taskType} ${assetLevel} ${predictionTarget}`
     if (/survival|time[_\s-]?to[_\s-]?event|c[_\s-]?index/.test(combined)) {
       return 'slide-level survival prediction'
+    }
+    if (/segmentation|mask|dice|iou/.test(combined)) {
+      return 'patch-level segmentation'
     }
     if (taskType.includes('patch') || assetLevel.includes('patch')) {
       return 'patch-level classification'
