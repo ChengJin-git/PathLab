@@ -1502,6 +1502,16 @@
       "iterations": "{{count}} iterations",
       "samples": "{{count}} samples"
     },
+    "trainingProgress": {
+      "quickStart": "Quick start",
+      "training": "Training",
+      "epoch": "Epoch {{current}}",
+      "epochWithTotal": "Epoch {{current}}/{{total}}",
+      "iteration": "Iter {{current}}",
+      "iterationWithMax": "Iter {{current}}/{{max}}",
+      "validationAuc": "val AUC {{value}}",
+      "best": "best {{value}}"
+    },
     "newSessionPage": {
       "title": "Start an AutoResearch session",
       "description": "Describe the computational pathology task. AutoResearch will start a backend session and stream live events into the run detail page.",

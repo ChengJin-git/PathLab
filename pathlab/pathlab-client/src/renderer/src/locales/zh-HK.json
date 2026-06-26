@@ -1502,6 +1502,16 @@
       "iterations": "{{count}} 次迭代",
       "samples": "{{count}} 個樣本"
     },
+    "trainingProgress": {
+      "quickStart": "快速啟動",
+      "training": "訓練",
+      "epoch": "第 {{current}} 輪訓練",
+      "epochWithTotal": "第 {{current}}/{{total}} 輪訓練",
+      "iteration": "第 {{current}} 輪",
+      "iterationWithMax": "第 {{current}}/{{max}} 輪",
+      "validationAuc": "驗證 AUC {{value}}",
+      "best": "最佳 {{value}}"
+    },
     "newSessionPage": {
       "title": "啟動自動實驗會話",
       "description": "描述計算病理任務。自動實驗會啟動後端會話，並把即時事件流寫入運行詳情頁。",

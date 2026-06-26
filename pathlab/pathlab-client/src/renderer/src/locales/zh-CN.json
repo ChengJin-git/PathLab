@@ -1502,6 +1502,16 @@
       "iterations": "{{count}} 次迭代",
       "samples": "{{count}} 个样本"
     },
+    "trainingProgress": {
+      "quickStart": "快速启动",
+      "training": "训练",
+      "epoch": "第 {{current}} 轮训练",
+      "epochWithTotal": "第 {{current}}/{{total}} 轮训练",
+      "iteration": "第 {{current}} 轮",
+      "iterationWithMax": "第 {{current}}/{{max}} 轮",
+      "validationAuc": "验证 AUC {{value}}",
+      "best": "最佳 {{value}}"
+    },
     "newSessionPage": {
       "title": "启动自动实验会话",
       "description": "描述计算病理任务。自动实验会启动后端会话，并把实时事件流写入运行详情页。",
