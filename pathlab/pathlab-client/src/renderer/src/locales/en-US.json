@@ -1496,6 +1496,19 @@
       "failed": "failed",
       "resuming": "resuming"
     },
+    "taskType": {
+      "patch_level_classification": "Patch Classification",
+      "patch_level_segmentation": "Patch Segmentation",
+      "slide_level_classification": "Slide-level Classification",
+      "slide_level_survival_prediction": "Slide-level Survival Prediction",
+      "not_detected": "Not detected"
+    },
+    "assetLevel": {
+      "patch": "patch-level",
+      "slide": "slide-level",
+      "wsi": "slide-level",
+      "file": "file-level"
+    },
     "count": {
       "events": "{{count}} events",
       "tools": "{{count}} tools",
@@ -1562,7 +1575,14 @@
       "internalTest": "Internal test",
       "externalValidation": "External validation",
       "coverageValue": "coverage {{value}}%",
-      "missingFeatures": "missing features {{count}}"
+      "missingFeatures": "missing features {{count}}",
+      "fallbackAgentWork": "Ran {{iterations}} iterations. Models used: {{models}}.",
+      "fallbackAgentWorkNoModels": "Ran {{iterations}} iterations. Models used: not detected.",
+      "fallbackBestMetric": "The best detected result is {{metric}}.",
+      "fallbackNoBestMetric": "No best metric has been detected yet.",
+      "foundationModelUsed": "foundation model {{model}}",
+      "milMethodUsed": "MIL method {{method}}",
+      "agentLlmUsed": "agent LLM {{model}}"
     },
     "iterationLadder": {
       "taskSetup": "Task setup",

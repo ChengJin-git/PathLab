@@ -1443,7 +1443,7 @@
       "duration": "時長",
       "events": "事件",
       "tools": "工具",
-      "iterations": "迭代",
+      "iterations": "實驗輪次",
       "bestMetric": "最佳指標",
       "task": "任務",
       "foundation": "基礎模型",
@@ -1496,10 +1496,23 @@
       "failed": "失敗",
       "resuming": "恢復中"
     },
+    "taskType": {
+      "patch_level_classification": "普通圖像分類",
+      "patch_level_segmentation": "普通圖像分割",
+      "slide_level_classification": "全切片圖像分類",
+      "slide_level_survival_prediction": "生存預測",
+      "not_detected": "未檢測到"
+    },
+    "assetLevel": {
+      "patch": "普通圖像級",
+      "slide": "全切片圖像級",
+      "wsi": "全切片圖像級",
+      "file": "檔案級"
+    },
     "count": {
       "events": "{{count}} 個事件",
       "tools": "{{count}} 個工具",
-      "iterations": "{{count}} 次迭代",
+      "iterations": "{{count}} 輪實驗",
       "samples": "{{count}} 個樣本"
     },
     "trainingProgress": {
@@ -1562,16 +1575,23 @@
       "internalTest": "內部測試",
       "externalValidation": "外部驗證",
       "coverageValue": "覆蓋率 {{value}}%",
-      "missingFeatures": "缺失 feature {{count}}"
+      "missingFeatures": "缺失特徵 {{count}}",
+      "fallbackAgentWork": "已運行 {{iterations}} 輪實驗。使用的模型：{{models}}。",
+      "fallbackAgentWorkNoModels": "已運行 {{iterations}} 輪實驗。使用的模型：未檢測到。",
+      "fallbackBestMetric": "目前檢測到的最佳結果為 {{metric}}。",
+      "fallbackNoBestMetric": "尚未檢測到最佳指標。",
+      "foundationModelUsed": "基礎模型 {{model}}",
+      "milMethodUsed": "MIL 方法 {{method}}",
+      "agentLlmUsed": "智能體 LLM {{model}}"
     },
     "iterationLadder": {
       "taskSetup": "任務設定",
       "bestSoFar": "目前最佳",
       "downloadBestRun": "下載最佳運行產物",
       "metricFromRun": " 來自 {{runId}}",
-      "title": "迭代進度",
+      "title": "實驗進度",
       "description": "指標進展和 ratchet 狀態。",
-      "noIterations": "暫無執行迭代。",
+      "noIterations": "暫無實驗輪次。",
       "waitingFirstEvent": "正在等待第一個執行事件...",
       "downloadIterationRun": "下載第 {{iteration}} 輪運行產物",
       "toolsUsed": "已用工具",
@@ -1583,12 +1603,12 @@
       "shortWithMax": "第 {{current}}/{{max}} 輪",
       "running": "第 {{current}} 輪運行中",
       "runningWithMax": "第 {{current}}/{{max}} 輪運行中",
-      "runningBadge": "迭代運行中",
+      "runningBadge": "本輪實驗運行中",
       "preRun": "運行前",
-      "runningToolCalls": "迭代運行中 - 目前已捕獲 {{count}} 次工具呼叫。",
+      "runningToolCalls": "本輪實驗運行中 - 目前已捕獲 {{count}} 次工具呼叫。",
       "toolCalls": "本次執行共 {{count}} 次工具呼叫。",
-      "waitingNextTool": "迭代運行中。正在等待下一個工具事件...",
-      "noToolCalls": "此輪迭代暫無工具呼叫。",
+      "waitingNextTool": "本輪實驗運行中。正在等待下一個工具事件...",
+      "noToolCalls": "此輪實驗暫無工具呼叫。",
       "status": {
         "committed": "已提交",
         "not committed": "未提交",

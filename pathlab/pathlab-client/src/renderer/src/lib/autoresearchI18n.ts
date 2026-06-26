@@ -69,3 +69,18 @@ export function autoResearchCountLabel(
   const fallback = `${count} ${count === 1 ? fallbackSingular : fallbackPlural}`
   return translatedOrFallback(t, key, fallback, { count })
 }
+
+export function autoResearchTaskTypeLabel(taskType: string, t: Translate): string {
+  const normalized = taskType.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  return translatedOrFallback(t, `autoResearch.taskType.${normalized}`, taskType)
+}
+
+export function autoResearchAssetLevelLabel(assetLevel: string | undefined, t: Translate): string {
+  const normalized = (assetLevel || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+  if (!normalized) return ''
+  return translatedOrFallback(t, `autoResearch.assetLevel.${normalized}`, assetLevel || '')
+}
+
+export function autoResearchNotDetectedLabel(t: Translate): string {
+  return translatedOrFallback(t, 'autoResearch.common.notDetected', 'Not detected')
+}
