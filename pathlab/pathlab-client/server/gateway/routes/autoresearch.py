@@ -3878,7 +3878,7 @@ async def delete_session(
             session_id,
             user=user,
             include_events=False,
-            register=False,
+            register=True,
         )
     if existing is None:
         raise HTTPException(status_code=404, detail="AutoResearch session not found")
@@ -3916,7 +3916,11 @@ async def mint_autoresearch_access_token(
     if record is not None and not _can_access_record(record, user):
         raise HTTPException(status_code=403, detail="AutoResearch session access denied")
     if record is None:
-        record = await _load_db_record(session_id, user=user)
+        record = await _load_db_record(
+            session_id,
+            user=user,
+            include_events=False,
+        )
     if record is None:
         raise HTTPException(status_code=404, detail="AutoResearch session not found")
     if request.purpose == "run_download" and not _is_safe_run_id(request.run_id):
@@ -3972,7 +3976,11 @@ async def download_session_artifacts(
     if record is not None and not _can_access_record(record, user):
         raise HTTPException(status_code=403, detail="AutoResearch session access denied")
     if record is None:
-        record = await _load_db_record(session_id, user=user)
+        record = await _load_db_record(
+            session_id,
+            user=user,
+            include_events=False,
+        )
     if record is None:
         raise HTTPException(status_code=404, detail="AutoResearch session not found")
 
