@@ -71,11 +71,79 @@ describe('AutoResearchExecutionConsole', () => {
     expect(screen.getByText('运行摘要')).toBeInTheDocument()
     expect(screen.getByText('任务设置')).toBeInTheDocument()
     expect(screen.getByText('当前最佳')).toBeInTheDocument()
-    expect(screen.getByText('迭代进度')).toBeInTheDocument()
+    expect(screen.getByText('实验进度')).toBeInTheDocument()
     expect(screen.getByText('已用工具')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /显示原始事件/ })).toBeInTheDocument()
     expect(screen.queryByText('Execution console')).not.toBeInTheDocument()
     expect(screen.queryByText('Run summary')).not.toBeInTheDocument()
+  })
+
+  it('localizes fallback run summary text and uses non-technical round wording in zh-CN', async () => {
+    await i18n.changeLanguage('zh-CN')
+    const emptySession: AutoResearchSessionDetail = {
+      session_id: 's-empty',
+      title: '空运行',
+      question: '启动一个自动实验。',
+      status: 'running',
+      stage: 'execution',
+      events: [],
+    }
+
+    render(<AutoResearchExecutionConsole session={emptySession} events={[]} streamStatus="open" />)
+
+    expect(screen.getByText('已运行 0 轮实验。使用的模型：未检测到。')).toBeInTheDocument()
+    expect(screen.getByText('尚未检测到最佳指标。')).toBeInTheDocument()
+    expect(screen.getByText('实验轮次')).toBeInTheDocument()
+    expect(screen.getByText('0 轮实验')).toBeInTheDocument()
+    expect(screen.queryByText(/Ran 0 iterations/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Models used: not detected/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/No best metric has been detected yet/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Not detected')).not.toBeInTheDocument()
+    expect(screen.queryByText('迭代')).not.toBeInTheDocument()
+  })
+
+  it('localizes AutoResearch segmentation task labels in zh-CN', async () => {
+    await i18n.changeLanguage('zh-CN')
+    const segmentationEvents: AutoResearchEvent[] = [
+      {
+        kind: 'state',
+        ts: 1000,
+        status: 'completed',
+        state: {
+          stage: 'completed',
+          grounding: {
+            online_literature_count: 0,
+            task_profile: { task_type: 'patch_segmentation', asset_level: 'patch' },
+          },
+          objective: { success_metric: 'dice' },
+          run_history: [
+            {
+              iteration: 0,
+              run_id: 'run_seg',
+              committed: true,
+              metric_name: 'dice',
+              metric_value: 0.8421,
+              metrics: { dice: 0.8421, iou: 0.731 },
+            },
+          ],
+        },
+      },
+    ]
+    const segmentationSession: AutoResearchSessionDetail = {
+      session_id: 's-segmentation',
+      title: '肿瘤区域分割',
+      question: '训练普通图像分割模型，并优化 Dice。',
+      status: 'completed',
+      stage: 'completed',
+      events: segmentationEvents,
+    }
+
+    render(<AutoResearchExecutionConsole session={segmentationSession} events={segmentationEvents} streamStatus="closed" />)
+
+    expect(screen.getAllByText('普通图像分割').length).toBeGreaterThan(0)
+    expect(screen.getByText('DICE 0.842')).toBeInTheDocument()
+    expect(screen.queryByText('patch-level segmentation')).not.toBeInTheDocument()
+    expect(screen.queryByText('patch-level')).not.toBeInTheDocument()
   })
 
   it('renders the execution plan as structured PathLab-style cards instead of raw JSON', () => {
@@ -85,7 +153,7 @@ describe('AutoResearchExecutionConsole', () => {
     expect(screen.getByText('Execution console')).toBeInTheDocument()
     expect(screen.queryByText('Target to beat')).not.toBeInTheDocument()
     expect(screen.getByText('Task type')).toBeInTheDocument()
-    expect(screen.getAllByText('slide-level classification').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Slide-level Classification').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Foundation model').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Virchow2').length).toBeGreaterThan(0)
     expect(screen.getAllByText('MIL method').length).toBeGreaterThan(0)
