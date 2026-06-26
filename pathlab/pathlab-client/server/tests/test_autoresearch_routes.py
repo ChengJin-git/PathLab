@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import types
 import zipfile
@@ -2583,6 +2584,98 @@ def test_fallback_session_title_includes_domain_and_task_for_gastric_im():
     assert any(token in title for token in ("Gastric", "Stomach", "Gastritis"))
     assert "IM" in title
     assert "classification" in title
+
+
+def test_autoresearch_sessions_wait_in_gateway_queue_when_gpu_capacity_is_full(monkeypatch):
+    route_module = load_route_module()
+    monkeypatch.setattr(route_module.Config, "get_max_concurrent", lambda default=1: 1)
+    monkeypatch.setattr(route_module.Config, "get_task_timeout", lambda: 30)
+    route_module._queue_session_title_generation = lambda record, config: None
+    manager = route_module.AutoResearchSessionManager()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+    finished = threading.Event()
+    started_questions: list[str] = []
+
+    def fake_runner(_config, question, _emit):
+        started_questions.append(question)
+        if question == "first run":
+            first_started.set()
+            assert release_first.wait(1.0)
+        else:
+            second_started.set()
+        return {"stage": "completed", "conversation_id": f"conv-{question}"}
+
+    manager.create_runner = fake_runner
+
+    first = manager.start(route_module.StartAutoResearchSessionRequest(question="first run"), user_id="user-test")
+    assert first_started.wait(1.0)
+
+    second = manager.start(route_module.StartAutoResearchSessionRequest(question="second run"), user_id="user-test")
+
+    assert second.status == "queued"
+    assert second.stage == "queued"
+    assert not second_started.wait(0.05)
+    assert started_questions == ["first run"]
+
+    release_first.set()
+    assert second_started.wait(1.0)
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        if first.status == "completed" and second.status == "completed":
+            finished.set()
+            break
+        time.sleep(0.01)
+
+    assert finished.wait(0)
+    assert started_questions == ["first run", "second run"]
+
+
+def test_autoresearch_session_timeout_stops_running_processes(monkeypatch):
+    route_module = load_route_module()
+    from backend.autoresearch.runtime import session_registry
+
+    monkeypatch.setattr(route_module.Config, "get_max_concurrent", lambda default=1: 1)
+    monkeypatch.setattr(route_module.Config, "get_task_timeout", lambda: 0.05)
+    route_module._queue_session_title_generation = lambda record, config: None
+    cancelled = threading.Event()
+    cleanup_calls: list[tuple[str, float, float]] = []
+
+    def fake_cancel(session_id: str, *, term_timeout: float = 0.0, kill_timeout: float = 0.0):
+        cleanup_calls.append((session_id, term_timeout, kill_timeout))
+        cancelled.set()
+        return {
+            "active_process_count": 1,
+            "terminated_process_groups": [9876],
+            "sigterm_sent": [9876],
+            "sigkill_sent": [9876],
+            "processes": [{"session_id": session_id, "pgid": 9876}],
+        }
+
+    monkeypatch.setattr(session_registry, "cancel_session_processes", fake_cancel)
+    manager = route_module.AutoResearchSessionManager()
+
+    def slow_runner(_config, _question, _emit):
+        assert cancelled.wait(1.0)
+        return {"stage": "completed", "conversation_id": "conv-too-late"}
+
+    manager.create_runner = slow_runner
+
+    record = manager.start(route_module.StartAutoResearchSessionRequest(question="timeout run"), user_id="user-test")
+
+    assert cancelled.wait(1.0)
+    deadline = time.time() + 1.0
+    while time.time() < deadline and record.status not in {"interrupted", "failed"}:
+        time.sleep(0.01)
+
+    assert record.status == "interrupted"
+    assert record.stage == "interrupted"
+    assert record.state["stop_reason"] == "task_timeout"
+    assert "timed out" in record.error.lower()
+    assert cleanup_calls == [(record.session_id, 3.0, 0.5)]
+    assert record.state["process_cleanup"]["sigkill_sent"] == [9876]
+    assert record.conversation_id != "conv-too-late"
 
 
 def test_stop_running_session_marks_record_interrupted():

@@ -275,9 +275,28 @@ class AutoResearchSessionManager:
         self._sessions: dict[str, SessionRecord] = {}
         self._lock = threading.Lock()
         self._hydrated_registry = False
+        self._running_count = 0
+        self._queue: list[tuple[SessionRecord, StartAutoResearchSessionRequest, Any]] = []
         self.create_runner: Callable[
             [Any, str, Callable[[dict[str, Any]], None]], dict[str, Any]
         ] | None = None
+
+    def _try_dequeue(self) -> None:
+        with self._lock:
+            max_concurrent = Config.get_max_concurrent(default=4)
+            while self._queue and self._running_count < max_concurrent:
+                record, req, config = self._queue.pop(0)
+                self._running_count += 1
+                thread = threading.Thread(target=self._run_wrapper, args=(record, req, config), daemon=True)
+                thread.start()
+
+    def _run_wrapper(self, record: SessionRecord, req: StartAutoResearchSessionRequest, config: Any) -> None:
+        try:
+            self._run(record, req, config)
+        finally:
+            with self._lock:
+                self._running_count = max(0, self._running_count - 1)
+            self._try_dequeue()
 
     def start(
         self,
@@ -313,8 +332,14 @@ class AutoResearchSessionManager:
         )
         record.add_event({"kind": "session", "status": "queued"})
         _queue_session_title_generation(record, config)
-        thread = threading.Thread(target=self._run, args=(record, req, config), daemon=True)
-        thread.start()
+        with self._lock:
+            max_concurrent = Config.get_max_concurrent(default=4)
+            if self._running_count < max_concurrent:
+                self._running_count += 1
+                thread = threading.Thread(target=self._run_wrapper, args=(record, req, config), daemon=True)
+                thread.start()
+            else:
+                self._queue.append((record, req, config))
         return record
 
     def resume(self, record: SessionRecord, req: StartAutoResearchSessionRequest) -> SessionRecord:
@@ -508,19 +533,23 @@ class AutoResearchSessionManager:
 
         stop_download_progress_poller = _start_download_progress_poller(record)
         try:
-            state = self._invoke_runner(config, req, emit_event)
+            timeout_seconds = Config.get_task_timeout()
+            started_at = time.time()
+            state = self._invoke_runner_with_timeout(record, config, req, emit_event, timeout_seconds, started_at)
             if record.cancel_requested or record.status == "interrupted":
+                interrupted_state = _record_state(record)
+                stop_reason = str(interrupted_state.get("stop_reason") or "user_cancelled")
+                interrupted_error = record.error or "Stopped by user from PathLab."
                 record.state = {
-                    **_record_state(record),
-                    **state,
+                    **interrupted_state,
                     "stage": "interrupted",
-                    "stop_reason": "user_cancelled",
-                    "interrupted_reason": record.error or "Stopped by user from PathLab.",
+                    "stop_reason": stop_reason,
+                    "interrupted_reason": interrupted_state.get("interrupted_reason") or interrupted_error,
                 }
                 record.set_status(
                     "interrupted",
                     stage="interrupted",
-                    error=record.error or "Stopped by user from PathLab.",
+                    error=interrupted_error,
                 )
                 _persist_record_state(record, req)
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
@@ -576,6 +605,127 @@ class AutoResearchSessionManager:
             record.add_event({"kind": "error", "message": str(exc)})
         finally:
             stop_download_progress_poller()
+
+    def _invoke_runner_with_timeout(
+        self,
+        record: SessionRecord,
+        config: Any,
+        req: StartAutoResearchSessionRequest,
+        emit: Callable[[dict[str, Any]], None],
+        timeout_seconds: int,
+        started_at: float,
+    ) -> dict[str, Any]:
+        def check_timeout() -> None:
+            elapsed = time.time() - started_at
+            if elapsed > timeout_seconds:
+                raise SessionStopRequested(
+                    f"AutoResearch session timed out after {timeout_seconds} seconds."
+                )
+
+        def emit_with_timeout_check(event: dict[str, Any]) -> None:
+            check_timeout()
+            emit(event)
+
+        watchdog_cancelled = threading.Event()
+
+        def _watchdog() -> None:
+            while not watchdog_cancelled.is_set():
+                elapsed = time.time() - started_at
+                if elapsed > timeout_seconds:
+                    self._mark_session_timed_out(record, timeout_seconds)
+                    break
+                _ = watchdog_cancelled.wait(0.05)
+
+        watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
+        watchdog_thread.start()
+        try:
+            return self._invoke_runner(config, req, emit_with_timeout_check)
+        finally:
+            watchdog_cancelled.set()
+            watchdog_thread.join(timeout=1.0)
+
+    def _mark_session_timed_out(self, record: SessionRecord, timeout_seconds: int) -> None:
+        if record.status not in {"queued", "running"}:
+            return
+
+        cleanup_session_ids: list[str] = []
+        for candidate in (
+            record.session_id,
+            str((record.state or {}).get("session_id") or "").strip()
+            if isinstance(record.state, dict)
+            else "",
+        ):
+            if candidate and candidate not in cleanup_session_ids:
+                cleanup_session_ids.append(candidate)
+
+        process_cleanup: dict[str, Any] = {
+            "active_process_count": 0,
+            "terminated_process_groups": [],
+            "sigterm_sent": [],
+            "sigkill_sent": [],
+            "processes": [],
+            "session_ids": list(cleanup_session_ids),
+        }
+        cleanup_errors: list[str] = []
+        try:
+            from backend.autoresearch.runtime.session_registry import (
+                cancel_session_processes,
+            )
+
+            for cleanup_session_id in cleanup_session_ids:
+                try:
+                    cleanup = cancel_session_processes(
+                        cleanup_session_id,
+                        term_timeout=3.0,
+                        kill_timeout=0.5,
+                    )
+                except Exception as exc:
+                    cleanup_errors.append(f"{cleanup_session_id}: {exc}")
+                    continue
+                process_cleanup["active_process_count"] += int(
+                    cleanup.get("active_process_count") or 0
+                )
+                for key in (
+                    "terminated_process_groups",
+                    "sigterm_sent",
+                    "sigkill_sent",
+                ):
+                    merged = set(process_cleanup.get(key) or [])
+                    merged.update(cleanup.get(key) or [])
+                    process_cleanup[key] = sorted(merged)
+                process_cleanup["processes"].extend(cleanup.get("processes") or [])
+        except Exception as exc:
+            cleanup_errors.append(str(exc))
+        if cleanup_errors:
+            process_cleanup["errors"] = cleanup_errors
+            process_cleanup["error"] = "; ".join(cleanup_errors)
+
+        timeout_error = f"AutoResearch session timed out after {timeout_seconds} seconds."
+        assert record._condition is not None
+        with record._condition:
+            if record.status not in {"queued", "running"}:
+                return
+            record.cancel_requested = True
+            record.status = "interrupted"
+            record.stage = "interrupted"
+            record.error = timeout_error
+            record.state = {
+                **_record_state(record),
+                "stage": "interrupted",
+                "stop_reason": "task_timeout",
+                "interrupted_reason": timeout_error,
+                "process_cleanup": process_cleanup,
+            }
+            record.updated_at = time.time()
+            record._condition.notify_all()
+        record.add_event({
+            "kind": "state",
+            "status": "interrupted",
+            "stage": "interrupted",
+            "state": record.state,
+            "summary": timeout_error,
+            "process_cleanup": process_cleanup,
+        })
 
     def _invoke_runner(
         self,
