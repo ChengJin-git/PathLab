@@ -8,14 +8,18 @@ function translatedOrFallback(t: Translate, key: string, fallback: string, optio
   return typeof translated === 'string' ? translated : fallback
 }
 
+function commonUnknown(t: Translate) {
+  return translatedOrFallback(t, 'autoResearch.common.unknown', 'Unknown')
+}
+
 export function autoResearchStageLabel(stage: string, t: Translate) {
   const normalized = stage || 'unknown'
-  return translatedOrFallback(t, `autoResearch.stages.${normalized}`, stage || translatedOrFallback(t, 'autoResearch.common.unknown', 'unknown'))
+  return translatedOrFallback(t, `autoResearch.stages.${normalized}`, stage || commonUnknown(t))
 }
 
 export function autoResearchStatusLabel(status: string | undefined, t: Translate) {
   const normalized = status || 'unknown'
-  return translatedOrFallback(t, `autoResearch.status.${normalized}`, normalized)
+  return translatedOrFallback(t, `autoResearch.status.${normalized}`, normalized === 'unknown' ? commonUnknown(t) : normalized)
 }
 
 export function autoResearchStageStatusLabel(status: AutoResearchStageStatus, t: Translate) {
