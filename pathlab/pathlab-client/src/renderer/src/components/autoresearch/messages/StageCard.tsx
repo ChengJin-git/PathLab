@@ -3,9 +3,11 @@ import { cn } from '../../../lib/utils'
 import { useAutoResearchTranslation } from '../../../lib/useAutoResearchTranslation'
 import {
   autoResearchCountLabel,
+  autoResearchAssetLevelLabel,
   autoResearchStageLabel,
   autoResearchStageStatusLabel,
   autoResearchStatusLabel,
+  autoResearchTaskTypeLabel,
 } from '../../../lib/autoresearchI18n'
 import type {
   AutoResearchAcquisitionView,
@@ -13,6 +15,9 @@ import type {
   AutoResearchGroundingView,
   AutoResearchStageView,
 } from '../../../lib/autoresearchEventSelectors'
+import type { TFunction } from 'i18next'
+
+type Translate = TFunction<'translation', undefined>
 
 interface StageCardProps {
   stage: AutoResearchStageView
@@ -32,11 +37,11 @@ function stageDurationText(stage: AutoResearchStageView): string | null {
   return stage.durationLabel && stage.durationLabel !== '--' ? stage.durationLabel : null
 }
 
-function taskProfileLabel(grounding: AutoResearchGroundingView, notDetected: string): string {
+function taskProfileLabel(grounding: AutoResearchGroundingView, t: Translate): string {
   const profile = grounding.taskProfile
-  const scope = profile.assetLevel ? `${profile.assetLevel}-level` : ''
-  const target = profile.predictionTarget || profile.taskType || ''
-  return [scope, target].filter(Boolean).join(' ') || notDetected
+  const scope = autoResearchAssetLevelLabel(profile.assetLevel, t)
+  const target = profile.predictionTarget || (profile.taskType ? autoResearchTaskTypeLabel(profile.taskType, t) : '')
+  return [scope, target].filter(Boolean).join(' ') || t('autoResearch.common.notDetected')
 }
 
 function paperMeta(source?: string, year?: string): string {
@@ -211,7 +216,7 @@ function GroundingDetails({ grounding }: { grounding: AutoResearchGroundingView 
         <div className="grid gap-2 text-xs">
           <div className="rounded-xl bg-white/80 p-2 ring-1 ring-blue-100">
             <p className="font-bold uppercase tracking-wider text-gray-400">{t('autoResearch.grounding.taskProfile')}</p>
-            <p className="mt-1 font-extrabold text-gray-900">{taskProfileLabel(grounding, t('autoResearch.common.notDetected'))}</p>
+            <p className="mt-1 font-extrabold text-gray-900">{taskProfileLabel(grounding, t)}</p>
           </div>
         </div>
 

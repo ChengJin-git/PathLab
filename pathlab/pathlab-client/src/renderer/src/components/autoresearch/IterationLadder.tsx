@@ -5,7 +5,9 @@ import { useAutoResearchTranslation } from '../../lib/useAutoResearchTranslation
 import {
   autoResearchIterationLabel,
   autoResearchIterationStatusLabel,
+  autoResearchNotDetectedLabel,
   autoResearchRunningIterationLabel,
+  autoResearchTaskTypeLabel,
 } from '../../lib/autoresearchI18n'
 import { trainingProgressEpochLabel, trainingProgressMetricLabels } from '../../lib/autoresearchSessions'
 import type {
@@ -89,6 +91,13 @@ export default function IterationLadder({
   const visibleToolCounts = toolCounts.slice(0, MAX_VISIBLE_TOOLS)
   const hiddenToolCount = Math.max(0, toolCounts.length - visibleToolCounts.length)
   const showMilMethod = sessionMetadata.taskType.startsWith('slide-level')
+  const localizedTaskType = autoResearchTaskTypeLabel(sessionMetadata.taskType, t)
+  const localizedFoundationModel = sessionMetadata.foundationModel === 'Not detected'
+    ? autoResearchNotDetectedLabel(t)
+    : sessionMetadata.foundationModel
+  const localizedMilMethod = sessionMetadata.milMethod === 'Not detected'
+    ? autoResearchNotDetectedLabel(t)
+    : sessionMetadata.milMethod
   const showRunning = isRunning && typeof currentIteration === 'number' && currentIteration > 0
   const hasCurrentIteration = showRunning && iterations.some((iteration) => iteration.index === currentIteration)
   const showRunningPlaceholder = showRunning && !hasCurrentIteration
@@ -119,10 +128,10 @@ export default function IterationLadder({
           <Activity className="h-4 w-4 text-blue-600" />
         </div>
         <div className="mt-4 space-y-2">
-          <MetadataRow label={t('autoResearch.labels.taskType')} value={sessionMetadata.taskType} />
-          <MetadataRow label={t('autoResearch.labels.foundationModel')} value={sessionMetadata.foundationModel} />
+          <MetadataRow label={t('autoResearch.labels.taskType')} value={localizedTaskType} />
+          <MetadataRow label={t('autoResearch.labels.foundationModel')} value={localizedFoundationModel} />
           {showMilMethod && sessionMetadata.milMethod && (
-            <MetadataRow label={t('autoResearch.labels.milMethod')} value={sessionMetadata.milMethod} />
+            <MetadataRow label={t('autoResearch.labels.milMethod')} value={localizedMilMethod} />
           )}
         </div>
       </section>

@@ -2,8 +2,11 @@ import { Activity, BarChart3, CheckCircle2, Clock3, Cpu, Layers3, ShieldCheck, T
 import type { ReactNode } from 'react'
 import { cn } from '../../lib/utils'
 import { useAutoResearchTranslation } from '../../lib/useAutoResearchTranslation'
-import { autoResearchStatusLabel } from '../../lib/autoresearchI18n'
+import { autoResearchStatusLabel, autoResearchTaskTypeLabel, autoResearchNotDetectedLabel } from '../../lib/autoresearchI18n'
 import type { AutoResearchRunSummaryView } from '../../lib/autoresearchEventSelectors'
+import type { TFunction } from 'i18next'
+
+type Translate = TFunction<'translation', undefined>
 
 interface RunSummaryCardProps {
   summary: AutoResearchRunSummaryView
@@ -66,10 +69,54 @@ function isRedundantStageBadge(status: string, stage: string) {
   return normalizedStage === 'completed' && ['completed', 'finished'].includes(normalizedStatus)
 }
 
+function localizedAgentWork(summary: AutoResearchRunSummaryView, t: Translate): string {
+  const text = summary.narrative.agentActions
+  if (!text.startsWith('Ran ') || !text.includes('Models used:')) return text
+
+  const metadata = summary.sessionMetadata
+  const models: string[] = []
+  if (metadata.foundationModel && metadata.foundationModel !== 'Not detected') {
+    models.push(t('autoResearch.runSummary.foundationModelUsed', { model: metadata.foundationModel }))
+  }
+  if (metadata.milMethod && metadata.milMethod !== 'Not detected') {
+    models.push(t('autoResearch.runSummary.milMethodUsed', { method: metadata.milMethod }))
+  }
+  const agentModel = summary.narrative.model || text.match(/agent LLM ([^,]+)\.$/)?.[1]
+  if (agentModel) {
+    models.push(t('autoResearch.runSummary.agentLlmUsed', { model: agentModel }))
+  }
+
+  if (models.length === 0) {
+    return t('autoResearch.runSummary.fallbackAgentWorkNoModels', { iterations: summary.iterationCount })
+  }
+  return t('autoResearch.runSummary.fallbackAgentWork', {
+    iterations: summary.iterationCount,
+    models: models.join(', '),
+  })
+}
+
+function localizedResult(summary: AutoResearchRunSummaryView, t: Translate): string {
+  const text = summary.narrative.result
+  const metric = text.match(/^The best detected result is (.+)\.$/)?.[1]
+  if (metric) return t('autoResearch.runSummary.fallbackBestMetric', { metric })
+  if (text === 'No best metric has been detected yet.') return t('autoResearch.runSummary.fallbackNoBestMetric')
+  return text
+}
+
 export default function RunSummaryCard({ summary, compactHeader = false, className }: RunSummaryCardProps) {
   const { t } = useAutoResearchTranslation()
   const metadata = summary.sessionMetadata
   const showStageBadge = !isRedundantStageBadge(summary.status, summary.stage)
+
+  const localizedTaskType = autoResearchTaskTypeLabel(metadata.taskType, t)
+  const localizedFoundationModel = metadata.foundationModel === 'Not detected'
+    ? autoResearchNotDetectedLabel(t)
+    : metadata.foundationModel
+  const localizedMilMethod = metadata.milMethod === 'Not detected'
+    ? autoResearchNotDetectedLabel(t)
+    : metadata.milMethod
+  const agentWork = localizedAgentWork(summary, t)
+  const result = localizedResult(summary, t)
 
   return (
     <section
@@ -104,8 +151,8 @@ export default function RunSummaryCard({ summary, compactHeader = false, classNa
 
       <div className="mt-4 grid gap-3 lg:grid-cols-3">
         <NarrativeBlock label={t('autoResearch.runSummary.userRequest')} value={summary.narrative.userRequest} />
-        <NarrativeBlock label={t('autoResearch.runSummary.agentWork')} value={summary.narrative.agentActions} />
-        <NarrativeBlock label={t('autoResearch.runSummary.result')} value={summary.narrative.result} />
+        <NarrativeBlock label={t('autoResearch.runSummary.agentWork')} value={agentWork} />
+        <NarrativeBlock label={t('autoResearch.runSummary.result')} value={result} />
       </div>
 
       {(summary.internalTest || summary.externalTest) && (
@@ -125,10 +172,10 @@ export default function RunSummaryCard({ summary, compactHeader = false, classNa
         <SummaryTile icon={<Wrench className="h-4 w-4" />} label={t('autoResearch.labels.tools')} value={t('autoResearch.count.tools', { count: summary.toolCallCount })} />
         <SummaryTile icon={<Layers3 className="h-4 w-4" />} label={t('autoResearch.labels.iterations')} value={t('autoResearch.count.iterations', { count: summary.iterationCount })} />
         <SummaryTile icon={<Trophy className="h-4 w-4" />} label={t('autoResearch.labels.bestMetric')} value={formatMetric(summary)} />
-        <SummaryTile icon={<BarChart3 className="h-4 w-4" />} label={t('autoResearch.labels.task')} value={metadata.taskType} />
-        <SummaryTile icon={<Cpu className="h-4 w-4" />} label={t('autoResearch.labels.foundation')} value={metadata.foundationModel} />
+        <SummaryTile icon={<BarChart3 className="h-4 w-4" />} label={t('autoResearch.labels.task')} value={localizedTaskType} />
+        <SummaryTile icon={<Cpu className="h-4 w-4" />} label={t('autoResearch.labels.foundation')} value={localizedFoundationModel} />
         {metadata.milMethod && (
-          <SummaryTile icon={<Layers3 className="h-4 w-4" />} label="MIL" value={metadata.milMethod} />
+          <SummaryTile icon={<Layers3 className="h-4 w-4" />} label="MIL" value={localizedMilMethod} />
         )}
       </div>
     </section>
