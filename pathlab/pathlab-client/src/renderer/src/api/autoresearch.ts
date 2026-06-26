@@ -144,12 +144,17 @@ export async function getAutoResearchSessionDownloadUrl(sessionId: string): Prom
   )
 }
 
-export function downloadAutoResearchSession(sessionId: string): Promise<{ filename: string }> {
+export async function downloadAutoResearchSession(sessionId: string): Promise<{ filename: string }> {
+  const access = await mintAutoResearchAccessToken(sessionId, { purpose: 'session_download' })
   return downloadApiFile(
-    `${autoResearchBase()}/sessions/${encodeURIComponent(sessionId)}/download`,
+    appendAutoResearchAccessToken(
+      `${autoResearchBase()}/sessions/${encodeURIComponent(sessionId)}/download`,
+      access.token,
+    ),
     `autoresearch-${sessionId}.zip`,
     undefined,
     'Download AutoResearch session',
+    true,
   )
 }
 
