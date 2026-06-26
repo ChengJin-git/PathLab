@@ -47,8 +47,8 @@ export default function AutoResearchNewSessionPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+    <div className="flex h-full flex-col">
+      <section className="flex flex-1 flex-col rounded-3xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
         <div className="mb-6">
           <h1 className="text-3xl font-extrabold tracking-tight text-gray-950">{t('autoResearch.newSessionPage.title')}</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-500">
@@ -56,33 +56,40 @@ export default function AutoResearchNewSessionPage() {
           </p>
         </div>
 
-        <form className="space-y-5" onSubmit={handleSubmit}>
+        <form className="flex flex-1 flex-col space-y-5" onSubmit={handleSubmit}>
           <div className="space-y-2">
             <Label htmlFor="question" className="text-gray-700">{t('autoResearch.newSessionPage.researchQuestion')}</Label>
-            <div className="relative rounded-2xl border border-gray-200 bg-white shadow-sm transition focus-within:border-blue-300 focus-within:ring-4 focus-within:ring-blue-100">
+            <div className="relative flex-1 rounded-2xl border border-gray-200 bg-white shadow-sm transition focus-within:border-blue-300 focus-within:ring-4 focus-within:ring-blue-100">
               <textarea
                 id="question"
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                className="min-h-36 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-sm leading-6 text-gray-900 outline-none placeholder:text-gray-400"
+                className="h-full min-h-36 w-full resize-none rounded-2xl bg-transparent px-4 py-3 text-sm leading-6 text-gray-900 outline-none placeholder:text-gray-400"
                 placeholder={t('autoResearch.newSessionPage.questionPlaceholder')}
               />
             </div>
           </div>
 
-          <div className="max-w-32 space-y-2">
+          <div className="space-y-2">
             <Label htmlFor="maxIter" className="text-gray-700">{t('autoResearch.newSessionPage.maxIter')}</Label>
-            <Input
-              id="maxIter"
-              type="number"
-              min={MIN_MAX_ITER}
-              max={MAX_MAX_ITER}
-              value={maxIterInput}
-              onChange={(event) => setMaxIterInput(event.target.value)}
-              onBlur={() => setMaxIterInput(String(parseMaxIter(maxIterInput)))}
-              className="border-gray-200 bg-white text-gray-900 shadow-sm focus-visible:ring-blue-200"
-            />
+            <div className="flex items-center gap-4">
+              <Input
+                id="maxIter"
+                type="number"
+                min={MIN_MAX_ITER}
+                max={MAX_MAX_ITER}
+                value={maxIterInput}
+                onChange={(event) => setMaxIterInput(event.target.value)}
+                onBlur={() => setMaxIterInput(String(parseMaxIter(maxIterInput)))}
+                className="w-24 border-gray-200 bg-white text-gray-900 shadow-sm focus-visible:ring-blue-200"
+              />
+              <span className="text-sm text-gray-400">
+                {t('autoResearch.newSessionPage.maxIterHint', { min: MIN_MAX_ITER, max: MAX_MAX_ITER })}
+              </span>
+            </div>
           </div>
+
+          <div className="flex-1" />
 
           {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700">{error}</div>}
 

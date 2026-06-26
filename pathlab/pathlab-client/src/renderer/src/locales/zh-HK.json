@@ -1507,6 +1507,7 @@
       "researchQuestion": "研究問題",
       "questionPlaceholder": "為這個 WSI 資料夾提取 Virchow2 特徵，但暫時不要訓練...",
       "maxIter": "最大迭代次數",
+      "maxIterHint": "範圍：{{min}}-{{max}}",
       "starting": "啟動中...",
       "startSession": "啟動會話",
       "startFailed": "啟動自動實驗會話失敗"

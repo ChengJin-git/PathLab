@@ -1507,6 +1507,7 @@
       "researchQuestion": "Research question",
       "questionPlaceholder": "Extract Virchow2 features for this WSI folder, but do not train yet...",
       "maxIter": "Max iter",
+      "maxIterHint": "Range: {{min}}-{{max}}",
       "starting": "Starting...",
       "startSession": "Start session",
       "startFailed": "Failed to start AutoResearch session"
