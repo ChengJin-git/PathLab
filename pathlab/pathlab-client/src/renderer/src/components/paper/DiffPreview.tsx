@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { FileText, Loader2 } from 'lucide-react'
 import { getPaperFileText, type DiffSummary } from '../../api/papers'
 import { cn } from '../../lib/utils'
@@ -50,9 +51,9 @@ function compactWordDiff(before: string, after: string): DiffPart[] {
   return parts
 }
 
-function trimSourcePreview(text: string, maxChars = 7000): string {
+function trimSourcePreview(text: string, truncatedLabel: string, maxChars = 7000): string {
   if (text.length <= maxChars) return text
-  return `${text.slice(0, maxChars)}\n\n... truncated for preview ...`
+  return `${text.slice(0, maxChars)}\n\n${truncatedLabel}`
 }
 
 function unifiedLineClass(line: string): string {
@@ -64,6 +65,7 @@ function unifiedLineClass(line: string): string {
 }
 
 export function DiffPreview({ paperId, beforePath, afterPath, diffSummary }: DiffPreviewProps) {
+  const { t } = useTranslation()
   const beforeQuery = useQuery({
     queryKey: ['paper-file-text', paperId, beforePath],
     queryFn: () => getPaperFileText(paperId, beforePath || ''),
@@ -81,8 +83,11 @@ export function DiffPreview({ paperId, beforePath, afterPath, diffSummary }: Dif
   const hasBeforeAfter = Boolean(beforeQuery.data && afterQuery.data)
   const diffParts = useMemo(() => {
     if (!beforeQuery.data || !afterQuery.data) return []
-    return compactWordDiff(trimSourcePreview(beforeQuery.data), trimSourcePreview(afterQuery.data))
-  }, [afterQuery.data, beforeQuery.data])
+    return compactWordDiff(
+      trimSourcePreview(beforeQuery.data, t('paperAgent.diff.truncated')),
+      trimSourcePreview(afterQuery.data, t('paperAgent.diff.truncated')),
+    )
+  }, [afterQuery.data, beforeQuery.data, t])
 
   return (
     <div className="space-y-3">
@@ -90,14 +95,14 @@ export function DiffPreview({ paperId, beforePath, afterPath, diffSummary }: Dif
         <div className="mb-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
             <FileText className="h-4 w-4 text-sky-500" />
-            Candidate diff
+            {t('paperAgent.diff.title')}
           </div>
           {diffSummary ? (
             <div className="flex flex-wrap justify-end gap-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
               <span className="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">+{diffSummary.chars_added}</span>
               <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">-{diffSummary.chars_removed}</span>
               <span className="rounded-full bg-slate-100 px-2 py-1">
-                {diffSummary.paragraphs_changed?.length ?? 0} para
+                {t('paperAgent.diff.paragraphs', { count: diffSummary.paragraphs_changed?.length ?? 0 })}
               </span>
             </div>
           ) : null}
@@ -106,7 +111,7 @@ export function DiffPreview({ paperId, beforePath, afterPath, diffSummary }: Dif
         {beforeQuery.isLoading || afterQuery.isLoading ? (
           <div className="flex items-center gap-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Loading before/after snapshots...
+            {t('paperAgent.diff.loading')}
           </div>
         ) : hasBeforeAfter ? (
           <div className="max-h-72 overflow-auto rounded-xl border border-slate-100 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100">
@@ -133,13 +138,13 @@ export function DiffPreview({ paperId, beforePath, afterPath, diffSummary }: Dif
           </pre>
         ) : (
           <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-500">
-            No diff preview was returned for this job.
+            {t('paperAgent.diff.empty')}
           </div>
         )}
 
         {beforeQuery.error || afterQuery.error ? (
           <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-            Snapshot fetch failed; showing backend unified diff when available.
+            {t('paperAgent.diff.snapshotFailed')}
           </div>
         ) : null}
       </div>

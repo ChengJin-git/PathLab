@@ -1,7 +1,9 @@
 import { AlertCircle, CheckCircle2, Circle, Clock3, Loader2, XCircle } from 'lucide-react'
 import { Fragment, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/utils'
 import type { PaperRunDetail, PaperRunStage, PaperStageLogEntry } from '../../api/papers'
+import { paperStageLabel } from '../../lib/paperI18n'
 
 interface StageChecklistProps {
   run: PaperRunDetail
@@ -13,22 +15,20 @@ type RowState = 'completed' | 'running' | 'waiting' | 'failed' | 'warning' | 'pe
 
 interface StageRowDefinition {
   id: string
-  label: string
-  short: string
   stages: PaperRunStage[]
   tab: string
 }
 
 const STAGE_ROWS: StageRowDefinition[] = [
-  { id: 'collecting', label: 'Collect evidence', short: 'Collect', stages: ['collecting'], tab: 'tables' },
-  { id: 'building_evidence', label: 'Lock tables', short: 'Tables', stages: ['building_evidence'], tab: 'tables' },
-  { id: 'outlining', label: 'Outline', short: 'Outline', stages: ['outlining'], tab: 'outline' },
-  { id: 'plotting', label: 'Figures', short: 'Figures', stages: ['plotting'], tab: 'figures' },
-  { id: 'literature_review', label: 'Citations', short: 'Cites', stages: ['literature_review'], tab: 'citations' },
-  { id: 'section_writing', label: 'Sections', short: 'Sections', stages: ['section_writing'], tab: 'sections' },
-  { id: 'validating', label: 'Validation', short: 'Validate', stages: ['validating'], tab: 'validation' },
-  { id: 'refining', label: 'Refinement', short: 'Refine', stages: ['refining'], tab: 'sections' },
-  { id: 'rendering_exporting', label: 'PDF export', short: 'PDF', stages: ['rendering', 'exporting'], tab: 'pdf' },
+  { id: 'collecting', stages: ['collecting'], tab: 'tables' },
+  { id: 'building_evidence', stages: ['building_evidence'], tab: 'tables' },
+  { id: 'outlining', stages: ['outlining'], tab: 'outline' },
+  { id: 'plotting', stages: ['plotting'], tab: 'figures' },
+  { id: 'literature_review', stages: ['literature_review'], tab: 'citations' },
+  { id: 'section_writing', stages: ['section_writing'], tab: 'sections' },
+  { id: 'validating', stages: ['validating'], tab: 'validation' },
+  { id: 'refining', stages: ['refining'], tab: 'sections' },
+  { id: 'rendering_exporting', stages: ['rendering', 'exporting'], tab: 'pdf' },
 ]
 
 const ACTIVE_RUN_STATUSES = new Set(['pending', 'running'])
@@ -156,6 +156,7 @@ function connectorClass(prevState: RowState): string {
 }
 
 export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistProps) {
+  const { t } = useTranslation()
   const [nowMs, setNowMs] = useState(() => Date.now())
   const logs = run.stage_log ?? []
   const latestEntries = STAGE_ROWS.map((row) => latestForRow(logs, row))
@@ -181,19 +182,20 @@ export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistPr
       : 0
   const totalMs = completedTotalMs + liveExtraMs
   const totalLabel = totalMs > 0 ? formatDuration(totalMs) : ''
+  const liveRowLabel = liveRow ? t(`paperAgent.pipeline.rows.${liveRow.id}.label`) : ''
   const liveLabel = liveRow
     ? liveState === 'running'
-      ? `Running: ${liveRow.label}`
+      ? t('paperAgent.pipeline.running', { stage: liveRowLabel })
       : liveState === 'waiting'
-        ? `Waiting: ${liveRow.label}`
-        : `Failed: ${liveRow.label}`
+        ? t('paperAgent.pipeline.waiting', { stage: liveRowLabel })
+        : t('paperAgent.pipeline.failed', { stage: liveRowLabel })
     : undefined
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2.5 shadow-sm">
       <div className="flex items-center gap-3">
         <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-          Pipeline
+          {t('paperAgent.pipeline.title')}
         </span>
         <div className="flex flex-1 items-center gap-1 overflow-x-auto pb-0.5">
           {STAGE_ROWS.map((row, i) => {
@@ -201,8 +203,9 @@ export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistPr
             const latest = latestEntries[i]
             const duration = durationForState(state, latest, nowMs)
             const selected = activeTab === row.tab
+            const rowLabel = t(`paperAgent.pipeline.rows.${row.id}.label`)
             const tip = [
-              row.label,
+              rowLabel,
               duration ? `· ${duration}` : '',
               latest?.message ? `— ${latest.message}` : '',
             ]
@@ -223,7 +226,7 @@ export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistPr
                   )}
                 >
                   {statusIcon(state)}
-                  <span>{row.short}</span>
+                  <span>{t(`paperAgent.pipeline.rows.${row.id}.short`)}</span>
                   {duration ? (
                     <span className={cn('text-[10px] font-medium tabular-nums', selected ? 'text-white/70' : 'text-slate-400')}>
                       {duration}
@@ -249,9 +252,9 @@ export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistPr
               {liveDuration ? <span className="font-mono text-[11px]">{liveDuration}</span> : null}
             </span>
           ) : null}
-          {totalLabel ? <span className="font-semibold text-slate-600 tabular-nums">Total {totalLabel}</span> : null}
+          {totalLabel ? <span className="font-semibold text-slate-600 tabular-nums">{t('paperAgent.pipeline.total', { duration: totalLabel })}</span> : null}
           <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-semibold text-slate-600">
-            {run.current_stage}
+            {paperStageLabel(t, run.current_stage)}
           </span>
         </div>
       </div>

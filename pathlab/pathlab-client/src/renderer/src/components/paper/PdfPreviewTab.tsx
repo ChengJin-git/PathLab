@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { BookOpen, Download, FileCode2, Loader2, Maximize2, MousePointer2, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
@@ -19,6 +20,7 @@ import { Button } from '../ui/button'
 import { Card, CardContent } from '../ui/card'
 import { RegenerateSelectionPanel, type SelectionInfo } from './RegenerateSelectionPanel'
 import { SECTION_ORDER, labelForSection, sectionBodyView } from './SectionsTab'
+import { paperStageLabel, paperTemplateTitle } from '../../lib/paperI18n'
 
 const PdfViewer = lazy(() => import('./PdfViewer').then((module) => ({ default: module.PdfViewer })))
 
@@ -42,6 +44,7 @@ function artifactUnavailable(error: unknown): boolean {
 }
 
 export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded }: PdfPreviewTabProps) {
+  const { t } = useTranslation()
   const [, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [sourceSection, setSourceSection] = useState<string>('abstract')
@@ -89,10 +92,10 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
     () =>
       SECTION_ORDER.map((section) => ({
         value: section,
-        label: labelForSection(section),
+        label: labelForSection(section, t),
         generated: generatedSectionNames.has(section),
       })),
-    [generatedSectionNames],
+    [generatedSectionNames, t],
   )
 
   const pdfQuery = useQuery({
@@ -134,7 +137,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
   const handlePdfSelection = async (text: string) => {
     const normalized = normalizeForMatch(text)
     if (normalized.length < 20) {
-      setSelectionMessage({ tone: 'warning', text: 'Select at least ~20 characters in the PDF.' })
+      setSelectionMessage({ tone: 'warning', text: t('paperAgent.pdf.selectShort') })
       return
     }
 
@@ -150,14 +153,14 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       if (!match) {
         setSelectionMessage({
           tone: 'warning',
-          text: "Couldn't match this selection to a source section. Use Edit in source to pick manually.",
+          text: t('paperAgent.pdf.matchFailed'),
         })
         return
       }
       if (match.ambiguous) {
         setSelectionMessage({
           tone: 'warning',
-          text: 'Selection matches multiple sections; try a longer span.',
+          text: t('paperAgent.pdf.matchAmbiguous'),
         })
         return
       }
@@ -177,13 +180,17 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       const snappedText = expansion?.text ?? text
       const expanded = expansion?.expanded ?? false
       const expansionNote = expanded
-        ? ' Selection expanded to whole sentences.'
+        ? t('paperAgent.pdf.expanded')
         : expansion === null
-          ? " Couldn't align selection with source sentences; sending raw text."
+          ? t('paperAgent.pdf.rawSelection')
           : ''
       setSelectionMessage({
         tone: 'success',
-        text: `Matched ${labelForSection(match.section_name)} (${Math.round(match.confidence * 100)}%).${expansionNote}`,
+        text: t('paperAgent.pdf.matched', {
+          section: labelForSection(match.section_name, t),
+          confidence: Math.round(match.confidence * 100),
+          note: expansionNote,
+        }),
       })
       setPdfSelection({
         sectionName: match.section_name,
@@ -205,7 +212,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
   if (pdfQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-slate-500">
-        <Loader2 className="h-4 w-4 animate-spin" /> Checking PDF...
+        <Loader2 className="h-4 w-4 animate-spin" /> {t('paperAgent.pdf.checking')}
       </div>
     )
   }
@@ -215,9 +222,9 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       <Card className="border-dashed border-slate-200 bg-slate-50/70">
         <CardContent className="py-12 text-center">
           <BookOpen className="mx-auto h-9 w-9 text-slate-300" />
-          <div className="mt-3 font-semibold text-slate-800">Compile pending</div>
+          <div className="mt-3 font-semibold text-slate-800">{t('paperAgent.pdf.compilePending')}</div>
           <p className="mt-1 text-sm text-slate-500">
-            {pdfPath} is not available yet. Rendering/exporting will publish the PDF.
+            {t('paperAgent.pdf.missingDescription', { path: pdfPath })}
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
             <Button
@@ -232,7 +239,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {pipelineBlocksRender ? `Pipeline ${run.current_stage}` : 'Render PDF/export'}
+              {pipelineBlocksRender ? t('paperAgent.pdf.pipelineBlocked', { stage: paperStageLabel(t, run.current_stage) }) : t('paperAgent.pdf.renderExport')}
             </Button>
           </div>
           {renderExportMutation.error ? (
@@ -259,31 +266,31 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">PDF preview</h2>
+          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">{t('paperAgent.pdf.title')}</h2>
           <p className="text-sm text-slate-500">
-            Template: {template}. Source: {pdfPath}
+            {t('paperAgent.pdf.sourceLine', { template: paperTemplateTitle(t, template), path: pdfPath })}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
-            <span>Edit in source:</span>
+            <span>{t('paperAgent.pdf.editInSource')}</span>
             <select
               value={sourceSection}
               onChange={(event) => setSourceSection(event.target.value)}
               className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm transition focus:border-sky-300 focus:outline-none focus:ring-4 focus:ring-sky-500/20"
-              aria-label="Section to edit in source"
+              aria-label={t('paperAgent.pdf.sectionSelectAria')}
             >
               {sectionOptions.map((section) => (
                 <option key={section.value} value={section.value}>
                   {section.label}
-                  {section.generated ? '' : ' (not generated)'}
+                  {section.generated ? '' : ` (${t('paperAgent.pdf.notGeneratedOption')})`}
                 </option>
               ))}
             </select>
           </label>
           <Button variant="secondary" size="sm" className="gap-2" onClick={handleEditInSource}>
             <FileCode2 className="h-4 w-4" />
-            Edit in source
+            {t('paperAgent.pdf.editInSource')}
           </Button>
           <Button
             variant="outline"
@@ -297,7 +304,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             ) : (
               <Download className="h-4 w-4" />
             )}
-            Download bundle
+            {t('paperAgent.pdf.downloadBundle')}
           </Button>
         </div>
       </div>
@@ -310,9 +317,9 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       {pdfArtifactStale ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <div>
-            <div className="font-semibold">PDF/export may be stale.</div>
+            <div className="font-semibold">{t('paperAgent.pdf.staleTitle')}</div>
             <div className="mt-0.5 text-amber-800">
-              Section source changed after the last render. Re-render before using the PDF as final.
+              {t('paperAgent.pdf.staleDescription')}
             </div>
           </div>
           <Button
@@ -327,7 +334,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-            {pipelineBlocksRender ? `Pipeline ${run.current_stage}` : 'Re-render PDF/export'}
+            {pipelineBlocksRender ? t('paperAgent.pdf.pipelineBlocked', { stage: paperStageLabel(t, run.current_stage) }) : t('paperAgent.pdf.rerenderExport')}
           </Button>
         </div>
       ) : null}
@@ -351,7 +358,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
         <MousePointer2 className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
           {selectionMessage?.text ??
-            'Select text directly in the PDF to regenerate it. If matching is uncertain, use Edit in source as the manual fallback.'}
+            t('paperAgent.pdf.selectionHint')}
         </div>
       </div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -360,7 +367,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Zoom out"
+              aria-label={t('paperAgent.pdf.zoomOut')}
               className="h-7 w-7"
               onClick={() => setPdfScale((s) => Math.max(0.5, +(s - 0.1).toFixed(2)))}
               disabled={pdfScale <= 0.5}
@@ -370,7 +377,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <button
               type="button"
               className="min-w-[3.25rem] rounded-md px-2 py-1 text-xs font-semibold tabular-nums text-slate-700 hover:bg-slate-100"
-              title="Reset zoom to 100%"
+              title={t('paperAgent.pdf.resetZoom')}
               onClick={() => setPdfScale(1)}
             >
               {Math.round(pdfScale * 100)}%
@@ -378,7 +385,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Zoom in"
+              aria-label={t('paperAgent.pdf.zoomIn')}
               className="h-7 w-7"
               onClick={() => setPdfScale((s) => Math.min(2.5, +(s + 0.1).toFixed(2)))}
               disabled={pdfScale >= 2.5}
@@ -388,9 +395,9 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Fit to width"
+              aria-label={t('paperAgent.pdf.fitWidth')}
               className="h-7 w-7"
-              title="Fit to width (1.5×)"
+              title={t('paperAgent.pdf.fitWidthTitle')}
               onClick={() => setPdfScale(1.5)}
             >
               <Maximize2 className="h-4 w-4" />
@@ -400,7 +407,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             fallback={
               <div className="flex h-[72vh] items-center justify-center bg-white text-sm text-slate-500">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Loading PDF text layer...
+                {t('paperAgent.pdf.loadingTextLayer')}
               </div>
             }
           >

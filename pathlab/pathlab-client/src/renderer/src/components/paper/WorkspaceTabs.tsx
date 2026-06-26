@@ -1,4 +1,5 @@
 import * as Tabs from '@radix-ui/react-tabs'
+import { useTranslation } from 'react-i18next'
 import { BookOpen, FileCode2, FileJson, Image, Library, ShieldCheck, Table2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
@@ -33,18 +34,17 @@ interface WorkspaceTabsProps {
 
 interface TabDefinition {
   value: WorkspaceTabValue
-  label: string
   icon: LucideIcon
 }
 
 const TABS: TabDefinition[] = [
-  { value: 'outline', label: 'Outline', icon: FileJson },
-  { value: 'sections', label: 'Sections', icon: FileCode2 },
-  { value: 'figures', label: 'Figures', icon: Image },
-  { value: 'tables', label: 'Tables', icon: Table2 },
-  { value: 'citations', label: 'Citations', icon: Library },
-  { value: 'validation', label: 'Validation', icon: ShieldCheck },
-  { value: 'pdf', label: 'PDF Preview', icon: BookOpen },
+  { value: 'outline', icon: FileJson },
+  { value: 'sections', icon: FileCode2 },
+  { value: 'figures', icon: Image },
+  { value: 'tables', icon: Table2 },
+  { value: 'citations', icon: Library },
+  { value: 'validation', icon: ShieldCheck },
+  { value: 'pdf', icon: BookOpen },
 ]
 
 function isWorkspaceTabValue(value: string): value is WorkspaceTabValue {
@@ -64,6 +64,7 @@ export function WorkspaceTabs({
   pdfRefreshKey,
   onPdfRefreshNeeded,
 }: WorkspaceTabsProps) {
+  const { t } = useTranslation()
   const templateId = run.selected_templates[0]
 
   return (
@@ -77,7 +78,7 @@ export function WorkspaceTabs({
       <div className="border-b border-slate-100 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_transparent_34%),linear-gradient(180deg,_#ffffff,_#f8fafc)] p-2">
         <Tabs.List
           className="flex gap-1 overflow-x-auto rounded-[1.25rem] bg-white/70 p-1 shadow-inner shadow-slate-200/60"
-          aria-label="Paper workspace tabs"
+          aria-label={t('paperAgent.tabs.ariaLabel')}
         >
           {TABS.map((tab) => {
             const Icon = tab.icon
@@ -91,7 +92,7 @@ export function WorkspaceTabs({
                 )}
               >
                 <Icon className="h-4 w-4" />
-                {tab.label}
+                {t(`paperAgent.tabs.${tab.value}`)}
               </Tabs.Trigger>
             )
           })}

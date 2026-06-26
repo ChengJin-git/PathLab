@@ -1,11 +1,13 @@
 import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Braces, CheckCircle2, Loader2, PlayCircle } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { getPaperFileJson, putPaperOutline, type OutlineDocument, type PaperRunDetail } from '../../api/papers'
 import { Card, CardContent } from '../ui/card'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
+import { paperStageLabel } from '../../lib/paperI18n'
 
 interface OutlineTabProps {
   paperId: string
@@ -34,7 +36,19 @@ function artifactUnavailable(error: unknown): boolean {
   return error.status === 403 && detail.includes('Artifact is not registered public')
 }
 
-function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; depth?: number }) {
+function JsonNode({
+  name,
+  value,
+  depth = 0,
+  emptyLabel,
+  nullLabel,
+}: {
+  name?: string
+  value: unknown
+  depth?: number
+  emptyLabel: string
+  nullLabel: string
+}) {
   const paddingLeft = `${depth * 14}px`
 
   if (Array.isArray(value)) {
@@ -44,7 +58,7 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
           {name ? <span className="font-semibold text-slate-700">{name}: </span> : null}[{value.length}]
         </div>
         <div className="mt-1 border-l border-slate-200">
-          {value.length ? value.map((item, index) => <JsonNode key={index} name={String(index)} value={item} depth={depth + 1} />) : <div className="pl-4 text-xs text-slate-400">empty</div>}
+          {value.length ? value.map((item, index) => <JsonNode key={index} name={String(index)} value={item} depth={depth + 1} emptyLabel={emptyLabel} nullLabel={nullLabel} />) : <div className="pl-4 text-xs text-slate-400">{emptyLabel}</div>}
         </div>
       </div>
     )
@@ -58,7 +72,7 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
           {name ? <span className="font-semibold text-slate-700">{name}: </span> : null}{'{'}{entries.length}{'}'}
         </div>
         <div className="mt-1 border-l border-slate-200">
-          {entries.map(([key, item]) => <JsonNode key={key} name={key} value={item} depth={depth + 1} />)}
+          {entries.map(([key, item]) => <JsonNode key={key} name={key} value={item} depth={depth + 1} emptyLabel={emptyLabel} nullLabel={nullLabel} />)}
         </div>
       </div>
     )
@@ -67,7 +81,7 @@ function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; d
   return (
     <div style={{ paddingLeft }} className="grid grid-cols-[minmax(80px,180px)_1fr] gap-3 py-1 font-mono text-xs">
       <span className="truncate font-semibold text-slate-600">{name}</span>
-      <span className="break-words text-slate-900">{value === null ? 'null' : JSON.stringify(value)}</span>
+      <span className="break-words text-slate-900">{value === null ? nullLabel : JSON.stringify(value)}</span>
     </div>
   )
 }
@@ -83,6 +97,7 @@ const POST_OUTLINE_STAGES = new Set([
 ])
 
 export function OutlineTab({ paperId, run }: OutlineTabProps) {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const outlineQuery = useQuery({
     queryKey: ['paper-file', paperId, 'drafts/outline.json'],
@@ -91,7 +106,7 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
   })
   const approveMutation = useMutation({
     mutationFn: () => {
-      if (!outlineQuery.data) throw new Error('Outline is not loaded yet.')
+      if (!outlineQuery.data) throw new Error(t('paperAgent.outline.notLoadedError'))
       return putPaperOutline(paperId, { outline: outlineQuery.data, approve: true })
     },
     onSuccess: async () => {
@@ -106,7 +121,7 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
   const continuingAfterOutline = run.status === 'running' && POST_OUTLINE_STAGES.has(run.current_stage)
 
   if (outlineQuery.isLoading) {
-    return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading outline...</div>
+    return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> {t('paperAgent.outline.loading')}</div>
   }
 
   if (isMissing) {
@@ -114,8 +129,8 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
       <Card className="border-dashed border-slate-200 bg-slate-50/70">
         <CardContent className="py-10 text-center">
           <Braces className="mx-auto h-8 w-8 text-slate-300" />
-          <div className="mt-3 font-semibold text-slate-800">Outline not generated yet</div>
-          <p className="mt-1 text-sm text-slate-500">The outlining stage will write drafts/outline.json.</p>
+          <div className="mt-3 font-semibold text-slate-800">{t('paperAgent.outline.emptyTitle')}</div>
+          <p className="mt-1 text-sm text-slate-500">{t('paperAgent.outline.emptyDescription')}</p>
         </CardContent>
       </Card>
     )
@@ -129,13 +144,13 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">Outline JSON</h2>
-          <p className="text-sm text-slate-500">Review the generated outline before the agent writes sections.</p>
+          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">{t('paperAgent.outline.title')}</h2>
+          <p className="text-sm text-slate-500">{t('paperAgent.outline.description')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {awaitingApproval ? <Badge variant="secondary">Awaiting approval</Badge> : null}
-          {continuingAfterOutline ? <Badge variant="secondary">Continuing: {run.current_stage}</Badge> : null}
-          {validation ? <Badge variant="secondary">OutlineDocument</Badge> : <Badge variant="destructive">Schema mismatch</Badge>}
+          {awaitingApproval ? <Badge variant="secondary">{t('paperAgent.outline.awaitingApproval')}</Badge> : null}
+          {continuingAfterOutline ? <Badge variant="secondary">{t('paperAgent.outline.continuing', { stage: paperStageLabel(t, run.current_stage) })}</Badge> : null}
+          {validation ? <Badge variant="secondary">OutlineDocument</Badge> : <Badge variant="destructive">{t('paperAgent.outline.schemaMismatch')}</Badge>}
         </div>
       </div>
 
@@ -144,9 +159,9 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
           <div className="flex min-w-0 items-start gap-2">
             <PlayCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <div className="font-semibold">Outline is ready for review.</div>
+              <div className="font-semibold">{t('paperAgent.outline.readyTitle')}</div>
               <div className="mt-0.5 text-amber-800">
-                Approving continues through plotting, citations, sections, validation, and PDF/export.
+                {t('paperAgent.outline.readyDescription')}
               </div>
             </div>
           </div>
@@ -158,7 +173,7 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
             disabled={!validation || approveMutation.isPending}
           >
             {approveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Approve & continue
+            {t('paperAgent.outline.approve')}
           </Button>
         </div>
       ) : null}
@@ -166,7 +181,7 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
       {continuingAfterOutline ? (
         <div className="flex items-start gap-2 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
           <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
-          The outline has been approved. The paper agent is now running the post-outline stages.
+          {t('paperAgent.outline.postOutlineRunning')}
         </div>
       ) : null}
 
@@ -180,12 +195,12 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
       {!validation ? (
         <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          The file loaded, but it does not match the generated OutlineDocument contract.
+          {t('paperAgent.outline.invalidSchema')}
         </div>
       ) : null}
 
       <div className="max-h-[68vh] overflow-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-        <JsonNode value={outlineQuery.data} />
+        <JsonNode value={outlineQuery.data} emptyLabel={t('paperAgent.common.empty')} nullLabel={t('paperAgent.common.null')} />
       </div>
     </div>
   )

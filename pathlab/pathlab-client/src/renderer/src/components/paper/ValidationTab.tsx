@@ -1,7 +1,10 @@
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { AlertCircle, ArrowRight, CheckCircle2, MinusCircle, ShieldCheck, Sparkles } from 'lucide-react'
 import { getPaperFileUrl, type GuardIssueSummary, type GuardResultSummary, type PaperRunDetail, type ValidationSummary } from '../../api/papers'
 import { Badge } from '../ui/badge'
 import { Card, CardContent } from '../ui/card'
+import { paperGuardLabel, paperValidationStatusLabel } from '../../lib/paperI18n'
 
 interface ValidationTabProps {
   paperId: string
@@ -58,18 +61,19 @@ function collectSampleIssues(guards: GuardResultSummary[]): GuardIssueSummary[] 
   return guards.flatMap((guard) => guard.sample_issues ?? []).slice(0, 6)
 }
 
-function nextActionText(run: PaperRunDetail, hasBlockingIssues: boolean, hasRefinement: boolean): string {
-  if (!hasBlockingIssues) return 'All deterministic checks passed; the pipeline can render and export the PDF.'
+function nextActionText(t: TFunction, run: PaperRunDetail, hasBlockingIssues: boolean, hasRefinement: boolean): string {
+  if (!hasBlockingIssues) return t('paperAgent.validation.nextPass')
   if (run.status === 'running' || run.current_stage === 'refining') {
-    return 'Auto-refinement will use these guard reports as feedback and revise the draft before rendering.'
+    return t('paperAgent.validation.nextRunning')
   }
   if (hasRefinement) {
-    return 'Review the refinement result below. If issues remain, edit or regenerate the affected section.'
+    return t('paperAgent.validation.nextReview')
   }
-  return 'The system should continue into refinement. If this run is stopped, rerun from Refinement or regenerate the affected section.'
+  return t('paperAgent.validation.nextStopped')
 }
 
 export function ValidationTab({ paperId, run, validationSummary }: ValidationTabProps) {
+  const { t } = useTranslation()
   const guards = guardMap(validationSummary)
   const warningPath = validationSummary?.warnings_md_path || 'validation/warnings.md'
   const refinement = validationSummary?.refinement ?? null
@@ -86,8 +90,8 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
       <Card className="border-dashed border-slate-200 bg-slate-50/70">
         <CardContent className="py-10 text-center">
           <ShieldCheck className="mx-auto h-8 w-8 text-slate-300" />
-          <div className="mt-3 font-semibold text-slate-800">Validation not generated yet</div>
-          <p className="mt-1 text-sm text-slate-500">The validating stage will populate guard summaries and warnings.</p>
+          <div className="mt-3 font-semibold text-slate-800">{t('paperAgent.validation.emptyTitle')}</div>
+          <p className="mt-1 text-sm text-slate-500">{t('paperAgent.validation.emptyDescription')}</p>
         </CardContent>
       </Card>
     )
@@ -97,8 +101,8 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">Validation summary</h2>
-          <p className="text-sm text-slate-500">M10 guard cards plus M11 refinement score.</p>
+          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">{t('paperAgent.validation.title')}</h2>
+          <p className="text-sm text-slate-500">{t('paperAgent.validation.description')}</p>
         </div>
         <a
           href={getPaperFileUrl(paperId, warningPath)}
@@ -106,7 +110,7 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
           rel="noreferrer"
           className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
         >
-          Open warnings.md
+          {t('paperAgent.common.openWarnings')}
         </a>
       </div>
 
@@ -125,12 +129,12 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
           <div className="min-w-0 flex-1">
             <div className="font-semibold">
               {hasBlockingIssues
-                ? `Validation found ${blockingIssueCount} blocking issue${blockingIssueCount === 1 ? '' : 's'}`
-                : 'Validation passed'}
+                ? t(blockingIssueCount === 1 ? 'paperAgent.validation.foundIssues' : 'paperAgent.validation.foundIssuesPlural', { count: blockingIssueCount })
+                : t('paperAgent.validation.passed')}
             </div>
             <div className="mt-1 flex items-start gap-2">
               <ArrowRight className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{nextActionText(run, hasBlockingIssues, Boolean(refinement))}</span>
+              <span>{nextActionText(t, run, hasBlockingIssues, Boolean(refinement))}</span>
             </div>
             {sampleIssues.length ? (
               <div className="mt-3 grid gap-2">
@@ -149,7 +153,7 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
           {hasBlockingIssues ? (
             <div className="hidden items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2.5 py-1 text-xs font-semibold sm:flex">
               <Sparkles className="h-3.5 w-3.5" />
-              Refinement feedback
+              {t('paperAgent.validation.refinementFeedback')}
             </div>
           ) : null}
         </div>
@@ -166,16 +170,16 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
                 <div>
                   <div className="flex items-center gap-2 font-semibold capitalize">
                     {statusIcon(status)}
-                    {name.replace(/_/g, ' ')}
+                    {paperGuardLabel(t, name)}
                   </div>
-                  <div className="mt-1 text-xs opacity-80">{guard?.path ?? 'validation summary'}</div>
+                  <div className="mt-1 text-xs opacity-80">{guard?.path ?? t('paperAgent.validation.validationSummaryPath')}</div>
                 </div>
-                <Badge variant={guardFailed ? 'destructive' : status === 'not_run' ? 'outline' : 'secondary'}>{status}</Badge>
+                <Badge variant={guardFailed ? 'destructive' : status === 'not_run' ? 'outline' : 'secondary'}>{paperValidationStatusLabel(t, status)}</Badge>
               </div>
               <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-xl bg-white/60 px-2 py-2"><div className="font-semibold">{guard?.issue_count ?? 0}</div><div>issues</div></div>
-                <div className="rounded-xl bg-white/60 px-2 py-2"><div className="font-semibold">{guard?.error_count ?? 0}</div><div>errors</div></div>
-                <div className="rounded-xl bg-white/60 px-2 py-2"><div className="font-semibold">{guard?.warning_count ?? 0}</div><div>warns</div></div>
+                <div className="rounded-xl bg-white/60 px-2 py-2"><div className="font-semibold">{guard?.issue_count ?? 0}</div><div>{t('paperAgent.validation.issues')}</div></div>
+                <div className="rounded-xl bg-white/60 px-2 py-2"><div className="font-semibold">{guard?.error_count ?? 0}</div><div>{t('paperAgent.validation.errors')}</div></div>
+                <div className="rounded-xl bg-white/60 px-2 py-2"><div className="font-semibold">{guard?.warning_count ?? 0}</div><div>{t('paperAgent.validation.warns')}</div></div>
               </div>
               {guard?.sample_issues?.length ? (
                 <div className="mt-3 space-y-2">
@@ -197,24 +201,24 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
       <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
         <Card className="bg-slate-950 text-white">
           <CardContent className="p-5">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Hybrid score</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{t('paperAgent.validation.hybridScore')}</div>
             <div className="mt-2 text-4xl font-black tracking-[-0.08em]">{validationSummary.hybrid_score ?? '-'}</div>
-            <p className="mt-3 text-sm text-slate-300">Guard failures force rejection; accepted refinement keeps score monotonic.</p>
+            <p className="mt-3 text-sm text-slate-300">{t('paperAgent.validation.hybridDescription')}</p>
           </CardContent>
         </Card>
         <Card className="border-slate-200 bg-white">
           <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Refinement</div>
-                <div className="mt-1 text-lg font-semibold text-slate-950">{refinement?.final_status ?? 'not run'}</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{t('paperAgent.validation.refinement')}</div>
+                <div className="mt-1 text-lg font-semibold text-slate-950">{refinement?.final_status ?? t('paperAgent.validation.notRun')}</div>
               </div>
-              <Badge variant="outline">{refinement?.iteration_count ?? 0} iterations</Badge>
+              <Badge variant="outline">{t('paperAgent.validation.iterations', { count: refinement?.iteration_count ?? 0 })}</Badge>
             </div>
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl bg-slate-50 p-3 text-sm"><div className="text-slate-500">Accepted</div><div className="font-semibold text-slate-950">{refinement?.accepted_iterations?.join(', ') || '-'}</div></div>
-              <div className="rounded-2xl bg-slate-50 p-3 text-sm"><div className="text-slate-500">Initial</div><div className="font-semibold text-slate-950">{scoreLabel(refinement?.initial_score)}</div></div>
-              <div className="rounded-2xl bg-slate-50 p-3 text-sm"><div className="text-slate-500">Final</div><div className="font-semibold text-slate-950">{scoreLabel(refinement?.final_score)}</div></div>
+              <div className="rounded-2xl bg-slate-50 p-3 text-sm"><div className="text-slate-500">{t('paperAgent.validation.accepted')}</div><div className="font-semibold text-slate-950">{refinement?.accepted_iterations?.join(', ') || '-'}</div></div>
+              <div className="rounded-2xl bg-slate-50 p-3 text-sm"><div className="text-slate-500">{t('paperAgent.validation.initial')}</div><div className="font-semibold text-slate-950">{scoreLabel(refinement?.initial_score)}</div></div>
+              <div className="rounded-2xl bg-slate-50 p-3 text-sm"><div className="text-slate-500">{t('paperAgent.validation.final')}</div><div className="font-semibold text-slate-950">{scoreLabel(refinement?.final_score)}</div></div>
             </div>
           </CardContent>
         </Card>

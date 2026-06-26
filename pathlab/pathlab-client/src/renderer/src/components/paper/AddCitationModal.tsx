@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { AlertCircle, ArrowLeft, Check, Loader2, Search, X } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
@@ -37,6 +39,7 @@ const EMPTY_MANUAL: ManualCitationFields = {
 type PreviewState = AddCitationPreview | null
 
 export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdded }: AddCitationModalProps) {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const [pasteText, setPasteText] = useState('')
   const [required, setRequired] = useState(false)
@@ -76,7 +79,7 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
         setDuplicateKey(result.duplicate_of ?? null)
       }
     },
-    onError: (error) => handleError(error, pasteText, setManual, setForcedManual, setBanner, setDuplicateKey),
+    onError: (error) => handleError(error, pasteText, setManual, setForcedManual, setBanner, setDuplicateKey, t),
   })
 
   const confirmMutation = useMutation({
@@ -89,22 +92,22 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
         onClose()
       }
     },
-    onError: (error) => handleError(error, pasteText, setManual, setForcedManual, setBanner, setDuplicateKey),
+    onError: (error) => handleError(error, pasteText, setManual, setForcedManual, setBanner, setDuplicateKey, t),
   })
 
   const canPreview = detectedMode === 'manual' ? Boolean(manual.title.trim()) : Boolean(pasteText.trim())
   const busy = previewMutation.isPending || confirmMutation.isPending
 
   return (
-    <ModalShell isOpen={isOpen} onClose={busy ? undefined : onClose} maxWidth="xl" title="Add citation">
+    <ModalShell isOpen={isOpen} onClose={busy ? undefined : onClose} maxWidth="xl" title={t('paperAgent.addCitation.title')}>
       <div className="relative overflow-hidden bg-slate-950 text-white">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(45,212,191,0.22),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.18),transparent_32%)]" />
         <div className="relative flex items-start justify-between gap-4 p-5">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-200">Bibliography intake</div>
-            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em]">Add citation</h2>
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] text-teal-200">{t('paperAgent.addCitation.kicker')}</div>
+            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{t('paperAgent.addCitation.title')}</h2>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-300">
-              Paste a DOI, arXiv URL, or BibTeX entry. Unknown input becomes a manual metadata card.
+              {t('paperAgent.addCitation.description')}
             </p>
           </div>
           <button
@@ -112,7 +115,7 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
             onClick={onClose}
             disabled={busy}
             className="rounded-full border border-white/10 bg-white/10 p-2 text-white/80 transition hover:bg-white/20 disabled:opacity-50"
-            aria-label="Close add citation modal"
+            aria-label={t('paperAgent.addCitation.closeAria')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -137,7 +140,7 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
                   onClose()
                 }}
               >
-                Go to existing
+                {t('paperAgent.addCitation.goExisting')}
               </Button>
             ) : null}
           </div>
@@ -146,7 +149,7 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
         {!preview ? (
           <>
             <label className="block">
-              <span className="text-sm font-semibold text-slate-900">Paste DOI / arXiv URL / BibTeX entry</span>
+              <span className="text-sm font-semibold text-slate-900">{t('paperAgent.addCitation.pasteLabel')}</span>
               <textarea
                 value={pasteText}
                 onChange={(event) => {
@@ -164,7 +167,7 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
 
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={detectedMode === 'manual' ? 'outline' : 'secondary'}>
-                {modeLabel(detectedMode)}
+                {modeLabel(detectedMode, t)}
               </Badge>
               <label className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700">
                 <input
@@ -173,13 +176,14 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
                   onChange={(event) => setRequired(event.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                 />
-                Add to required cites
+                {t('paperAgent.addCitation.required')}
               </label>
             </div>
 
             {detectedMode === 'manual' ? (
               <ManualFields
                 value={manual}
+                t={t}
                 onChange={(next) => {
                   setManualTouched(true)
                   setManual(next)
@@ -189,7 +193,7 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
 
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
               <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
-                Cancel
+                {t('paperAgent.common.cancel')}
               </Button>
               <Button
                 type="button"
@@ -198,7 +202,7 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
                 disabled={!canPreview || busy}
               >
                 {previewMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                Preview
+                {t('paperAgent.common.preview')}
               </Button>
             </div>
           </>
@@ -217,15 +221,15 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
                 disabled={busy}
               >
                 <ArrowLeft className="h-4 w-4" />
-                Back
+                {t('paperAgent.common.back')}
               </Button>
               <div className="flex gap-2">
                 <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
-                  Cancel
+                  {t('paperAgent.common.cancel')}
                 </Button>
                 <Button type="button" className="gap-2" onClick={() => confirmMutation.mutate()} disabled={busy}>
                   {confirmMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  Confirm add
+                  {t('paperAgent.common.confirmAdd')}
                 </Button>
               </div>
             </div>
@@ -236,21 +240,29 @@ export function AddCitationModal({ paperId, isOpen, onClose, onDuplicate, onAdde
   )
 }
 
-function ManualFields({ value, onChange }: { value: ManualCitationFields; onChange: (value: ManualCitationFields) => void }) {
+function ManualFields({
+  value,
+  onChange,
+  t,
+}: {
+  value: ManualCitationFields
+  onChange: (value: ManualCitationFields) => void
+  t: TFunction
+}) {
   const authorsText = (value.authors ?? []).join(', ')
   return (
     <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
-      <div className="mb-3 text-sm font-semibold text-amber-950">Manual entry</div>
+      <div className="mb-3 text-sm font-semibold text-amber-950">{t('paperAgent.addCitation.manualEntry')}</div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Title" className="sm:col-span-2">
+        <Field label={t('paperAgent.addCitation.titleLabel')} className="sm:col-span-2">
           <input
             value={value.title}
             onChange={(event) => onChange({ ...value, title: event.target.value })}
             className={inputClassName}
-            placeholder="Full paper title"
+            placeholder={t('paperAgent.addCitation.titlePlaceholder')}
           />
         </Field>
-        <Field label="Authors">
+        <Field label={t('paperAgent.citations.meta.authors')}>
           <input
             value={authorsText}
             onChange={(event) =>
@@ -260,10 +272,10 @@ function ManualFields({ value, onChange }: { value: ManualCitationFields; onChan
               })
             }
             className={inputClassName}
-            placeholder="Smith J, Lee K"
+            placeholder={t('paperAgent.addCitation.authorsPlaceholder')}
           />
         </Field>
-        <Field label="Year">
+        <Field label={t('paperAgent.citations.meta.year')}>
           <input
             value={value.year ?? ''}
             onChange={(event) => onChange({ ...value, year: event.target.value ? Number(event.target.value) : null })}
@@ -272,15 +284,15 @@ function ManualFields({ value, onChange }: { value: ManualCitationFields; onChan
             placeholder="2024"
           />
         </Field>
-        <Field label="Venue">
+        <Field label={t('paperAgent.citations.meta.venue')}>
           <input
             value={value.venue ?? ''}
             onChange={(event) => onChange({ ...value, venue: event.target.value || null })}
             className={inputClassName}
-            placeholder="MICCAI / Nature Medicine"
+            placeholder={t('paperAgent.addCitation.venuePlaceholder')}
           />
         </Field>
-        <Field label="Entry type">
+        <Field label={t('paperAgent.addCitation.entryType')}>
           <select
             value={value.entry_type ?? ''}
             onChange={(event) =>
@@ -288,13 +300,13 @@ function ManualFields({ value, onChange }: { value: ManualCitationFields; onChan
             }
             className={inputClassName}
           >
-            <option value="">Infer</option>
-            <option value="article">article</option>
-            <option value="inproceedings">inproceedings</option>
-            <option value="misc">misc</option>
+            <option value="">{t('paperAgent.addCitation.infer')}</option>
+            <option value="article">{t('paperAgent.citations.types.article')}</option>
+            <option value="inproceedings">{t('paperAgent.citations.types.inproceedings')}</option>
+            <option value="misc">{t('paperAgent.citations.types.misc')}</option>
           </select>
         </Field>
-        <Field label="DOI">
+        <Field label={t('paperAgent.citations.meta.doi')}>
           <input
             value={value.doi ?? ''}
             onChange={(event) => onChange({ ...value, doi: event.target.value || null })}
@@ -310,20 +322,20 @@ function ManualFields({ value, onChange }: { value: ManualCitationFields; onChan
             placeholder="2401.01234"
           />
         </Field>
-        <Field label="Journal">
+        <Field label={t('paperAgent.addCitation.journalLabel')}>
           <input
             value={value.journal ?? ''}
             onChange={(event) => onChange({ ...value, journal: event.target.value || null })}
             className={inputClassName}
-            placeholder="Journal name"
+            placeholder={t('paperAgent.addCitation.journalPlaceholder')}
           />
         </Field>
-        <Field label="Booktitle">
+        <Field label={t('paperAgent.addCitation.booktitleLabel')}>
           <input
             value={value.booktitle ?? ''}
             onChange={(event) => onChange({ ...value, booktitle: event.target.value || null })}
             className={inputClassName}
-            placeholder="Conference proceedings"
+            placeholder={t('paperAgent.addCitation.booktitlePlaceholder')}
           />
         </Field>
         <Field label="URL" className="sm:col-span-2">
@@ -340,23 +352,24 @@ function ManualFields({ value, onChange }: { value: ManualCitationFields; onChan
 }
 
 function PreviewPane({ preview }: { preview: AddCitationPreview }) {
+  const { t } = useTranslation()
   const ref = preview.ref
   return (
     <div className="rounded-3xl border border-teal-200 bg-gradient-to-br from-teal-50 to-white p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Preview</div>
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">{t('paperAgent.addCitation.previewTitle')}</div>
           <h3 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">{ref.title}</h3>
         </div>
         <Badge variant="secondary">{preview.proposed_key}</Badge>
       </div>
       <dl className="grid gap-3 text-sm sm:grid-cols-2">
-        <Meta label="Authors" value={(ref.authors ?? []).join(', ')} />
-        <Meta label="Venue" value={ref.venue ?? ref.journal ?? ref.booktitle ?? undefined} />
-        <Meta label="Year" value={ref.year ? String(ref.year) : undefined} />
-        <Meta label="DOI" value={ref.doi ?? undefined} />
-        <Meta label="Type" value={ref.entry_type ? `@${ref.entry_type}` : undefined} />
-        <Meta label="Source" value={ref.source} />
+        <Meta label={t('paperAgent.citations.meta.authors')} value={(ref.authors ?? []).join(', ')} />
+        <Meta label={t('paperAgent.citations.meta.venue')} value={ref.venue ?? ref.journal ?? ref.booktitle ?? undefined} />
+        <Meta label={t('paperAgent.citations.meta.year')} value={ref.year ? String(ref.year) : undefined} />
+        <Meta label={t('paperAgent.citations.meta.doi')} value={ref.doi ?? undefined} />
+        <Meta label={t('paperAgent.citations.meta.type')} value={ref.entry_type ? `@${ref.entry_type}` : undefined} />
+        <Meta label={t('paperAgent.citations.meta.source')} value={ref.source} />
       </dl>
     </div>
   )
@@ -391,11 +404,8 @@ function detectMode(value: string): AddCitationMode {
   return 'manual'
 }
 
-function modeLabel(mode: AddCitationMode): string {
-  if (mode === 'doi') return 'DOI · Crossref will fetch'
-  if (mode === 'arxiv') return 'arXiv · metadata lookup'
-  if (mode === 'bibtex') return 'BibTeX entry · parse locally'
-  return 'Manual entry needed'
+function modeLabel(mode: AddCitationMode, t: TFunction): string {
+  return t(`paperAgent.addCitation.modes.${mode}`)
 }
 
 function buildRequest(
@@ -426,6 +436,7 @@ function handleError(
   setForcedManual: (value: boolean) => void,
   setBanner: (value: string | null) => void,
   setDuplicateKey: (value: string | null) => void,
+  t: TFunction,
 ) {
   const apiError = error instanceof ApiError ? error : null
   const detail = parseDetails(apiError?.details)
@@ -433,17 +444,17 @@ function handleError(
   if (code === 'duplicate') {
     const key = typeof detail?.duplicate_of === 'string' ? detail.duplicate_of : null
     setDuplicateKey(key)
-    setBanner(key ? `This reference is already cited as ${key}.` : 'This reference already exists.')
+    setBanner(key ? t('paperAgent.addCitation.errors.duplicateKnown', { key }) : t('paperAgent.addCitation.errors.duplicate'))
     return
   }
   if (code === 'fetch_failed') {
     setManual({ ...EMPTY_MANUAL, title: pasteText.trim() })
     setForcedManual(true)
-    setBanner('Metadata lookup failed. Switch to manual entry and confirm the fields.')
+    setBanner(t('paperAgent.addCitation.errors.fetchFailed'))
     return
   }
   if (code === 'phi_detected') {
-    setBanner('Cannot add: possible PHI or private identifier detected in metadata.')
+    setBanner(t('paperAgent.addCitation.errors.phiDetected'))
     return
   }
   setBanner(apiError?.message || (error instanceof Error ? error.message : String(error)))

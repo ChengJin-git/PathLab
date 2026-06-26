@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent } from '../components/ui/card'
@@ -10,6 +11,7 @@ import { StageChecklist } from '../components/paper/StageChecklist'
 import { WorkspaceTabs, coerceWorkspaceTab, type WorkspaceTabValue } from '../components/paper/WorkspaceTabs'
 import { DeleteRunButton } from '../components/paper/DeleteRunButton'
 import { getPaperRun } from '../api/papers'
+import { paperStatusLabel } from '../lib/paperI18n'
 
 const ACTIVE_STATUSES = new Set(['pending', 'running'])
 const ACTIVE_RUN_REFETCH_INTERVAL_MS = 500
@@ -23,6 +25,7 @@ function statusBadgeVariant(status: string): 'default' | 'secondary' | 'destruct
 
 export default function PaperRunDetailPage() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const { paper_id: paperId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const [pdfRefreshKey, setPdfRefreshKey] = useState(0)
@@ -55,14 +58,14 @@ export default function PaperRunDetailPage() {
     <div className="w-full px-3 py-4 sm:px-4 lg:px-6 sm:py-6">
       <div className="flex w-full flex-col gap-5">
         <PageHeader
-          title={run?.title || paperId || 'Paper run'}
-          description="PathLab paper workspace. Review, edit sections, and inspect generated artifacts."
+          title={run?.title || paperId || t('paperAgent.detail.fallbackTitle')}
+          description={t('paperAgent.detail.description')}
         >
           <div className="flex flex-wrap items-center gap-2">
-            {run ? <Badge variant={statusBadgeVariant(run.status)}>{run.status}</Badge> : null}
+            {run ? <Badge variant={statusBadgeVariant(run.status)}>{paperStatusLabel(t, run.status)}</Badge> : null}
             {sourceTaskIds.length ? (
               <div className="flex flex-wrap items-center gap-1">
-                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Tasks</span>
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{t('paperAgent.detail.tasks')}</span>
                 {sourceTaskIds.map((taskId) => (
                   <Link
                     key={taskId}
@@ -76,11 +79,11 @@ export default function PaperRunDetailPage() {
             ) : null}
             <Button variant="outline" size="sm" onClick={() => navigate('/papers')} className="gap-2">
               <ArrowLeft className="h-4 w-4" />
-              Runs
+              {t('paperAgent.common.runs')}
             </Button>
             <Button variant="outline" size="sm" onClick={() => runQuery.refetch()} className="gap-2">
               <RefreshCw className="h-4 w-4" />
-              Refresh
+              {t('paperAgent.common.refresh')}
             </Button>
             {paperId ? <DeleteRunButton paperId={paperId} onDeleted={() => navigate('/papers')} /> : null}
           </div>
@@ -89,7 +92,7 @@ export default function PaperRunDetailPage() {
         {runQuery.isLoading ? (
           <Card className="rounded-2xl border-slate-200 shadow-sm">
             <CardContent className="flex items-center gap-2 py-10 text-sm text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading paper run...
+              <Loader2 className="h-4 w-4 animate-spin" /> {t('paperAgent.detail.loading')}
             </CardContent>
           </Card>
         ) : runQuery.error ? (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'pdfjs-dist/web/pdf_viewer.css'
@@ -39,6 +40,7 @@ function selectionBelongsToRoot(root: HTMLElement, selection: Selection): boolea
 }
 
 function PdfPage({ document, pageNumber, scale }: PdfPageProps) {
+  const { t } = useTranslation()
   const pageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const textLayerRef = useRef<HTMLDivElement>(null)
@@ -116,16 +118,16 @@ function PdfPage({ document, pageNumber, scale }: PdfPageProps) {
         className="pdf-page relative overflow-hidden rounded-sm bg-white shadow-[0_18px_50px_rgba(15,23,42,0.16)]"
         data-page-number={pageNumber}
       >
-        <canvas ref={canvasRef} className="absolute inset-0" aria-label={`PDF page ${pageNumber}`} />
+        <canvas ref={canvasRef} className="absolute inset-0" aria-label={t('paperAgent.pdfViewer.pageAria', { page: pageNumber })} />
         <div ref={textLayerRef} className="textLayer absolute inset-0" />
         {status === 'loading' ? (
           <div className="absolute inset-0 grid place-items-center bg-white/70 text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-            Page {pageNumber}
+            {t('paperAgent.pdfViewer.page', { page: pageNumber })}
           </div>
         ) : null}
         {status === 'error' ? (
           <div className="absolute inset-0 grid place-items-center bg-red-50 p-4 text-center text-sm text-red-700">
-            Failed to render page {pageNumber}.
+            {t('paperAgent.pdfViewer.pageFailed', { page: pageNumber })}
           </div>
         ) : null}
       </div>
@@ -134,6 +136,7 @@ function PdfPage({ document, pageNumber, scale }: PdfPageProps) {
 }
 
 export function PdfViewer({ pdfUrl, refreshKey, scale = 1, onSelectionChange }: PdfViewerProps) {
+  const { t } = useTranslation()
   const rootRef = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<PdfLoadState>({
     document: null,
@@ -199,7 +202,7 @@ export function PdfViewer({ pdfUrl, refreshKey, scale = 1, onSelectionChange }: 
   if (state.error) {
     return (
       <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-        PDF renderer failed: {state.error}
+        {t('paperAgent.pdfViewer.rendererFailed', { message: state.error })}
       </div>
     )
   }
@@ -207,7 +210,7 @@ export function PdfViewer({ pdfUrl, refreshKey, scale = 1, onSelectionChange }: 
   if (!state.document) {
     return (
       <div className="flex h-[72vh] items-center justify-center rounded-2xl bg-slate-100 text-sm text-slate-500">
-        Loading PDF document...
+        {t('paperAgent.pdfViewer.loadingDocument')}
       </div>
     )
   }
