@@ -1,9 +1,29 @@
 import type { AutoResearchSessionSummary } from '../types/autoresearch'
 import type { AutoResearchTrainingProgress } from '../types/autoresearch'
+import i18n from '../i18n'
 
-export function displaySessionStatus(status?: string) {
+function getRawStatus(status?: string) {
   if (status === 'finished') return 'completed'
   return status || 'unknown'
+}
+
+export function displaySessionStatus(status?: string) {
+  const t = i18n.getResourceBundle(i18n.language, 'translation')?.autoResearch?.status
+  if (!t) return status || 'Unknown'
+  switch (getRawStatus(status)) {
+    case 'completed':
+      return t.completed || 'Completed'
+    case 'failed':
+      return t.failed || 'Failed'
+    case 'running':
+      return t.running || 'Running'
+    case 'queued':
+      return t.queued || 'Queued'
+    case 'interrupted':
+      return t.interrupted || 'Interrupted'
+    default:
+      return t.unknown || 'Unknown'
+  }
 }
 
 export function isLiveSessionStatus(status?: string) {
@@ -117,7 +137,7 @@ export function dedupeAutoResearchSessions(sessions: AutoResearchSessionSummary[
 }
 
 export function sessionStatusClass(status?: string) {
-  switch (displaySessionStatus(status)) {
+  switch (getRawStatus(status)) {
     case 'completed':
       return 'bg-emerald-50 text-emerald-700 ring-emerald-200'
     case 'failed':

@@ -1401,6 +1401,7 @@
       "loading": "Loading session...",
       "iterationProgress": "Iter {{current}} / {{max}}",
       "iterationCurrent": "Iter {{current}}",
+      "trainingProgress": "Training progress",
       "steps": {
         "understand": "Understand task",
         "prepare": "Prepare data",
@@ -1412,7 +1413,7 @@
         "running": "Running",
         "completed": "Completed",
         "failed": "Failed",
-        "interrupted": "Stopped",
+        "interrupted": "Interrupted",
         "loading": "Loading",
         "unknown": "Unknown"
       }
@@ -1453,20 +1454,20 @@
       "workspace": "Workspace"
     },
     "status": {
-      "queued": "queued",
-      "running": "running",
-      "completed": "completed",
-      "finished": "completed",
-      "failed": "failed",
-      "interrupted": "interrupted",
-      "loading": "loading",
-      "unknown": "unknown",
-      "download": "download",
-      "downloading": "downloading",
-      "recorded": "recorded",
-      "success": "success",
-      "error": "error",
-      "pending": "pending"
+      "queued": "Queued",
+      "running": "Running",
+      "completed": "Completed",
+      "finished": "Completed",
+      "failed": "Failed",
+      "interrupted": "Interrupted",
+      "loading": "Loading",
+      "unknown": "Unknown",
+      "download": "Download",
+      "downloading": "Downloading",
+      "recorded": "Recorded",
+      "success": "Success",
+      "error": "Error",
+      "pending": "Pending"
     },
     "stageStatus": {
       "complete": "done",

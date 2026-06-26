@@ -1401,6 +1401,7 @@
       "loading": "正在加载会话…",
       "iterationProgress": "第 {{current}} / {{max}} 轮",
       "iterationCurrent": "第 {{current}} 轮",
+      "trainingProgress": "训练进展",
       "steps": {
         "understand": "理解任务",
         "prepare": "准备数据",
@@ -1412,7 +1413,7 @@
         "running": "进行中",
         "completed": "已完成",
         "failed": "失败",
-        "interrupted": "已停止",
+        "interrupted": "已中断",
         "loading": "加载中",
         "unknown": "未知"
       }

@@ -152,9 +152,6 @@ export default function AutoResearchSessionListItem({
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${sessionStatusClass(session.status)}`}>
                   {status}
                 </span>
-                {isLiveSessionStatus(session.status) && (
-                  <span className="text-[10px] font-medium text-blue-600">{t('autoResearch.live')}</span>
-                )}
                 {trainingProgressLabel && (
                   <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
                     {trainingProgressLabel}

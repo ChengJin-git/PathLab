@@ -180,7 +180,7 @@ export default function AutoResearchClinicalSessionView({
           <OverviewTile label={t('autoResearch.clinical.bestMetric')} value={bestMetricLabel} />
           <OverviewTile label={t('autoResearch.clinical.currentIteration')} value={iterationLabel} />
           <OverviewTile label={t('autoResearch.clinical.runStatus')} value={clinicalStatusLabel(latestStatus, t)} />
-          {trainingProgressLabel && <OverviewTile label="Training progress" value={trainingProgressLabel} />}
+          {trainingProgressLabel && <OverviewTile label={t('autoResearch.clinical.trainingProgress')} value={trainingProgressLabel} />}
         </div>
       </section>
 
