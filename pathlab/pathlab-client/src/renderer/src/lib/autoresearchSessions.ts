@@ -7,23 +7,14 @@ function getRawStatus(status?: string) {
   return status || 'unknown'
 }
 
+function translate(key: string, fallback: string, options?: Record<string, unknown>) {
+  const translated = i18n.t(key, { defaultValue: fallback, ...options })
+  return typeof translated === 'string' ? translated : fallback
+}
+
 export function displaySessionStatus(status?: string) {
-  const t = i18n.getResourceBundle(i18n.language, 'translation')?.autoResearch?.status
-  if (!t) return status || 'Unknown'
-  switch (getRawStatus(status)) {
-    case 'completed':
-      return t.completed || 'Completed'
-    case 'failed':
-      return t.failed || 'Failed'
-    case 'running':
-      return t.running || 'Running'
-    case 'queued':
-      return t.queued || 'Queued'
-    case 'interrupted':
-      return t.interrupted || 'Interrupted'
-    default:
-      return t.unknown || 'Unknown'
-  }
+  const normalized = getRawStatus(status)
+  return translate(`autoResearch.status.${normalized}`, status || 'Unknown')
 }
 
 export function isLiveSessionStatus(status?: string) {
@@ -37,16 +28,21 @@ function finiteNumber(value: unknown): number | null {
 function trainingProgressRunLabel(progress?: AutoResearchTrainingProgress | null) {
   const runKind = typeof progress?.run_kind === 'string' ? progress.run_kind.toLowerCase() : ''
   if (progress?.quick_check || ['quick_check', 'quick-check', 'quick_start', 'quick-start'].includes(runKind)) {
-    return 'Quick start'
+    return translate('autoResearch.trainingProgress.quickStart', 'Quick start')
   }
-  return 'Training'
+  return translate('autoResearch.trainingProgress.training', 'Training')
 }
 
 export function trainingProgressEpochLabel(progress?: AutoResearchTrainingProgress | null) {
   const currentEpoch = finiteNumber(progress?.current_epoch)
   if (currentEpoch === null) return ''
   const totalEpochs = finiteNumber(progress?.total_epochs)
-  const epoch = totalEpochs && totalEpochs > 0 ? `Epoch ${currentEpoch}/${totalEpochs}` : `Epoch ${currentEpoch}`
+  const epoch = totalEpochs && totalEpochs > 0
+    ? translate('autoResearch.trainingProgress.epochWithTotal', `Epoch ${currentEpoch}/${totalEpochs}`, {
+      current: currentEpoch,
+      total: totalEpochs,
+    })
+    : translate('autoResearch.trainingProgress.epoch', `Epoch ${currentEpoch}`, { current: currentEpoch })
   return `${trainingProgressRunLabel(progress)} · ${epoch}`
 }
 
@@ -55,7 +51,11 @@ export function trainingProgressMetricLabels(progress?: AutoResearchTrainingProg
   const currentAuc = finiteNumber(progress?.current_val_auc)
   if (currentAuc !== null) labels.push(`AUC ${currentAuc.toFixed(3)}`)
   const bestAuc = finiteNumber(progress?.best_val_auc)
-  if (bestAuc !== null) labels.push(`best ${bestAuc.toFixed(3)}`)
+  if (bestAuc !== null) {
+    labels.push(translate('autoResearch.trainingProgress.best', `best ${bestAuc.toFixed(3)}`, {
+      value: bestAuc.toFixed(3),
+    }))
+  }
   return labels
 }
 
@@ -64,9 +64,17 @@ export function trainingProgressConsoleLabel(progress?: AutoResearchTrainingProg
   if (!epoch) return ''
   const labels = [epoch]
   const currentAuc = finiteNumber(progress?.current_val_auc)
-  if (currentAuc !== null) labels.push(`val AUC ${currentAuc.toFixed(3)}`)
+  if (currentAuc !== null) {
+    labels.push(translate('autoResearch.trainingProgress.validationAuc', `val AUC ${currentAuc.toFixed(3)}`, {
+      value: currentAuc.toFixed(3),
+    }))
+  }
   const bestAuc = finiteNumber(progress?.best_val_auc)
-  if (bestAuc !== null) labels.push(`best ${bestAuc.toFixed(3)}`)
+  if (bestAuc !== null) {
+    labels.push(translate('autoResearch.trainingProgress.best', `best ${bestAuc.toFixed(3)}`, {
+      value: bestAuc.toFixed(3),
+    }))
+  }
   return labels.join(' · ')
 }
 
@@ -76,8 +84,11 @@ export function sessionIterationLabel(session?: AutoResearchSessionSummary | nul
   const currentIteration = rawCurrent <= 0 ? 1 : rawCurrent
   const maxIterations = finiteNumber(session?.max_iterations)
   return maxIterations && maxIterations > 0
-    ? `Iter ${currentIteration}/${maxIterations}`
-    : `Iter ${currentIteration}`
+    ? translate('autoResearch.trainingProgress.iterationWithMax', `Iter ${currentIteration}/${maxIterations}`, {
+      current: currentIteration,
+      max: maxIterations,
+    })
+    : translate('autoResearch.trainingProgress.iteration', `Iter ${currentIteration}`, { current: currentIteration })
 }
 
 export function sessionTrainingProgressLabel(session?: AutoResearchSessionSummary | null) {
