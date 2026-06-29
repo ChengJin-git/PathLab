@@ -1234,6 +1234,21 @@
       "showing": "显示第 {{start}}–{{end}} 条，共 {{total}} 条",
       "previous": "上一页",
       "next": "下一页"
+    },
+    "papers": {
+      "title": "相关论文",
+      "description": "由这个实验记录生成的论文运行。",
+      "count": "{{count}} 篇",
+      "create": "新建论文",
+      "viewAll": "查看全部",
+      "loading": "正在加载相关论文...",
+      "latest": "最近论文",
+      "emptyTitle": "还没有生成论文",
+      "emptyDescription": "当前实验记录还没有关联的论文生成记录。",
+      "paginationRange": "显示第 {{start}}–{{end}} 条，共 {{total}} 条",
+      "previous": "上一页",
+      "next": "下一页",
+      "pageInfo": "第 {{page}} / {{totalPages}} 页"
     }
   },
   "storagePage": {

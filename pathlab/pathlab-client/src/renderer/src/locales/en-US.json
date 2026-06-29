@@ -1234,6 +1234,21 @@
       "showing": "Showing {{start}}–{{end}} of {{total}}",
       "previous": "Previous",
       "next": "Next"
+    },
+    "papers": {
+      "title": "Related papers",
+      "description": "Paper runs generated from this experiment record.",
+      "count": "{{count}} paper(s)",
+      "create": "New paper",
+      "viewAll": "View all",
+      "loading": "Loading related papers...",
+      "latest": "Latest paper",
+      "emptyTitle": "No papers generated yet",
+      "emptyDescription": "No paper generation records are linked to this experiment yet.",
+      "paginationRange": "Showing {{start}}–{{end}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next",
+      "pageInfo": "Page {{page}} / {{totalPages}}"
     }
   },
   "storagePage": {

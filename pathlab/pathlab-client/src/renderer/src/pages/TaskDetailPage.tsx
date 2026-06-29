@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3, Download, Table2, Cpu } from 'lucide-react'
+import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3, Download, Table2, Cpu, FileText, ExternalLink } from 'lucide-react'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { Badge } from '../components/ui/badge'
 import { API_BASE } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery, startExternalValidation } from '../api'
+import { listPaperRuns, type PaperRunSummary } from '../api/papers'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
@@ -26,6 +29,7 @@ import { formatDateTime } from '../lib/utils'
 import { getBatchInferenceSummary, getBatchInferenceResults, exportBatchInferenceCsv } from '../api/batchInference'
 import type { BatchInferenceSummary, BatchInferenceResult } from '../api/batchInference'
 import { isCanonicalTaskType, isSegmentationTask } from '../constants/training'
+import { paperStageLabel, paperStatusLabel } from '../lib/paperI18n'
 
 const makeSyntheticTask = (
   taskId: string,
@@ -49,6 +53,152 @@ const makeSyntheticTask = (
 const CREATING_LOG_ID = -1
 const SYNTHETIC_FAILURE_LOG_ID = -2
 const SYNTHETIC_CANCELLED_LOG_ID = -3
+
+function paperStatusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'completed') return 'secondary'
+  if (status === 'failed' || status === 'cancelled') return 'destructive'
+  if (status === 'running') return 'default'
+  return 'outline'
+}
+
+function isPaperLinkedToTask(run: PaperRunSummary, taskId: string | undefined): boolean {
+  return Boolean(taskId && run.source_task_ids?.includes(taskId))
+}
+
+function RelatedPapersPanel({
+  task,
+  papers,
+  loading,
+  error,
+  onOpen,
+  onViewAll,
+}: {
+  task: TaskDetail
+  papers: PaperRunSummary[]
+  loading: boolean
+  error: unknown
+  onOpen: (paperId: string) => void
+  onViewAll: () => void
+}) {
+  const { t } = useTranslation()
+  const pageSize = 5
+  const [page, setPage] = useState(1)
+  const totalPages = Math.max(1, Math.ceil(papers.length / pageSize))
+  const startIndex = (page - 1) * pageSize
+  const visiblePapers = papers.slice(startIndex, startIndex + pageSize)
+  const showingStart = papers.length ? startIndex + 1 : 0
+  const showingEnd = Math.min(startIndex + visiblePapers.length, papers.length)
+
+  useEffect(() => {
+    setPage(1)
+  }, [task.task_id, papers.length])
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+
+  return (
+    <Card className="overflow-hidden border-slate-200 bg-white/95 p-4 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-slate-400" />
+            <h2 className="text-base font-bold text-slate-950">{t('taskDetail.papers.title')}</h2>
+            <Badge variant="outline">{t('taskDetail.papers.count', { count: papers.length })}</Badge>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">{t('taskDetail.papers.description')}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={onViewAll} className="gap-2" disabled={loading || papers.length === 0}>
+            <ExternalLink className="h-4 w-4" />
+            {t('taskDetail.papers.viewAll')}
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        {loading ? (
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {t('taskDetail.papers.loading')}
+          </div>
+        ) : error ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+            {error instanceof Error ? error.message : String(error)}
+          </div>
+        ) : visiblePapers.length ? (
+          <div className="space-y-3">
+            <div className="space-y-2">
+              {visiblePapers.map((paper) => (
+                <button
+                  key={paper.paper_id}
+                  type="button"
+                  onClick={() => onOpen(paper.paper_id)}
+                  className="group grid w-full gap-3 rounded-xl border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-slate-300 hover:bg-slate-50 hover:shadow-sm sm:grid-cols-[minmax(0,1.7fr)_120px_160px_120px] sm:items-center"
+                >
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-bold text-slate-950">{paper.title || paper.paper_id}</span>
+                      <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-300 transition group-hover:text-slate-600" />
+                    </div>
+                    <div className="mt-1 truncate font-mono text-xs text-slate-500">{paper.paper_id}</div>
+                  </div>
+                  <div>
+                    <Badge variant={paperStatusVariant(paper.status)}>{paperStatusLabel(t, paper.status)}</Badge>
+                  </div>
+                  <div className="min-w-0 text-xs text-slate-600">
+                    <span className="text-slate-400">{t('paperAgent.runRow.stage')}</span>
+                    <div className="mt-1 truncate font-semibold text-slate-700">{paperStageLabel(t, paper.current_stage)}</div>
+                  </div>
+                  <div className="text-xs text-slate-500">{formatDateTime(paper.created_at)}</div>
+                </button>
+              ))}
+            </div>
+
+            {papers.length > pageSize ? (
+              <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  {t('taskDetail.papers.paginationRange', {
+                    start: showingStart,
+                    end: showingEnd,
+                    total: papers.length,
+                  })}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((current) => Math.max(1, current - 1))}
+                    disabled={page <= 1}
+                  >
+                    {t('taskDetail.papers.previous')}
+                  </Button>
+                  <span className="min-w-20 text-center font-semibold text-slate-600">
+                    {t('taskDetail.papers.pageInfo', { page, totalPages })}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    {t('taskDetail.papers.next')}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center">
+            <FileText className="mx-auto h-8 w-8 text-slate-300" />
+            <div className="mt-2 text-sm font-semibold text-slate-800">{t('taskDetail.papers.emptyTitle')}</div>
+            <p className="mt-1 text-sm text-slate-500">{t('taskDetail.papers.emptyDescription')}</p>
+          </div>
+        )}
+      </div>
+    </Card>
+  )
+}
 
 const makeCreatingLogEntry = (taskId: string): LogEntry => ({
   id: CREATING_LOG_ID,
@@ -107,6 +257,21 @@ export default function TaskDetailPage() {
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsContainerRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const relatedPapersQuery = useQuery({
+    queryKey: ['paper-runs', { sourceTaskId: task_id }],
+    queryFn: () => listPaperRuns({ limit: 200, source_task_id: task_id || undefined }),
+    enabled: Boolean(task_id),
+    refetchInterval: (query) => {
+      const hasActive = query.state.data?.items
+        ?.filter((run) => isPaperLinkedToTask(run, task_id))
+        .some((run) => run.status === 'pending' || run.status === 'running')
+      return hasActive ? 2000 : false
+    },
+  })
+  const relatedPapers = useMemo(
+    () => (relatedPapersQuery.data?.items ?? []).filter((run) => isPaperLinkedToTask(run, task_id)),
+    [relatedPapersQuery.data?.items, task_id],
+  )
 
   const resolveTrackedCreationIssue = (id: string) => {
     const tracked = getTrainingSubmissionRecord(id)
@@ -781,6 +946,17 @@ export default function TaskDetailPage() {
         isPatchLevel={isPatchLevel}
         isExternalValidation={isExternalValidation}
       />
+
+      {!isBatchInference && (
+        <RelatedPapersPanel
+          task={displayTask}
+          papers={relatedPapers}
+          loading={relatedPapersQuery.isLoading}
+          error={relatedPapersQuery.error}
+          onOpen={(paperId) => navigate(`/papers/${encodeURIComponent(paperId)}`)}
+          onViewAll={() => navigate(`/papers?source_task_id=${encodeURIComponent(displayTask.task_id)}`)}
+        />
+      )}
 
       {/* Error Message Display */}
       {displayTask.status === 'failed' && displayTask.error_message && (() => {

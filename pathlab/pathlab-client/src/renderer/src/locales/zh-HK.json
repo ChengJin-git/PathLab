@@ -1234,6 +1234,21 @@
       "showing": "顯示第 {{start}}–{{end}} 條，共 {{total}} 條",
       "previous": "上一頁",
       "next": "下一頁"
+    },
+    "papers": {
+      "title": "相關論文",
+      "description": "由此實驗記錄生成的論文運行。",
+      "count": "{{count}} 篇",
+      "create": "新建論文",
+      "viewAll": "查看全部",
+      "loading": "正在載入相關論文...",
+      "latest": "最近論文",
+      "emptyTitle": "尚未生成論文",
+      "emptyDescription": "目前實驗記錄尚未有關聯的論文生成記錄。",
+      "paginationRange": "顯示第 {{start}}–{{end}} 條，共 {{total}} 條",
+      "previous": "上一頁",
+      "next": "下一頁",
+      "pageInfo": "第 {{page}} / {{totalPages}} 頁"
     }
   },
   "storagePage": {
