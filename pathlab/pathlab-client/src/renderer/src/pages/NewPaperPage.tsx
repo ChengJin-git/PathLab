@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Check, FileText, Loader2, Plus, Search, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { ModalShell } from '../components/ui/modal-shell'
-import { createPaperRun, type CreatePaperRunRequest, type TaskRole, type TemplateId } from '../api/papers'
+import { createPaperRun, listPaperRuns, type CreatePaperRunRequest, type TaskRole, type TemplateId } from '../api/papers'
 import { getTrainingTasks, type TrainingTask } from '../api/training'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { cn, formatDateTime } from '../lib/utils'
@@ -27,16 +27,20 @@ function taskTitle(task: TrainingTask): string {
 
 export default function NewPaperPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { t } = useTranslation()
   const qc = useQueryClient()
   const { addPaperGenerationTask } = useBackgroundTask()
+  const initialSourceTaskId = searchParams.get('source_task_id')?.trim() || ''
+  const initialSourceTaskName = searchParams.get('source_task_name')?.trim() || ''
   const [title, setTitle] = useState('')
   const [idea, setIdea] = useState('')
   const [template, setTemplate] = useState<TemplateId>('miccai')
   const [search, setSearch] = useState('')
   const [manualTaskId, setManualTaskId] = useState('')
-  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([])
-  const [selectedRoles, setSelectedRoles] = useState<Record<string, TaskRole>>({})
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>(() => initialSourceTaskId ? [initialSourceTaskId] : [])
+  const [selectedRoles, setSelectedRoles] = useState<Record<string, TaskRole>>(() => initialSourceTaskId ? { [initialSourceTaskId]: 'main' } : {})
+  const [manualTaskIds, setManualTaskIds] = useState<Set<string>>(() => new Set())
   const [showConfirmModal, setShowConfirmModal] = useState(false)
 
   const tasksQuery = useQuery({
@@ -44,8 +48,35 @@ export default function NewPaperPage() {
     queryFn: () => getTrainingTasks({ page: 1, page_size: 50, search: search || undefined, sort_by: 'updated' }),
   })
 
+  const existingRunsQuery = useQuery({
+    queryKey: ['paper-runs', 'new-manual-source-task-conflicts'],
+    queryFn: () => listPaperRuns({ limit: 200 }),
+  })
+
   const tasks = tasksQuery.data?.items ?? []
-  const tasksById = useMemo(() => new Map(tasks.map((task) => [task.task_id, task])), [tasks])
+  const tasksById = useMemo(() => {
+    const map = new Map(tasks.map((task) => [task.task_id, task]))
+    if (initialSourceTaskId && initialSourceTaskName && !map.has(initialSourceTaskId)) {
+      map.set(initialSourceTaskId, {
+        task_id: initialSourceTaskId,
+        task_name: initialSourceTaskName,
+      } as TrainingTask)
+    }
+    return map
+  }, [initialSourceTaskId, initialSourceTaskName, tasks])
+  const existingSourceTaskIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const run of existingRunsQuery.data?.items ?? []) {
+      for (const taskId of run.source_task_ids ?? []) {
+        ids.add(taskId)
+      }
+    }
+    return ids
+  }, [existingRunsQuery.data?.items])
+  const manualTaskIdValue = manualTaskId.trim()
+  const manualTaskIdError = manualTaskIdValue && existingSourceTaskIds.has(manualTaskIdValue)
+    ? t('paperAgent.new.manualTaskConflict', { taskId: manualTaskIdValue })
+    : ''
 
   const createMutation = useMutation({
     mutationFn: (request: CreatePaperRunRequest) => createPaperRun(request),
@@ -58,17 +89,26 @@ export default function NewPaperPage() {
 
   const toggleTask = (taskId: string) => {
     setSelectedTaskIds((current) => {
-      if (current.includes(taskId)) return current.filter((id) => id !== taskId)
+      if (current.includes(taskId)) {
+        setManualTaskIds((ids) => {
+          if (!ids.has(taskId)) return ids
+          const next = new Set(ids)
+          next.delete(taskId)
+          return next
+        })
+        return current.filter((id) => id !== taskId)
+      }
       setSelectedRoles((roles) => ({ ...roles, [taskId]: current.length === 0 ? 'main' : 'baseline' }))
       return [...current, taskId]
     })
   }
 
   const addManualTask = () => {
-    const taskId = manualTaskId.trim()
-    if (!taskId || selectedTaskIds.includes(taskId)) return
+    const taskId = manualTaskIdValue
+    if (!taskId || selectedTaskIds.includes(taskId) || manualTaskIdError) return
     setSelectedTaskIds((current) => [...current, taskId])
     setSelectedRoles((roles) => ({ ...roles, [taskId]: selectedTaskIds.length === 0 ? 'main' : 'baseline' }))
+    setManualTaskIds((ids) => new Set(ids).add(taskId))
     setManualTaskId('')
   }
 
@@ -77,11 +117,12 @@ export default function NewPaperPage() {
   }
 
   const handleCreate = () => {
-    if (!selectedTaskIds.length) return
+    if (!selectedTaskIds.length || manualTaskIdError) return
     const sourceTasks = selectedTaskIds.map((taskId, index) => ({
       task_id: taskId,
       role: selectedRoles[taskId] ?? (index === 0 ? 'main' : 'baseline'),
       label: tasksById.get(taskId)?.task_name ?? null,
+      is_manual: manualTaskIds.has(taskId),
     }))
     createMutation.mutate({
       title: title.trim() || null,
@@ -95,7 +136,7 @@ export default function NewPaperPage() {
   }
 
   const openConfirmModal = () => {
-    if (!selectedTaskIds.length || createMutation.isPending) return
+    if (!selectedTaskIds.length || manualTaskIdError || createMutation.isPending) return
     setShowConfirmModal(true)
   }
 
@@ -178,12 +219,17 @@ export default function NewPaperPage() {
                   value={manualTaskId}
                   onChange={(event) => setManualTaskId(event.target.value)}
                   placeholder={t('paperAgent.new.manualTaskPlaceholder')}
-                  className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-sky-500/10"
+                  aria-invalid={Boolean(manualTaskIdError)}
+                  className={cn(
+                    'min-w-0 flex-1 rounded-2xl border bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-sky-500/10',
+                    manualTaskIdError ? 'border-red-300 focus:border-red-400 focus:ring-red-500/10' : 'border-slate-200',
+                  )}
                 />
-                <Button variant="outline" className="gap-2" onClick={addManualTask} disabled={!manualTaskId.trim()}>
+                <Button variant="outline" className="gap-2" onClick={addManualTask} disabled={!manualTaskIdValue || Boolean(manualTaskIdError)}>
                   <Plus className="h-4 w-4" /> {t('paperAgent.common.add')}
                 </Button>
               </div>
+              {manualTaskIdError ? <div className="text-xs font-medium text-red-600">{manualTaskIdError}</div> : null}
             </CardContent>
           </Card>
 
@@ -243,7 +289,7 @@ export default function NewPaperPage() {
                   variant="primary"
                   className="gap-2"
                   onClick={openConfirmModal}
-                  disabled={!selectedTaskIds.length || createMutation.isPending}
+                  disabled={!selectedTaskIds.length || Boolean(manualTaskIdError) || createMutation.isPending}
                 >
                   <FileText className="h-4 w-4" />
                   {t('paperAgent.new.create')}
@@ -307,7 +353,7 @@ export default function NewPaperPage() {
           </div>
 
           <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
-            <Button variant="primary" className="gap-2" onClick={handleCreate} disabled={!selectedTaskIds.length || createMutation.isPending}>
+            <Button variant="primary" className="gap-2" onClick={handleCreate} disabled={!selectedTaskIds.length || Boolean(manualTaskIdError) || createMutation.isPending}>
               {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
               {t('paperAgent.new.confirmCreate')}
             </Button>

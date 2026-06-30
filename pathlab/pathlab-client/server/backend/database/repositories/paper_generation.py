@@ -15,7 +15,7 @@ table only holds a small status row.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +38,7 @@ class PaperGenerationRunRepository(BaseRepository[PaperGenerationRun]):
         *,
         limit: int = 50,
         offset: int = 0,
+        source_task_id: Optional[str] = None,
     ) -> tuple[list[PaperGenerationRun], int]:
         """List paper runs visible to `user_id`.
 
@@ -49,6 +50,20 @@ class PaperGenerationRunRepository(BaseRepository[PaperGenerationRun]):
         if user_id is not None:
             base_query = base_query.where(PaperGenerationRun.user_id == user_id)
             count_query = count_query.where(PaperGenerationRun.user_id == user_id)
+
+        if source_task_id:
+            # `source_task_ids` is a JSON array and the paper-run count is small.
+            # Filtering in Python keeps this path portable across PostgreSQL and
+            # the SQLite-backed paper-agent repository tests.
+            rows_result = await db.execute(
+                base_query.order_by(PaperGenerationRun.created_at.desc())
+            )
+            filtered = [
+                row
+                for row in rows_result.scalars().all()
+                if source_task_id in (row.source_task_ids or [])
+            ]
+            return filtered[offset : offset + limit], len(filtered)
 
         base_query = (
             base_query.order_by(PaperGenerationRun.created_at.desc())
@@ -62,6 +77,29 @@ class PaperGenerationRunRepository(BaseRepository[PaperGenerationRun]):
         count_result = await db.execute(count_query)
         total = int(count_result.scalar_one())
         return items, total
+
+    @classmethod
+    async def find_source_task_id_conflicts(
+        cls,
+        db: AsyncSession,
+        user_id: str,
+        task_ids: Iterable[str],
+    ) -> set[str]:
+        """Find `task_ids` already present in this user's paper-run workspace."""
+        requested_ids = {task_id for task_id in task_ids if task_id}
+        if not requested_ids:
+            return set()
+
+        query = (
+            select(PaperGenerationRun)
+            .where(PaperGenerationRun.user_id == user_id)
+            .order_by(PaperGenerationRun.created_at.desc())
+        )
+        rows_result = await db.execute(query)
+        conflicts: set[str] = set()
+        for row in rows_result.scalars().all():
+            conflicts.update(requested_ids.intersection(row.source_task_ids or []))
+        return conflicts
 
     @classmethod
     async def mark_started(

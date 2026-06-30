@@ -142,6 +142,82 @@ async def test_list_for_user_filters_by_user_id(db_session) -> None:
     assert total2 == 1
     assert total_all == 3
 
+async def test_list_for_user_filters_by_source_task_id(db_session) -> None:
+    rows = [
+        ("paper_main_a", "user-1", ["tsk_main"]),
+        ("paper_main_b", "user-1", ["tsk_main", "tsk_ablation"]),
+        ("paper_other", "user-1", ["tsk_other"]),
+        ("paper_hidden", "user-2", ["tsk_main"]),
+    ]
+    for paper_id, user_id, source_task_ids in rows:
+        await PaperGenerationRunRepository.create(
+            db_session,
+            paper_id=paper_id,
+            user_id=user_id,
+            title=paper_id,
+            status="pending",
+            current_stage="created",
+            config_json={},
+            source_task_ids=source_task_ids,
+            selected_templates=["miccai"],
+        )
+    await db_session.commit()
+
+    user_rows, user_total = await PaperGenerationRunRepository.list_for_user(
+        db_session,
+        "user-1",
+        source_task_id="tsk_main",
+    )
+    admin_rows, admin_total = await PaperGenerationRunRepository.list_for_user(
+        db_session,
+        None,
+        source_task_id="tsk_main",
+    )
+
+    assert {row.paper_id for row in user_rows} == {"paper_main_a", "paper_main_b"}
+    assert user_total == 2
+    assert {row.paper_id for row in admin_rows} == {
+        "paper_main_a",
+        "paper_main_b",
+        "paper_hidden",
+    }
+    assert admin_total == 3
+
+
+async def test_find_source_task_id_conflicts_is_scoped_to_user(db_session) -> None:
+    rows = [
+        ("paper_user_a", "user-1", ["tsk_shared", "tsk_a"]),
+        ("paper_user_b", "user-1", ["tsk_b"]),
+        ("paper_other", "user-2", ["tsk_shared"]),
+    ]
+    for paper_id, user_id, source_task_ids in rows:
+        await PaperGenerationRunRepository.create(
+            db_session,
+            paper_id=paper_id,
+            user_id=user_id,
+            title=paper_id,
+            status="pending",
+            current_stage="created",
+            config_json={},
+            source_task_ids=source_task_ids,
+            selected_templates=["miccai"],
+        )
+    await db_session.commit()
+
+    user_conflicts = await PaperGenerationRunRepository.find_source_task_id_conflicts(
+        db_session,
+        "user-1",
+        ["tsk_shared", "tsk_missing"],
+    )
+    other_conflicts = await PaperGenerationRunRepository.find_source_task_id_conflicts(
+        db_session,
+        "user-2",
+        ["tsk_shared", "tsk_a"],
+    )
+
+    assert user_conflicts == {"tsk_shared"}
+    assert other_conflicts == {"tsk_shared"}
+
 
 async def test_list_for_user_pagination(db_session) -> None:
     for i in range(5):

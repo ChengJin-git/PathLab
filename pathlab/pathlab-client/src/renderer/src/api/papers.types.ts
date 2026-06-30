@@ -966,6 +966,12 @@ export interface components {
              * @description Human-readable label, e.g. 'no-attention' for ablation_no_attention.
              */
             label?: string | null;
+            /**
+             * Is Manual
+             * @description True when the task ID was typed manually in the paper-run form.
+             * @default false
+             */
+            is_manual: boolean;
         };
         /**
          * TaskRole
@@ -1043,6 +1049,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                source_task_id?: string | null;
             };
             header?: never;
             path?: never;

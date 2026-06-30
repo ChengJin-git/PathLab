@@ -33,6 +33,10 @@ class SourceTaskRef(BaseModel):
         default=None,
         description="Human-readable label, e.g. 'no-attention' for ablation_no_attention.",
     )
+    is_manual: bool = Field(
+        default=False,
+        description="True when the task ID was typed manually in the paper-run form.",
+    )
 
 
 class CreatePaperRequest(BaseModel):

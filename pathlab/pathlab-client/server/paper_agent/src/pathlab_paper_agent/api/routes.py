@@ -75,6 +75,7 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     GuardIssueSummary,
     GuardResultSummary,
     RefinementSummary,
+    SourceTaskRef,
     ValidationSummary,
     VerifiedPoolRejection,
     VerifiedPoolSummary,
@@ -770,13 +771,60 @@ async def create_paper_run(
             detail="selected_templates must contain exactly one target template.",
         )
 
+    source_tasks = []
+    manual_task_ids = []
+    for source_task in body.source_tasks:
+        task_id = source_task.task_id.strip() if source_task.is_manual else source_task.task_id
+        if source_task.is_manual and not task_id:
+            raise HTTPException(
+                status_code=400,
+                detail="source_tasks[].task_id must not be blank for manual tasks.",
+            )
+        if source_task.is_manual:
+            manual_task_ids.append(task_id)
+        source_tasks.append(
+            SourceTaskRef(
+                task_id=task_id,
+                role=source_task.role,
+                label=source_task.label,
+                is_manual=source_task.is_manual,
+            )
+        )
+
+    source_task_id_counts = Counter(source_task.task_id for source_task in source_tasks)
+    duplicate_manual_task_ids = {
+        task_id for task_id in manual_task_ids if source_task_id_counts[task_id] > 1
+    }
+    if duplicate_manual_task_ids:
+        duplicates = ", ".join(sorted(duplicate_manual_task_ids))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Manual task ID appears more than once in this request: {duplicates}.",
+        )
+
+    existing_conflicts = await PaperGenerationRunRepository.find_source_task_id_conflicts(
+        db,
+        str(user.id),
+        manual_task_ids,
+    )
+    if existing_conflicts:
+        conflicts = ", ".join(sorted(existing_conflicts))
+        raise HTTPException(
+            status_code=409,
+            detail=f"Manual task ID already exists in this workspace: {conflicts}.",
+        )
+
     paper_id = _new_paper_id()
+    config_json = body.model_dump(mode="json")
+    config_json["source_tasks"] = [
+        source_task.model_dump(mode="json") for source_task in source_tasks
+    ]
     config = PaperConfig(
         paper_id=paper_id,
         title=body.title,
         paper_type=body.paper_type,
         language=body.language,
-        source_tasks=body.source_tasks,
+        source_tasks=source_tasks,
         selected_templates=body.selected_templates,
         include_external_validation=body.include_external_validation,
         user_idea=body.user_idea,
@@ -790,8 +838,8 @@ async def create_paper_run(
         title=body.title,
         status=PaperRunStatus.pending.value,
         current_stage=PaperRunStage.created.value,
-        config_json=body.model_dump(mode="json"),
-        source_task_ids=[t.task_id for t in body.source_tasks],
+        config_json=config_json,
+        source_task_ids=[t.task_id for t in source_tasks],
         selected_templates=[t.value for t in body.selected_templates],
     )
     await db.commit()
@@ -849,10 +897,15 @@ async def list_paper_runs(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    source_task_id: Optional[str] = Query(None, min_length=1, max_length=255),
 ) -> PaperRunListResponse:
     user_filter = None if _is_admin(user) else str(user.id)
     rows, total = await PaperGenerationRunRepository.list_for_user(
-        db, user_filter, limit=limit, offset=offset
+        db,
+        user_filter,
+        limit=limit,
+        offset=offset,
+        source_task_id=source_task_id,
     )
     items = []
     for row in rows:

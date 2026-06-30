@@ -4234,6 +4234,7 @@
       "loadingTasks": "正在加载任务...",
       "noTasksMatched": "没有匹配任务。如果后端存在该任务，可手动添加任务 ID。",
       "manualTaskPlaceholder": "手动输入任务 ID",
+      "manualTaskConflict": "手动任务 ID {{taskId}} 已存在于当前工作区。",
       "templateTitle": "2. 模板",
       "templateDescription": "每次论文运行后端只接受一个模板。",
       "briefTitle": "3. 论文简要",

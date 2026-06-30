@@ -85,6 +85,24 @@
               "default": 0,
               "title": "Offset"
             }
+          },
+          {
+            "name": "source_task_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 255,
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source Task Id"
+            }
           }
         ],
         "responses": {
@@ -3033,6 +3051,12 @@
             ],
             "title": "Label",
             "description": "Human-readable label, e.g. 'no-attention' for ablation_no_attention."
+          },
+          "is_manual": {
+            "type": "boolean",
+            "title": "Is Manual",
+            "description": "True when the task ID was typed manually in the paper-run form.",
+            "default": false
           }
         },
         "type": "object",

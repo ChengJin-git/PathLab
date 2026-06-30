@@ -4240,6 +4240,7 @@
       "loadingTasks": "Loading tasks...",
       "noTasksMatched": "No tasks matched. Add a task ID manually if it exists in the backend.",
       "manualTaskPlaceholder": "Manual task ID",
+      "manualTaskConflict": "Manual task ID {{taskId}} already exists in this workspace.",
       "templateTitle": "2. Template",
       "templateDescription": "The paper backend accepts exactly one template for each run.",
       "briefTitle": "3. Paper brief",

@@ -158,6 +158,95 @@ def test_post_papers_rejects_multiple_templates(client) -> None:
     assert "exactly one" in response.json()["detail"]
 
 
+def test_post_papers_rejects_blank_manual_task_id(client) -> None:
+    response = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "   ", "is_manual": True}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    assert response.status_code == 400
+    assert "manual" in response.json()["detail"]
+
+
+def test_post_papers_rejects_manual_task_id_duplicate_in_same_request(client) -> None:
+    response = client.post(
+        "/papers",
+        json={
+            "source_tasks": [
+                {"task_id": "manual_same"},
+                {"task_id": " manual_same ", "is_manual": True},
+            ],
+            "selected_templates": ["miccai"],
+        },
+    )
+    assert response.status_code == 400
+    assert "manual_same" in response.json()["detail"]
+
+
+def test_post_papers_rejects_same_user_manual_source_task_id_conflict(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_existing"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    assert create.status_code == 200, create.text
+
+    response = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": " tsk_existing ", "is_manual": True}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    assert response.status_code == 409
+    assert "tsk_existing" in response.json()["detail"]
+
+
+def test_post_papers_allows_duplicate_selected_source_task_ids(client) -> None:
+    payload = {
+        "source_tasks": [{"task_id": "tsk_reused"}],
+        "selected_templates": ["miccai"],
+    }
+    first = client.post("/papers", json=payload)
+    second = client.post("/papers", json=payload)
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+
+
+def test_post_papers_allows_manual_source_task_id_used_by_other_user(
+    client,
+    test_app,
+    regular_user,
+    other_user,
+) -> None:
+    from backend.auth import current_active_user
+
+    test_app.dependency_overrides[current_active_user] = lambda: regular_user
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_other_user"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    assert create.status_code == 200, create.text
+
+    test_app.dependency_overrides[current_active_user] = lambda: other_user
+    response = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_other_user", "is_manual": True}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+
 def test_post_papers_writes_scaffold_to_disk(client) -> None:
     response = client.post(
         "/papers",

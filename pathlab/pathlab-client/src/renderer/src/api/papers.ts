@@ -161,7 +161,7 @@ export function createPaperRun(request: CreatePaperRunRequest): Promise<PaperRun
   )
 }
 
-export function listPaperRuns(params?: { limit?: number; offset?: number }): Promise<PaperRunListResponse> {
+export function listPaperRuns(params?: { limit?: number; offset?: number; source_task_id?: string }): Promise<PaperRunListResponse> {
   const query = buildSearchParams(params)
   const suffix = query.toString() ? `?${query}` : ''
   return apiFetch<PaperRunListResponse>(`${API_BASE}/papers${suffix}`, undefined, 'List paper runs')
