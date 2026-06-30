@@ -152,11 +152,11 @@ class PlottingAgent:
             entry["kind"] = str(spec.get("kind", "empirical"))
             entry["backend"] = backend or "deterministic_plotting"
             return entry, output
-        if backend == "user_revision":
+        elif backend == "user_revision":
             return _user_revision_entry(spec), None
-        if backend == "paperbanana":
+        elif backend == "paperbanana":
             return _paperbanana_fallback_entry(spec), None
-        if str(spec.get("kind", "")).lower() == "conceptual":
+        elif str(spec.get("kind", "")).lower() == "conceptual":
             return _paperbanana_fallback_entry({**spec, "backend": "paperbanana"}), None
         return _user_revision_entry(spec), None
 
