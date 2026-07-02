@@ -564,7 +564,7 @@ def test_manager_marks_completed_workflow_without_committed_run_as_failed(monkey
     assert record.state["error"] == record.error
 
 
-def test_session_manager_passes_pathlab_user_id_to_runner_config(monkeypatch):
+def test_session_manager_passes_pathlab_user_context_to_runner_config(monkeypatch):
     route_module = load_route_module()
 
     class _StubConfig:
@@ -576,26 +576,30 @@ def test_session_manager_passes_pathlab_user_id_to_runner_config(monkeypatch):
     route_module._queue_session_title_generation = lambda record, config: None
 
     manager = route_module.AutoResearchSessionManager()
-    captured: list[str] = []
+    captured: list[tuple[str, str]] = []
 
     def fake_run(record, req, config):
-        captured.append(getattr(config, "pathlab_user_id", ""))
+        captured.append((
+            getattr(config, "pathlab_user_id", ""),
+            getattr(config, "pathlab_user_role", ""),
+        ))
 
     monkeypatch.setattr(manager, "_run", fake_run)
 
     manager.start(
         route_module.StartAutoResearchSessionRequest(question="download PANDA"),
         user_id="user-test",
+        user_role="admin",
     )
 
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline and not captured:
         time.sleep(0.01)
 
-    assert captured == ["user-test"]
+    assert captured == [("user-test", "admin")]
 
 
-def test_session_manager_passes_pathlab_user_id_to_resume_config(monkeypatch):
+def test_session_manager_passes_pathlab_user_context_to_resume_config(monkeypatch):
     route_module = load_route_module()
 
     class _StubConfig:
@@ -606,10 +610,13 @@ def test_session_manager_passes_pathlab_user_id_to_resume_config(monkeypatch):
     monkeypatch.setattr(route_module, "_build_config", lambda req: _StubConfig())
 
     manager = route_module.AutoResearchSessionManager()
-    captured: list[str] = []
+    captured: list[tuple[str, str]] = []
 
     def fake_resume_run(record, req, config):
-        captured.append(getattr(config, "pathlab_user_id", ""))
+        captured.append((
+            getattr(config, "pathlab_user_id", ""),
+            getattr(config, "pathlab_user_role", ""),
+        ))
 
     monkeypatch.setattr(manager, "_resume_run", fake_resume_run)
 
@@ -636,13 +643,14 @@ def test_session_manager_passes_pathlab_user_id_to_resume_config(monkeypatch):
     manager.resume(
         record,
         route_module.StartAutoResearchSessionRequest(question="resume"),
+        user_role="admin",
     )
 
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline and not captured:
         time.sleep(0.01)
 
-    assert captured == ["user-test"]
+    assert captured == [("user-test", "admin")]
 
 
 def test_create_session_preserves_patch_external_task_type(monkeypatch, tmp_path):
@@ -929,6 +937,202 @@ def test_resolve_pathlab_dataset_mounts_uses_explicit_dataset_data_type(monkeypa
     assert captured_group_ids == [selected_group_id]
     assert len(mounts) == 1
     assert list(mounts.values())[0].startswith("/data/crc_msi_100patches")
+
+
+def test_resolve_pathlab_dataset_mounts_ignores_grant_only_dataset_for_non_admin(
+    monkeypatch,
+    tmp_path,
+):
+    route_module = load_route_module()
+    route_module._resolve_autoresearch_base_dir = lambda: tmp_path / "autoresearch-base"
+
+    def make_slides(dataset_id: str) -> list[SimpleNamespace]:
+        source_dir = tmp_path / dataset_id
+        source_dir.mkdir()
+        slides = []
+        for idx, split in enumerate(["train", "train", "val", "test"], start=1):
+            source = source_dir / f"{dataset_id}-{idx}.svs"
+            source.write_text("slide", encoding="utf-8")
+            slides.append(
+                SimpleNamespace(
+                    wsi_id=f"{dataset_id}-{idx}",
+                    wsi_path=str(source),
+                    original_filename=source.name,
+                    label="positive" if idx % 2 else "negative",
+                    split=split,
+                )
+            )
+        return slides
+
+    datasets = {
+        "own-private": SimpleNamespace(
+            dataset_id="own-private",
+            name="Own-GC-IM",
+            user_id="user-dataset",
+            is_public=False,
+            parent_dataset_id=None,
+            source_organ="gastric",
+            data_type="wsi",
+        ),
+        "public-dataset": SimpleNamespace(
+            dataset_id="public-dataset",
+            name="Public-GC-IM",
+            user_id="other-user",
+            is_public=True,
+            parent_dataset_id=None,
+            source_organ="gastric",
+            data_type="wsi",
+        ),
+        "grant-private": SimpleNamespace(
+            dataset_id="grant-private",
+            name="Grant-Only-GC-IM",
+            user_id="other-user",
+            is_public=False,
+            parent_dataset_id=None,
+            source_organ="gastric",
+            data_type="wsi",
+        ),
+    }
+    slides_by_dataset = {dataset_id: make_slides(dataset_id) for dataset_id in datasets}
+    dataset_list_elevated_ids: list[list[str] | None] = []
+    loaded_dataset_ids: list[str] = []
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return ["grant-private"]
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        return datasets[dataset_id]
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_datasets(db, **kwargs):
+            if kwargs.get("data_type") != "wsi":
+                return []
+            dataset_list_elevated_ids.append(kwargs.get("elevated_dataset_ids"))
+            rows = [
+                {"dataset_id": "own-private", "dataset_name": "Own-GC-IM", "data_type": "wsi"},
+                {"dataset_id": "public-dataset", "dataset_name": "Public-GC-IM", "data_type": "wsi"},
+            ]
+            if "grant-private" in (kwargs.get("elevated_dataset_ids") or []):
+                rows.append(
+                    {
+                        "dataset_id": "grant-private",
+                        "dataset_name": "Grant-Only-GC-IM",
+                        "data_type": "wsi",
+                    }
+                )
+            return rows
+
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            loaded_dataset_ids.append(dataset_id)
+            return slides_by_dataset[dataset_id]
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.auth.dependencies":
+            return SimpleNamespace(
+                get_dataset_with_access=fake_get_dataset_with_access,
+                get_permitted_dataset_ids=fake_get_permitted_dataset_ids,
+            )
+        if name == "backend.database.repositories":
+            return SimpleNamespace(WSIRepository=FakeWSIRepository)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+    monkeypatch.setattr(route_module, "_autoresearch_dataset_match_llm_caller", lambda: None)
+    monkeypatch.setattr(
+        route_module,
+        "_prepare_pathlab_registered_wsi_dataset_root",
+        lambda **kwargs: None,
+    )
+    monkeypatch.setattr(
+        route_module,
+        "_prepare_pathlab_dataset_view",
+        lambda **kwargs: kwargs["view_dir"],
+    )
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    mounts = asyncio.run(
+        route_module._resolve_pathlab_dataset_mounts(
+            [],
+            SimpleNamespace(id="user-dataset", is_admin=lambda: False),
+            question="Use Grant-Only-GC-IM for intestinal metaplasia classification",
+        )
+    )
+
+    assert dataset_list_elevated_ids == [[]]
+    assert "grant-private" not in loaded_dataset_ids
+    assert all("grant_only_gc_im" not in host for host in mounts)
+
+
+def test_resolve_pathlab_dataset_mounts_rejects_explicit_grant_only_dataset_for_non_admin(
+    monkeypatch,
+    tmp_path,
+):
+    route_module = load_route_module()
+    route_module._resolve_autoresearch_base_dir = lambda: tmp_path / "autoresearch-base"
+    dataset = SimpleNamespace(
+        dataset_id="grant-private",
+        name="Grant-Only-GC-IM",
+        user_id="other-user",
+        is_public=False,
+        parent_dataset_id=None,
+        source_organ="gastric",
+        data_type="wsi",
+    )
+
+    class FakeSafeSession:
+        async def __aenter__(self):
+            return SimpleNamespace()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    async def fake_get_permitted_dataset_ids(user, db):
+        return ["grant-private"]
+
+    async def fake_get_dataset_with_access(dataset_id, user, db, **kwargs):
+        return dataset
+
+    class FakeWSIRepository:
+        @staticmethod
+        async def get_by_dataset(db, dataset_id, **kwargs):
+            raise AssertionError("grant-only datasets should be rejected before loading slides")
+
+    real_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "backend.auth.dependencies":
+            return SimpleNamespace(
+                get_dataset_with_access=fake_get_dataset_with_access,
+                get_permitted_dataset_ids=fake_get_permitted_dataset_ids,
+            )
+        if name == "backend.database.repositories":
+            return SimpleNamespace(WSIRepository=FakeWSIRepository)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(route_module, "safe_session", lambda: FakeSafeSession())
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            route_module._resolve_pathlab_dataset_mounts(
+                ["grant-private"],
+                SimpleNamespace(id="user-dataset", is_admin=lambda: False),
+                question="Use Grant-Only-GC-IM",
+            )
+        )
+
+    assert exc_info.value.status_code == 403
 
 
 def test_match_pathlab_datasets_from_question_prefers_visible_name_matches():
@@ -3841,6 +4045,68 @@ def test_list_sessions_merges_db_history_with_live_records(monkeypatch):
 
     ids = {item["session_id"] for item in data["items"]}
     assert {"db1", "live1"} <= ids
+
+
+def test_admin_session_responses_include_owner_username(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    record = route_module.SessionRecord(
+        session_id="admin-visible",
+        conversation_id="",
+        question="admin sees owner",
+        model="gpt-5.5",
+        user_id="owner-1",
+        status="completed",
+        stage="completed",
+    )
+    route_module._SESSION_MANAGER = route_module.AutoResearchSessionManager()
+    route_module._SESSION_MANAGER._sessions[record.session_id] = record
+
+    async def fake_db_list(*, user, include_persisted, limit=100):
+        assert user.is_admin() is True
+        return []
+
+    async def fake_owner_names(user_ids):
+        assert user_ids == {"owner-1"}
+        return {"owner-1": "Yihui Wang"}
+
+    monkeypatch.setattr(route_module, "_load_db_session_list", fake_db_list)
+    monkeypatch.setattr(route_module, "_load_autoresearch_owner_names", fake_owner_names)
+
+    admin = SimpleNamespace(id="admin", is_admin=lambda: True)
+
+    list_response = asyncio.run(route_module.list_sessions(user=admin))
+    assert list_response["items"][0]["username"] == "Yihui Wang"
+
+    detail_response = asyncio.run(route_module.get_session("admin-visible", user=admin))
+    assert detail_response["username"] == "Yihui Wang"
+
+
+def test_non_admin_session_responses_do_not_include_owner_username(monkeypatch):
+    route_module = load_route_module()
+    record = route_module.SessionRecord(
+        session_id="own-session",
+        conversation_id="",
+        question="owner view",
+        model="gpt-5.5",
+        user_id="owner-1",
+        status="completed",
+        stage="completed",
+    )
+    route_module._SESSION_MANAGER = route_module.AutoResearchSessionManager()
+    route_module._SESSION_MANAGER._sessions[record.session_id] = record
+
+    async def fail_owner_names(_user_ids):
+        raise AssertionError("owner names should only be loaded for admin users")
+
+    monkeypatch.setattr(route_module, "_load_autoresearch_owner_names", fail_owner_names)
+    user = SimpleNamespace(id="owner-1", is_admin=lambda: False)
+
+    list_response = asyncio.run(route_module.list_sessions(user=user))
+    assert "username" not in list_response["items"][0]
+
+    detail_response = asyncio.run(route_module.get_session("own-session", user=user))
+    assert "username" not in detail_response
 
 
 def test_get_session_falls_back_to_db_record(monkeypatch):

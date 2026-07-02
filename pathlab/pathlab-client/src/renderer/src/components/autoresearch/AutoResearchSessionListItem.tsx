@@ -1,5 +1,5 @@
 import { useState, type MouseEvent } from 'react'
-import { Download, Loader2, Share2, Trash2 } from 'lucide-react'
+import { Download, Loader2, Share2, Trash2, User } from 'lucide-react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useAutoResearchTranslation } from '../../lib/useAutoResearchTranslation'
 import { Tooltip } from '../ui/tooltip'
@@ -148,13 +148,23 @@ export default function AutoResearchSessionListItem({
               {session.question && (
                 <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-gray-500">{session.question}</p>
               )}
-              <div className="mt-2 flex flex-wrap items-center gap-2">
+              <div className="mt-2 flex min-w-0 flex-nowrap items-center gap-2 pr-1">
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ${sessionStatusClass(session.status)}`}>
                   {status}
                 </span>
                 {trainingProgressLabel && (
                   <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
                     {trainingProgressLabel}
+                  </span>
+                )}
+                {session.username && (
+                  <span
+                    className="ml-auto inline-flex min-w-0 max-w-[8.5rem] shrink-0 items-center gap-1 rounded-full bg-gray-50 px-2 py-0.5 text-[10px] font-bold text-gray-600 ring-1 ring-gray-200"
+                    data-testid="autoresearch-session-owner-chip"
+                    title={session.username}
+                  >
+                    <User className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{session.username}</span>
                   </span>
                 )}
               </div>

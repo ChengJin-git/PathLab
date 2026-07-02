@@ -1,4 +1,4 @@
-import { Beaker, Circle, FileJson, HardDrive, Layers, Loader2, Play, Radio, Square, Trash2 } from 'lucide-react'
+import { Beaker, Circle, FileJson, HardDrive, Layers, Loader2, Play, Radio, Square, Trash2, User } from 'lucide-react'
 import { Button } from '../../ui/button'
 import AutoResearchExecutionConsole from '../AutoResearchExecutionConsole'
 import { useAutoResearchTranslation } from '../../../lib/useAutoResearchTranslation'
@@ -138,8 +138,20 @@ export default function AutoResearchDeveloperSessionView({
         <div className="pointer-events-none absolute right-0 top-0 h-48 w-48 translate-x-1/3 -translate-y-1/3 rounded-full bg-blue-100 blur-3xl" />
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-700 ring-1 ring-blue-100">
-              <Beaker className="h-3.5 w-3.5" /> {t('autoResearch.sessionPage.sessionDetail')}
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-700 ring-1 ring-blue-100">
+                <Beaker className="h-3.5 w-3.5" /> {t('autoResearch.sessionPage.sessionDetail')}
+              </span>
+              {session?.username && (
+                <span
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-gray-700 ring-1 ring-gray-200"
+                  data-testid="autoresearch-session-detail-owner-chip"
+                  title={session.username}
+                >
+                  <User className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                  <span className="truncate">{session.username}</span>
+                </span>
+              )}
             </div>
             <h1 className="flex min-w-0 flex-wrap items-center gap-2 break-words text-2xl font-extrabold tracking-tight text-gray-950 sm:text-3xl">
               {titlePending && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
