@@ -232,6 +232,7 @@ class AutoResearchConfig:
     allow_large_downloads: bool = False
     dataset_cache_dir: str = ""
     pathlab_user_id: str = ""
+    pathlab_user_role: str = ""
 
     # Logging
     log_dir: str = ""
@@ -311,6 +312,7 @@ class AutoResearchConfig:
             allow_large_downloads=env_truthy("AUTORESEARCH_ALLOW_LARGE_DOWNLOADS"),
             dataset_cache_dir=os.environ.get("AUTORESEARCH_DATASET_CACHE_DIR", ""),
             pathlab_user_id=os.environ.get("AUTORESEARCH_PATHLAB_USER_ID", ""),
+            pathlab_user_role=os.environ.get("AUTORESEARCH_PATHLAB_USER_ROLE", ""),
             log_dir=os.environ.get("AUTORESEARCH_LOG_DIR", ""),
         )
 

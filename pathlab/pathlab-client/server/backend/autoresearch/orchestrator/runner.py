@@ -2950,6 +2950,27 @@ def _filter_records_for_requested_internal_dataset(records, state, config) -> li
 
     state.grounding["internal_dataset_name_constraint"] = requested_names
     external_names = _requested_dataset_names_for_role(state, config, "external")
+    llm_matches = _llm_match_records_for_requested_dataset_role(
+        records,
+        state,
+        config,
+        role="internal",
+        requested_names=requested_names,
+        external_names=external_names,
+    )
+    if llm_matches:
+        state.grounding["internal_dataset_constraint_match_source"] = "llm"
+        state.grounding["internal_dataset_constraint_matches"] = [
+            {
+                "dataset_id": str(getattr(record, "dataset_id", "") or ""),
+                "name": str(getattr(record, "name", "") or ""),
+                "score": 0,
+                "source": "llm",
+            }
+            for record in llm_matches
+        ]
+        return llm_matches
+
     registered_scored = [
         (
             record,
@@ -3002,27 +3023,6 @@ def _filter_records_for_requested_internal_dataset(records, state, config) -> li
     if matches:
         state.grounding["internal_dataset_constraint_match_source"] = "deterministic"
         return matches
-
-    llm_matches = _llm_match_records_for_requested_dataset_role(
-        records,
-        state,
-        config,
-        role="internal",
-        requested_names=requested_names,
-        external_names=external_names,
-    )
-    if llm_matches:
-        state.grounding["internal_dataset_constraint_match_source"] = "llm"
-        state.grounding["internal_dataset_constraint_matches"] = [
-            {
-                "dataset_id": str(getattr(record, "dataset_id", "") or ""),
-                "name": str(getattr(record, "name", "") or ""),
-                "score": 0,
-                "source": "llm",
-            }
-            for record in llm_matches
-        ]
-        return llm_matches
 
     external_scored = [
         (record, _record_dataset_name_score(record, external_names))
@@ -3324,7 +3324,13 @@ def _resolve_pathlab_dataset_for_acquisition_factory(config, workspace_root: Pat
                 if dataset_row is None:
                     return None
                 owner_id = str(getattr(config, "pathlab_user_id", "") or "")
-                if owner_id and not bool(dataset_row["is_public"]) and str(dataset_row["user_id"] or "") != owner_id:
+                user_role = str(getattr(config, "pathlab_user_role", "") or "").strip().lower()
+                if (
+                    owner_id
+                    and user_role != "admin"
+                    and not bool(dataset_row["is_public"])
+                    and str(dataset_row["user_id"] or "") != owner_id
+                ):
                     raise ValueError("pathlab_dataset_access_denied")
                 slides = await conn.fetch(
                     """
@@ -3475,6 +3481,7 @@ def _pathlab_dataset_records_from_db(config=None):
                 return getattr(row, key, None)
 
         owner_id = str(getattr(config, "pathlab_user_id", "") or "")
+        user_role = str(getattr(config, "pathlab_user_role", "") or "").strip().lower()
         dsn = _database_url_for_asyncpg()
         if not dsn:
             return []
@@ -3498,7 +3505,7 @@ def _pathlab_dataset_records_from_db(config=None):
                 ON wsi_slides.dataset_id = datasets.dataset_id
         """
         params: list[Any] = []
-        if owner_id:
+        if owner_id and user_role != "admin":
             query += """
             WHERE datasets.user_id = $1 OR datasets.is_public IS TRUE
             """

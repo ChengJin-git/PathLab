@@ -303,10 +303,12 @@ class AutoResearchSessionManager:
         req: StartAutoResearchSessionRequest,
         *,
         user_id: str = "",
+        user_role: str = "",
         dataset_mounts: dict[str, str] | None = None,
     ) -> SessionRecord:
         config = _build_config(req)
         config.pathlab_user_id = str(user_id or "")
+        config.pathlab_user_role = str(user_role or "")
         if dataset_mounts:
             _merge_data_mounts(config.data_mounts, dataset_mounts)
             _apply_external_contract_from_pathlab_mounts(req, config)
@@ -342,7 +344,13 @@ class AutoResearchSessionManager:
                 self._queue.append((record, req, config))
         return record
 
-    def resume(self, record: SessionRecord, req: StartAutoResearchSessionRequest) -> SessionRecord:
+    def resume(
+        self,
+        record: SessionRecord,
+        req: StartAutoResearchSessionRequest,
+        *,
+        user_role: str = "",
+    ) -> SessionRecord:
         if record.status in {"queued", "running"}:
             raise SessionResumeRejected("This AutoResearch session is already running.")
         if not record.conversation_id:
@@ -353,6 +361,7 @@ class AutoResearchSessionManager:
             raise SessionResumeRejected("This session can be viewed, but its resume checkpoint is missing.")
         config = _build_config(req)
         config.pathlab_user_id = str(record.user_id or "")
+        config.pathlab_user_role = str(user_role or "")
 
         assert record._condition is not None
         with record._condition:
@@ -1857,6 +1866,50 @@ async def _load_db_session_list(
     ]
 
 
+async def _load_autoresearch_owner_names(user_ids: set[str]) -> dict[str, str]:
+    cleaned_ids = {str(user_id or "").strip() for user_id in user_ids}
+    cleaned_ids.discard("")
+    if not cleaned_ids:
+        return {}
+    try:
+        from sqlalchemy import String, cast, select as sql_select
+        from backend.auth.models import User as AuthUser
+
+        async with safe_session() as db:
+            result = await db.execute(
+                sql_select(
+                    cast(AuthUser.id, String),
+                    AuthUser.nickname,
+                    AuthUser.username,
+                    AuthUser.email,
+                ).where(cast(AuthUser.id, String).in_(cleaned_ids))
+            )
+            owner_names: dict[str, str] = {}
+            for user_id, nickname, username, email in result.all():
+                owner_id = str(user_id or "").strip()
+                display = str(nickname or username or email or owner_id).strip()
+                if owner_id and display:
+                    owner_names[owner_id] = display
+            return owner_names
+    except Exception as exc:
+        logger.debug("AutoResearch owner name lookup skipped: %s", exc)
+        return {}
+
+
+def _session_summary_for_user(
+    record: SessionRecord,
+    user: User | None,
+    owner_names: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    summary = record.summary()
+    if _user_is_admin(user):
+        owner = str(record.user_id or "").strip()
+        username = (owner_names or {}).get(owner)
+        if username:
+            summary["username"] = username
+    return summary
+
+
 def _user_is_admin(user: User | None) -> bool:
     if user is None:
         return False
@@ -1867,6 +1920,43 @@ def _user_is_admin(user: User | None) -> bool:
         except Exception:
             return False
     return getattr(user, "role", "") == "admin"
+
+
+def _autoresearch_can_use_pathlab_dataset(dataset: Any, user: User | None) -> bool:
+    if _user_is_admin(user):
+        return True
+    if user is None:
+        return False
+    user_id = str(getattr(user, "id", "") or "").strip()
+    dataset_owner = str(getattr(dataset, "user_id", "") or "").strip()
+    return bool(user_id and dataset_owner == user_id) or bool(
+        getattr(dataset, "is_public", False)
+    )
+
+
+def _autoresearch_dataset_slide_elevated_ids(
+    dataset: Any,
+    user: User | None,
+) -> list[str] | None:
+    if _user_is_admin(user):
+        return None
+    if not bool(getattr(dataset, "is_public", False)):
+        return []
+    dataset_id = str(getattr(dataset, "dataset_id", "") or "").strip()
+    return [dataset_id] if dataset_id else []
+
+
+def _assert_autoresearch_can_use_pathlab_dataset(dataset: Any, user: User | None) -> None:
+    if _autoresearch_can_use_pathlab_dataset(dataset, user):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "You don't have permission to use this dataset in AutoResearch. "
+            "AutoResearch only allows admins to use all datasets; non-admin users "
+            "can use their own datasets and public datasets."
+        ),
+    )
 
 
 def _can_access_db_session(session: Any, user: User | None) -> bool:
@@ -2537,7 +2627,7 @@ async def _resolve_pathlab_dataset_mounts(
         return {}
 
     try:
-        from backend.auth.dependencies import get_dataset_with_access, get_permitted_dataset_ids
+        from backend.auth.dependencies import get_dataset_with_access
         from backend.database.repositories import WSIRepository
     except Exception as exc:
         raise RuntimeError(f"PathLab dataset repository unavailable: {exc}") from exc
@@ -2552,11 +2642,7 @@ async def _resolve_pathlab_dataset_mounts(
     try:
         async with safe_session() as db:
             user_id_filter = None if _user_is_admin(user) else str(getattr(user, "id", "") or "")
-            elevated_dataset_ids = (
-                await get_permitted_dataset_ids(user, db)
-                if callable(getattr(user, "is_admin", None))
-                else []
-            )
+            searchable_dataset_ids = None if _user_is_admin(user) else []
             selected_roles: dict[str, str] = {}
             if not selected_ids:
                 visible_datasets = []
@@ -2566,7 +2652,7 @@ async def _resolve_pathlab_dataset_mounts(
                         db,
                         data_type=data_type,
                         user_id=user_id_filter,
-                        elevated_dataset_ids=elevated_dataset_ids,
+                        elevated_dataset_ids=searchable_dataset_ids,
                         limit=0,
                     ):
                         dataset_id = str(dataset_row.get("dataset_id") or "").strip()
@@ -2643,6 +2729,7 @@ async def _resolve_pathlab_dataset_mounts(
                     not_found_detail=f"Dataset not found: {dataset_id}",
                     forbidden_detail="You don't have permission to use this dataset in AutoResearch",
                 )
+                _assert_autoresearch_can_use_pathlab_dataset(dataset, user)
                 dataset_data_type = getattr(dataset, "data_type", None)
                 if not dataset_data_type:
                     group_id = str(getattr(dataset, "group_id", "") or "").strip()
@@ -2653,12 +2740,15 @@ async def _resolve_pathlab_dataset_mounts(
                     )
                     dataset_data_type = getattr(data_group, "data_type", None)
                 dataset_data_type = str(dataset_data_type).strip().lower() or "wsi"
+                slide_elevated_dataset_ids = _autoresearch_dataset_slide_elevated_ids(
+                    dataset, user
+                )
                 slides = await WSIRepository.get_by_dataset(
                     db,
                     dataset_id,
                     user_id=user_id_filter,
                     data_type=dataset_data_type,
-                    elevated_dataset_ids=elevated_dataset_ids,
+                    elevated_dataset_ids=slide_elevated_dataset_ids,
                     sort_by="original_filename",
                     sort_order="asc",
                 )
@@ -3958,6 +4048,7 @@ async def create_session(
         record = _SESSION_MANAGER.start(
             req,
             user_id=str(user.id),
+            user_role=str(getattr(user, "role", "") or ""),
             dataset_mounts=dataset_mounts,
         )
     except HTTPException:
@@ -4007,7 +4098,11 @@ async def resume_session(
     if not resume_req.question:
         resume_req.question = record.question or "Continue AutoResearch session"
     try:
-        resumed = _SESSION_MANAGER.resume(record, resume_req)
+        resumed = _SESSION_MANAGER.resume(
+            record,
+            resume_req,
+            user_role=str(getattr(user, "role", "") or ""),
+        )
     except SessionResumeRejected as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
@@ -4053,8 +4148,10 @@ async def list_sessions(
             if _can_access_record(record, user)
         ],
     )
-    return {"items": [record.summary() for record in records]}
-
+    owner_names: dict[str, str] = {}
+    if _user_is_admin(user):
+        owner_names = await _load_autoresearch_owner_names({record.user_id for record in records})
+    return {"items": [_session_summary_for_user(record, user, owner_names) for record in records]}
 
 @router.post("/sessions/{session_id}/access-token")
 async def mint_autoresearch_access_token(
@@ -4105,8 +4202,12 @@ async def get_session(
     if record is None:
         raise HTTPException(status_code=404, detail="AutoResearch session not found")
     state = _session_detail_state(record)
+    owner_names: dict[str, str] = {}
+    if _user_is_admin(user):
+        owner_names = await _load_autoresearch_owner_names({record.user_id})
+    summary = _session_summary_for_user(record, user, owner_names)
     return {
-        **record.summary(),
+        **summary,
         "state": state,
         "events": record.events,
     }

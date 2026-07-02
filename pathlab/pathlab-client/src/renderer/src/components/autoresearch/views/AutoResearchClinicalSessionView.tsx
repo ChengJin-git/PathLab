@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAutoResearchTranslation } from '../../../lib/useAutoResearchTranslation'
-import { ChevronDown, Circle, Loader2, Play, Square, Trash2 } from 'lucide-react'
+import { ChevronDown, Circle, Loader2, Play, Square, Trash2, User } from 'lucide-react'
 import { Button } from '../../ui/button'
 import AutoResearchExecutionConsole from '../AutoResearchExecutionConsole'
 import RunSummaryCard from '../RunSummaryCard'
@@ -132,6 +132,16 @@ export default function AutoResearchClinicalSessionView({
             {titlePending && <Loader2 className="h-5 w-5 animate-spin text-blue-600" />}
             <span>{displayTitle}</span>
           </h1>
+          {session?.username && (
+            <div
+              className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-full bg-white px-3 py-1 text-xs font-bold text-gray-700 ring-1 ring-gray-200"
+              data-testid="autoresearch-session-detail-owner-chip"
+              title={session.username}
+            >
+              <User className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+              <span className="truncate">{session.username}</span>
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canStop && (

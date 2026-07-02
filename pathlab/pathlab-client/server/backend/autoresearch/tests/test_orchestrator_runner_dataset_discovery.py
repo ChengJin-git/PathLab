@@ -366,6 +366,122 @@ def test_internal_dataset_constraint_uses_llm_when_alias_score_misses(monkeypatc
         )
 
 
+def test_internal_dataset_constraint_uses_llm_before_deterministic_overlap(monkeypatch):
+    """LLM semantic matching should choose the requested IM cohort before rules."""
+    from autoresearch.dataset.types import DatasetRecord, DownloadSpec
+    from autoresearch.orchestrator import runner
+    from autoresearch.orchestrator.types import ResearchObjective, ResearchSessionState
+    from autoresearch.runtime import metric_parser
+
+    pwh = DatasetRecord(
+        dataset_id="pathlab:pwh",
+        name="PWH-GC-IM",
+        provider="pathlab",
+        access="manual",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["gastric"],
+        tags=["pathlab", "autoresearch", "features_ready"],
+        download=DownloadSpec(kind="pathlab_dataset", remote_id="pwh"),
+    )
+    nanfang = DatasetRecord(
+        dataset_id="pathlab:nanfang",
+        name="Nanfang-GC-IM",
+        provider="pathlab",
+        access="manual",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["gastric"],
+        tags=["pathlab", "autoresearch", "features_ready"],
+        download=DownloadSpec(kind="pathlab_dataset", remote_id="nanfang"),
+    )
+
+    state = ResearchSessionState.create(
+        session_id="s",
+        conversation_id="c",
+        objective=ResearchObjective(
+            question=(
+                "Train on the PWH gastric intestinal metaplasia cohort "
+                "for Normal vs IM detection"
+            )
+        ),
+    )
+    state.grounding = {
+        "external_test_request": {
+            "training_data": {
+                "dataset_name": "PWH gastric intestinal metaplasia cohort",
+                "data_role": "internal",
+            }
+        }
+    }
+    config = SimpleNamespace(external_test_contract={}, pathlab_user_id="user-1")
+
+    monkeypatch.setattr(
+        metric_parser,
+        "build_llm_text_caller",
+        lambda _config: lambda _prompt: json.dumps(
+            {
+                "selected_dataset_id": "pathlab:pwh",
+                "confidence": "high",
+                "reason": "PWH-GC-IM is the registered PWH intestinal metaplasia cohort.",
+            }
+        ),
+    )
+
+    filtered = runner._filter_records_for_requested_internal_dataset(
+        [nanfang, pwh],
+        state,
+        config,
+    )
+
+    assert filtered == [pwh]
+    assert state.grounding["internal_dataset_constraint_match_source"] == "llm"
+    assert state.grounding["internal_dataset_llm_match"]["selected_dataset_id"] == "pathlab:pwh"
+
+
+def test_pathlab_dataset_registry_includes_all_datasets_for_admin(monkeypatch):
+    """Admin AutoResearch sessions should see registered datasets owned by others."""
+    from autoresearch.orchestrator import runner
+
+    queries: list[tuple[str, tuple]] = []
+
+    class FakeConn:
+        async def fetch(self, query, *params):
+            queries.append((query, params))
+            return [
+                {
+                    "dataset_id": "private-nanfang",
+                    "name": "Nanfang-GC-IM",
+                    "source_organ": "gastric",
+                    "user_id": "other-user",
+                    "is_public": False,
+                    "data_type": "wsi",
+                    "task_type": "wsi_classification",
+                    "slide_count": 3,
+                    "feature_count": 3,
+                }
+            ]
+
+        async def close(self):
+            return None
+
+    class FakeAsyncpg:
+        @staticmethod
+        async def connect(_dsn):
+            return FakeConn()
+
+    monkeypatch.setitem(sys.modules, "asyncpg", FakeAsyncpg)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/db")
+
+    records = runner._pathlab_dataset_records_from_db(
+        SimpleNamespace(pathlab_user_id="admin-user", pathlab_user_role="admin")
+    )
+
+    assert [record.name for record in records] == ["Nanfang-GC-IM"]
+    assert "WHERE datasets.user_id" not in queries[0][0]
+    assert queries[0][1] == ()
+
+
 def test_internal_dataset_constraint_prefers_pathlab_over_discovered_exact_match():
     from autoresearch.dataset.types import DatasetRecord, DownloadSpec
     from autoresearch.orchestrator import runner

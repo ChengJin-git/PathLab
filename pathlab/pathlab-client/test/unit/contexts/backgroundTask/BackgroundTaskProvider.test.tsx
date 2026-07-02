@@ -175,6 +175,48 @@ describe('BackgroundTaskProvider', () => {
     vi.useRealTimers()
   })
 
+  it('updates autoresearch task display to the generated session title after polling', async () => {
+    vi.useFakeTimers()
+    vi.mocked(getAutoResearchSession).mockResolvedValue({
+      session_id: 'ar-title-001',
+      title: 'Gastric IM Detection',
+      question: 'Long research question that should not stay in the task panel',
+      status: 'running',
+      current_iteration: 1,
+      max_iterations: 5,
+      events: [],
+    })
+
+    const queryClient = new QueryClient()
+    render(
+      <QueryClientProvider client={queryClient}>
+        <BackgroundTaskProvider>
+          <TaskTitleProbe />
+        </BackgroundTaskProvider>
+      </QueryClientProvider>,
+    )
+
+    act(() => {
+      notifyAutoResearchSessionCreated({
+        session_id: 'ar-title-001',
+        question: 'Long research question that should not stay in the task panel',
+        title_pending: true,
+        status: 'running',
+        created_at: 1782403200,
+        updated_at: 1782403200,
+      })
+    })
+
+    expect(screen.getByTestId('task-title-ar-title-001')).toHaveTextContent('autoResearch.generatingTitle')
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+
+    expect(screen.getByTestId('task-title-ar-title-001')).toHaveTextContent('Gastric IM Detection')
+    expect(screen.getByTestId('task-item-ar-title-001')).toHaveTextContent('Gastric IM Detection')
+    expect(screen.queryByText('Long research question that should not stay in the task panel')).not.toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
   it('marks autoresearch task cancelled when session is interrupted', async () => {
     vi.useFakeTimers()
     vi.mocked(getAutoResearchSession).mockResolvedValue({
@@ -259,6 +301,20 @@ function TaskDetailsProbe() {
       {tasks.map(task => (
         <li key={task.id} data-status={task.status} data-progress={task.totalProgress} data-server={task.isServerTask ? 'true' : 'false'}>
           {task.type}:{task.status}:{task.totalProgress}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function TaskTitleProbe() {
+  const { tasks } = useBackgroundTask()
+  return (
+    <ul data-testid="task-titles">
+      {tasks.map(task => (
+        <li key={task.id}>
+          <span data-testid={`task-title-${task.id}`}>{task.title}</span>
+          <span data-testid={`task-item-${task.id}`}>{task.items[0]?.name}</span>
         </li>
       ))}
     </ul>

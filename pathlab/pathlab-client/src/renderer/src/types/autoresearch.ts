@@ -33,6 +33,7 @@ export interface AutoResearchSessionSummary {
   title?: string
   title_pending?: boolean
   question: string
+  username?: string | null
   model?: string
   status: AutoResearchSessionStatus | string
   stage?: string

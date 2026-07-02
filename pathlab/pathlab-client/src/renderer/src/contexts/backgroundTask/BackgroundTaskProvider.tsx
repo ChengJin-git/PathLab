@@ -50,6 +50,16 @@ function computeAutoResearchProgress(session: { current_iteration?: number | nul
   return Math.min(100, Math.round(((session.current_iteration || 0) / session.max_iterations) * 100))
 }
 
+function resolveAutoResearchTaskTitle(
+  session: { session_id: string; title?: string | null; title_pending?: boolean | null },
+  t: (key: string) => string,
+): string {
+  const title = session.title?.trim()
+  if (title) return title
+  if (session.title_pending) return t('autoResearch.generatingTitle')
+  return session.session_id
+}
+
 export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps): React.ReactElement {
   const [localTasks, setLocalTasks] = useState<BackgroundTask[]>([])
   const [isPanelExpanded, setIsPanelExpanded] = useState(false)
@@ -384,7 +394,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       if (!session) return
 
       const taskId = session.session_id
-      const title = session.title || session.question || session.session_id
+      const title = resolveAutoResearchTaskTitle(session, t)
       const status: BackgroundTask['status'] = session.status === 'running' ? 'running' : 'pending'
 
       setLocalTasks(prev => {
@@ -429,14 +439,16 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           if (!session) return
           const nextStatus = mapAutoResearchStatus(session.status)
           const progress = computeAutoResearchProgress(session)
+          const nextTitle = resolveAutoResearchTaskTitle(session, t)
           setLocalTasks(prev => prev.map(t => {
             if (t.id !== task.id) return t
             if (t.status !== 'running' && t.status !== 'pending') return t
             return {
               ...t,
+              title: nextTitle,
               status: nextStatus,
               totalProgress: progress,
-              items: t.items.map(item => ({ ...item, status: nextStatus, progress })),
+              items: t.items.map(item => ({ ...item, name: nextTitle, status: nextStatus, progress })),
             }
           }))
         } catch {
