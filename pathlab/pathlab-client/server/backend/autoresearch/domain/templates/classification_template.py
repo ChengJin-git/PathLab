@@ -10,6 +10,7 @@ Constraints (from skill definition) must be followed:
 
 Reference: server/backend/ai/tasks/wsi_classification/trainer.py
 """
+import csv
 import json
 import time
 import logging
@@ -31,10 +32,10 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
 )
-
 TEMPLATE_ROOT = Path(__file__).resolve().parent
 if str(TEMPLATE_ROOT) not in sys.path:
     sys.path.insert(0, str(TEMPLATE_ROOT))
+from common.result_plots import write_classification_result_figures
 
 try:
     from common.aggregators.registry import get_aggregator
@@ -380,7 +381,7 @@ def evaluate(model, wsi_ids, labels, features_dir, num_classes, criterion, devic
     Returns: {loss, accuracy, auc, f1, precision, recall}
     """
     model.eval()
-    all_probs, all_preds, all_labels = [], [], []
+    all_probs, all_preds, all_labels, rows = [], [], [], []
     total_loss = 0.0
 
     for wsi_id in wsi_ids:
@@ -394,11 +395,17 @@ def evaluate(model, wsi_ids, labels, features_dir, num_classes, criterion, devic
 
         probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
         all_probs.append(probs)
-        all_preds.append(int(probs.argmax()))
-        all_labels.append(labels[wsi_id])
+        pred = int(probs.argmax())
+        label = int(labels[wsi_id])
+        all_preds.append(pred)
+        all_labels.append(label)
+        row = {"sample_id": wsi_id, "y_true": label, "y_pred": pred, "score": float(probs[1] if len(probs) > 1 else probs[0])}
+        for class_idx, prob in enumerate(probs):
+            row[f"prob_{class_idx}"] = float(prob)
+        rows.append(row)
 
     if not all_labels:
-        return {"loss": 0, "accuracy": 0, "auc": None, "f1": 0}
+        return {"loss": 0, "accuracy": 0, "auc": None, "f1": 0, "predictions": []}
 
     all_probs = np.array(all_probs)
     all_labels = np.array(all_labels)
@@ -427,6 +434,7 @@ def evaluate(model, wsi_ids, labels, features_dir, num_classes, criterion, devic
         "f1": round(float(f1), 4),
         "precision": round(float(precision), 4),
         "recall": round(float(recall), 4),
+        "predictions": rows,
     }
 
 
@@ -628,6 +636,23 @@ def train():
     model.to(device)
 
     test_metrics = evaluate(model, test_ids, labels, features_dir, num_classes, criterion, device)
+    test_predictions = list(test_metrics.get("predictions") or [])
+    if test_predictions:
+        prediction_keys = ["sample_id", "y_true", "y_pred", "score"] + [f"prob_{idx}" for idx in range(num_classes)]
+        with (OUTPUT_DIR / "test_predictions.csv").open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=prediction_keys)
+            writer.writeheader()
+            writer.writerows(test_predictions)
+        test_figure_artifacts = write_classification_result_figures(
+            y_true=[int(row["y_true"]) for row in test_predictions],
+            y_pred=[int(row["y_pred"]) for row in test_predictions],
+            y_score=[[float(row.get(f"prob_{idx}", 0.0)) for idx in range(num_classes)] for row in test_predictions],
+            output_dir=OUTPUT_DIR,
+            prefix="test",
+            class_names=[str(idx) for idx in range(num_classes)],
+        )
+    else:
+        test_figure_artifacts = {}
     logger.info(
         f"Test: auc={test_metrics['auc']} | acc={test_metrics['accuracy']} | f1={test_metrics['f1']}"
     )
@@ -636,7 +661,8 @@ def train():
     results = {
         "best_val_auc": best_val_auc,
         "best_val_loss": best_val_loss,
-        "test": test_metrics,
+        "test": {key: value for key, value in test_metrics.items() if key != "predictions"},
+        "artifacts": test_figure_artifacts,
         "epochs_trained": epoch,
         "hyperparams": {
             "lr": LEARNING_RATE,

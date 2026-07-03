@@ -34,7 +34,12 @@ _EXTERNAL_TEST_CORE_ARTIFACT_NAMES = (
     "metrics.json",
     "external_test_report.json",
     "predictions.csv",
+    "test_predictions.csv",
     "run_metadata.json",
+    "test_roc_curve.png",
+    "test_confusion_matrix.png",
+    "external_roc_curve.png",
+    "external_confusion_matrix.png",
 )
 
 

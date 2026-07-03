@@ -36,6 +36,7 @@ in a small MLP under the ``# MODIFIABLE: model`` block; the contract is
 """
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -70,6 +71,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from common.result_plots import write_classification_result_figures
 from torch.utils.data import DataLoader, Dataset
 # sklearn imported lazily inside _evaluate so module-level helpers are
 # unit-testable in environments without sklearn (e.g. the development
@@ -520,7 +522,7 @@ def _build_loss(class_counts: list[int]) -> nn.Module:
 
 
 # ── Training loop ──────────────────────────────────────────────────────────
-def _evaluate(model, loader, device, n_classes) -> dict[str, Any]:
+def _evaluate(model, loader, device, n_classes, items: list[tuple[Path, int]] | None = None) -> dict[str, Any]:
     from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_score
     model.eval()
     all_logits, all_labels = [], []
@@ -531,7 +533,7 @@ def _evaluate(model, loader, device, n_classes) -> dict[str, Any]:
             all_logits.append(logits.cpu())
             all_labels.append(labels)
     if not all_logits:
-        return {"auc": 0.0, "accuracy": 0.0, "f1": 0.0, "confusion_matrix": []}
+        return {"auc": 0.0, "accuracy": 0.0, "f1": 0.0, "confusion_matrix": [], "predictions": []}
     logits = torch.cat(all_logits)
     labels = torch.cat(all_labels)
     preds = logits.argmax(dim=1).numpy()
@@ -542,6 +544,20 @@ def _evaluate(model, loader, device, n_classes) -> dict[str, Any]:
     metrics["confusion_matrix"] = confusion_matrix(
         labels, preds, labels=list(range(n_classes))
     ).astype(int).tolist()
+    rows = []
+    if items is not None:
+        for index, (path, _) in enumerate(items[:len(preds)]):
+            row = {
+                "sample_id": path.stem,
+                "path": str(path),
+                "y_true": int(labels[index]),
+                "y_pred": int(preds[index]),
+                "score": float(probs[index, 1] if probs.shape[1] > 1 else probs[index, 0]),
+            }
+            for class_idx in range(probs.shape[1]):
+                row[f"prob_{class_idx}"] = float(probs[index, class_idx])
+            rows.append(row)
+    metrics["predictions"] = rows
     if n_classes == 2:
         try:
             metrics["auc"] = float(roc_auc_score(labels, probs[:, 1]))
@@ -828,12 +844,29 @@ def main() -> None:
     torch.save(model.state_dict(), OUTPUT_DIR / "best_model.pth")
 
     # 6. Test + emit metrics.
-    test_metrics = _evaluate(model, test_loader, device, n_classes)
+    test_metrics = _evaluate(model, test_loader, device, n_classes, test_items)
+    test_predictions = list(test_metrics.get("predictions") or [])
+    if test_predictions:
+        prediction_keys = ["sample_id", "path", "y_true", "y_pred", "score"] + [f"prob_{idx}" for idx in range(n_classes)]
+        with (OUTPUT_DIR / "test_predictions.csv").open("w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=prediction_keys)
+            writer.writeheader()
+            writer.writerows(test_predictions)
+        test_figure_artifacts = write_classification_result_figures(
+            y_true=[int(row["y_true"]) for row in test_predictions],
+            y_pred=[int(row["y_pred"]) for row in test_predictions],
+            y_score=[[float(row.get(f"prob_{idx}", 0.0)) for idx in range(n_classes)] for row in test_predictions],
+            output_dir=OUTPUT_DIR,
+            prefix="test",
+            class_names=classes,
+        )
+    else:
+        test_figure_artifacts = {}
     training_duration = time.time() - started
     wall_duration = time.time() - wall_started
     checkpoint_path = OUTPUT_DIR / "best_model.pth"
     metrics = _build_metrics_payload(
-        test_metrics=test_metrics,
+        test_metrics={key: value for key, value in test_metrics.items() if key != "predictions"},
         best_val_metrics=best_val_metrics or {"auc": best_val_auc},
         feature_dim=feature_dim,
         classes=classes,
@@ -846,6 +879,8 @@ def main() -> None:
         training_duration=training_duration,
         wall_duration=wall_duration,
     )
+    if test_figure_artifacts:
+        metrics["artifacts"] = {**metrics.get("artifacts", {}), **test_figure_artifacts}
     (OUTPUT_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2))
     logger.info("Wrote metrics.json: %s", json.dumps(metrics))
 

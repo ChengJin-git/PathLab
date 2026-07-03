@@ -89,6 +89,10 @@ def test_pre_revert_external_core_artifacts_collects_large_predictions(tmp_path)
         run_dir.mkdir(parents=True)
         (run_dir / "metrics.json").write_text("{}", encoding="utf-8")
         (run_dir / "external_test_report.json").write_text("{}", encoding="utf-8")
+        (run_dir / "test_roc_curve.png").write_bytes(b"test-roc")
+        (run_dir / "test_confusion_matrix.png").write_bytes(b"test-confusion")
+        (run_dir / "external_roc_curve.png").write_bytes(b"external-roc")
+        (run_dir / "external_confusion_matrix.png").write_bytes(b"external-confusion")
         predictions = run_dir / "predictions.csv"
         predictions.write_text("sample_id,score\n" + "s,0.5\n" * 10000, encoding="utf-8")
         (run_dir / "debug.tmp").write_text("ignore", encoding="utf-8")
@@ -99,7 +103,15 @@ def test_pre_revert_external_core_artifacts_collects_large_predictions(tmp_path)
         )
 
         artifact_paths = {Path(path).name: Path(path) for path in artifacts}
-        assert {"metrics.json", "external_test_report.json", "predictions.csv"} <= set(artifact_paths)
+        assert {
+            "metrics.json",
+            "external_test_report.json",
+            "predictions.csv",
+            "test_roc_curve.png",
+            "test_confusion_matrix.png",
+            "external_roc_curve.png",
+            "external_confusion_matrix.png",
+        } <= set(artifact_paths)
         assert "debug.tmp" not in artifact_paths
 
         staged_predictions = artifact_paths["predictions.csv"]
