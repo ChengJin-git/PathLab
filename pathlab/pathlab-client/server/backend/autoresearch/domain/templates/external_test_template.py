@@ -16,9 +16,27 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+
+def _ensure_template_common_on_path() -> None:
+    here = Path(__file__).resolve()
+    candidates = [here.parent]
+    for parent in here.parents:
+        candidates.append(parent / "server" / "backend" / "autoresearch" / "domain" / "templates")
+    for candidate in candidates:
+        if (candidate / "common" / "result_plots.py").exists():
+            value = str(candidate)
+            if value not in sys.path:
+                sys.path.insert(0, value)
+            return
+
+
+_ensure_template_common_on_path()
+
 import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+from common.result_plots import write_classification_result_figures
 
 
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "output"))
@@ -33,6 +51,37 @@ EXTERNAL_SPLITS_FILE = Path(os.getenv("EXTERNAL_SPLITS_FILE", ""))
 EXTERNAL_LABELS_FILE = Path(os.getenv("EXTERNAL_LABELS_FILE", ""))
 MAX_EXTERNAL_SAMPLES = int(os.getenv("PATHLAB_MAX_EXTERNAL_SAMPLES", "0") or "0")
 QUICK_CHECK = os.getenv("PATHLAB_QUICK_CHECK", "").lower() in {"1", "true", "yes"}
+
+
+def _class_names_from_mapping(mapping: dict[str, int]) -> list[str]:
+    if not mapping:
+        return []
+    max_index = max(int(value) for value in mapping.values())
+    names = [str(index) for index in range(max_index + 1)]
+    for name, index in mapping.items():
+        idx = int(index)
+        if 0 <= idx < len(names):
+            names[idx] = str(name)
+    return names
+
+
+def _write_classification_result_figures(
+    *,
+    y_true: list[int],
+    y_pred: list[int],
+    y_score: list[Any],
+    output_dir: Path,
+    prefix: str,
+    class_names: list[str] | None = None,
+) -> dict[str, str]:
+    return write_classification_result_figures(
+        y_true=y_true,
+        y_pred=y_pred,
+        y_score=y_score,
+        output_dir=output_dir,
+        prefix=prefix,
+        class_names=class_names,
+    )
 
 
 def _path_is_configured(path: Path) -> bool:
@@ -783,6 +832,16 @@ def run_external_classification(*, patch_level: bool) -> None:
         "quick_check": QUICK_CHECK,
         "external_task_type": "patch_classification" if patch_level else "mil_classification",
     }
+    figure_artifacts = _write_classification_result_figures(
+        y_true=y_true,
+        y_pred=y_pred,
+        y_score=y_score,
+        output_dir=OUTPUT_DIR,
+        prefix="external",
+        class_names=_class_names_from_mapping(class_mapping),
+    )
+    if figure_artifacts:
+        metrics["artifacts"] = {**metrics.get("artifacts", {}), **figure_artifacts}
     write_metrics(metrics)
     write_predictions(rows)
 

@@ -1097,6 +1097,24 @@ def _load_template_module(name: str):
     return module
 
 
+def test_external_template_writes_classification_result_figures(tmp_path):
+    module = _load_template_module("external_test_template.py")
+
+    module._write_classification_result_figures(
+        y_true=[0, 0, 1, 1],
+        y_pred=[0, 1, 1, 1],
+        y_score=[0.1, 0.4, 0.8, 0.9],
+        output_dir=tmp_path,
+        prefix="external",
+        class_names=["negative", "positive"],
+    )
+
+    assert (tmp_path / "external_roc_curve.png").is_file()
+    assert (tmp_path / "external_confusion_matrix.png").is_file()
+    assert (tmp_path / "external_roc_curve.png").stat().st_size > 0
+    assert (tmp_path / "external_confusion_matrix.png").stat().st_size > 0
+
+
 def test_classification_template_loads_pathlab_training_manifest(tmp_path):
     module = _load_template_module("classification_template.py")
     manifest = tmp_path / "pathlab_training_manifest.json"

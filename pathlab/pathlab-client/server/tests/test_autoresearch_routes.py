@@ -4311,6 +4311,8 @@ def test_run_zip_for_model_run_includes_linked_external_test_artifacts(tmp_path)
         json.dumps({"auc": 0.726, "external": {"auc": 0.726}}),
         encoding="utf-8",
     )
+    (external_run_dir / "external_roc_curve.png").write_bytes(b"external-roc")
+    (external_run_dir / "external_confusion_matrix.png").write_bytes(b"external-confusion")
     external_evidence = workspace / ".evidence" / "runs" / "run_external"
     external_evidence.mkdir(parents=True)
     external_artifacts = external_evidence / "artifacts"
@@ -4381,6 +4383,8 @@ def test_run_zip_for_model_run_includes_linked_external_test_artifacts(tmp_path)
             assert "artifacts/external_test/run_external/external_test_report.json" in names
             assert "artifacts/external_test/run_external/predictions.csv" in names
             assert "artifacts/external_test/run_external/metrics.json" in names
+            assert "artifacts/external_test/run_external/external_roc_curve.png" in names
+            assert "artifacts/external_test/run_external/external_confusion_matrix.png" in names
             assert not any(name.startswith("external_test/") for name in names)
             assert json.loads(archive.read("artifacts/external_test/run_external/external_test_report.json")) == {
                 "external_test": {"auc": 0.726, "accuracy": 0.784}
@@ -4397,6 +4401,12 @@ def test_run_zip_for_model_run_excludes_feature_cache_artifacts(tmp_path):
     output_run_dir.mkdir(parents=True)
     (output_run_dir / "best_model.pth").write_bytes(b"model-bytes")
     (output_run_dir / "metrics.json").write_text(json.dumps({"auc": 0.91}), encoding="utf-8")
+    (output_run_dir / "test_predictions.csv").write_text(
+        "sample_id,y_true,y_pred,score\nslide-1,0,0,0.1\nslide-2,1,1,0.9\n",
+        encoding="utf-8",
+    )
+    (output_run_dir / "test_roc_curve.png").write_bytes(b"test-roc")
+    (output_run_dir / "test_confusion_matrix.png").write_bytes(b"test-confusion")
     (output_run_dir / "run_metadata.json").write_text(
         json.dumps({"run_id": run_id, "quick_check": False}),
         encoding="utf-8",
@@ -4474,6 +4484,9 @@ def test_run_zip_for_model_run_excludes_feature_cache_artifacts(tmp_path):
             assert "artifacts/metrics.json" in names
             assert "artifacts/run_metadata.json" in names
             assert "artifacts/train.log" in names
+            assert "artifacts/test_predictions.csv" in names
+            assert "artifacts/test_roc_curve.png" in names
+            assert "artifacts/test_confusion_matrix.png" in names
             assert not any("patch_feature_cache" in name for name in names)
             assert "artifacts/train_cache.pt" not in names
             assert not any(name.startswith("artifacts/best_model-") for name in names)

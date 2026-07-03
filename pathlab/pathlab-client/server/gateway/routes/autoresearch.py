@@ -5038,6 +5038,8 @@ def _add_external_run_files_to_zip(
         "predictions.csv",
         "metrics.json",
         "run_metadata.json",
+        "external_roc_curve.png",
+        "external_confusion_matrix.png",
     ):
         candidates = [
             workspace / "output" / "runs" / external_run_id / filename,
@@ -5082,6 +5084,11 @@ _RUN_ZIP_CORE_ARTIFACT_NAMES = frozenset({
     "train.log",
     "external_test_report.json",
     "predictions.csv",
+    "test_predictions.csv",
+    "test_roc_curve.png",
+    "test_confusion_matrix.png",
+    "external_roc_curve.png",
+    "external_confusion_matrix.png",
 })
 _RUN_ZIP_EXCLUDED_PATH_PARTS = frozenset({
     "feature_cache",
@@ -5142,7 +5149,16 @@ def _add_core_run_output_files_to_zip(
     run_dir = _run_output_dir_for_zip(workspace, run_id, record_data)
     if not _path_under(run_dir, workspace):
         return
-    for filename in ("best_model.pth", "metrics.json", "run_metadata.json", "training.log", "train.log"):
+    for filename in (
+        "best_model.pth",
+        "metrics.json",
+        "run_metadata.json",
+        "training.log",
+        "train.log",
+        "test_predictions.csv",
+        "test_roc_curve.png",
+        "test_confusion_matrix.png",
+    ):
         arcname = f"artifacts/{filename}"
         if arcname in existing:
             continue

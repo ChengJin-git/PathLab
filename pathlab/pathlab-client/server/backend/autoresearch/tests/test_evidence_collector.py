@@ -235,6 +235,53 @@ def test_collector_copies_pre_revert_external_core_artifacts(tmp_path):
     assert copied.read_text(encoding="utf-8") == expected_predictions
 
 
+def test_collector_copies_result_plot_artifacts_from_metrics(tmp_path):
+    """Result figures referenced only from metrics must survive workspace cleanup."""
+    ws_dir = _make_workspace(tmp_path)
+    store = EvidenceStore(ws_dir / ".evidence")
+
+    run_dir = ws_dir / "output" / "runs" / "run_figures"
+    run_dir.mkdir(parents=True)
+    (run_dir / "metrics.json").write_text('{"auc": 0.91}', encoding="utf-8")
+    roc = run_dir / "test_roc_curve.png"
+    confusion = run_dir / "test_confusion_matrix.png"
+    roc.write_bytes(b"roc-png")
+    confusion.write_bytes(b"confusion-png")
+
+    collector = EvidenceCollector(
+        workspace_root=ws_dir, store=store, session_id="s1", primary_metric="auc"
+    )
+    collector.record_experiment_output(
+        run_id="run_figures",
+        run_dir="output/runs/run_figures",
+        exit_code=0,
+        stdout="done",
+        stderr="",
+        metrics={
+            "auc": 0.91,
+            "artifacts": {
+                "roc_curve": str(roc),
+                "confusion_matrix": str(confusion),
+            },
+        },
+        duration=30.0,
+    )
+
+    result = collector.finalize(committed=True, iteration=0)
+    assert result.skipped is False
+
+    loaded = store.load("run_figures")
+    artifacts = {artifact.name: artifact for artifact in loaded.artifacts}
+    assert artifacts["test_roc_curve.png"].storage_mode == "copy"
+    assert artifacts["test_confusion_matrix.png"].storage_mode == "copy"
+    assert (
+        ws_dir / ".evidence" / "runs" / "run_figures" / "artifacts" / "test_roc_curve.png"
+    ).read_bytes() == b"roc-png"
+    assert (
+        ws_dir / ".evidence" / "runs" / "run_figures" / "artifacts" / "test_confusion_matrix.png"
+    ).read_bytes() == b"confusion-png"
+
+
 def test_collector_deduplicates_same_directory_artifacts(tmp_path):
     """DATA_OUTPUT_DIR pointing at the same directory as run_dir should not duplicate artifacts."""
     ws_dir = _make_workspace(tmp_path)
