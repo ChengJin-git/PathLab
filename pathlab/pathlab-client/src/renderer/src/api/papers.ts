@@ -62,6 +62,8 @@ export type AddCitationPreview = components['schemas']['AddCitationPreview']
 export type AddCitationResponse = components['schemas']['AddCitationResponse']
 export type CitationDeleteResponse = components['schemas']['CitationDeleteResponse']
 
+export const MAX_PAPERS_PER_SOURCE_TASK = 20
+
 export interface PutPaperSectionBody {
   text: string
   source_hash?: string
@@ -150,18 +152,20 @@ async function preserveBackendErrorCode<T>(operation: () => Promise<T>): Promise
 }
 
 export function createPaperRun(request: CreatePaperRunRequest): Promise<PaperRunCreateResponse> {
-  return apiFetch<PaperRunCreateResponse>(
-    `${API_BASE}/papers`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    },
-    'Create paper run',
+  return preserveBackendErrorCode(() =>
+    apiFetch<PaperRunCreateResponse>(
+      `${API_BASE}/papers`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      },
+      'Create paper run',
+    ),
   )
 }
 
-export function listPaperRuns(params?: { limit?: number; offset?: number }): Promise<PaperRunListResponse> {
+export function listPaperRuns(params?: { limit?: number; offset?: number; source_task_id?: string }): Promise<PaperRunListResponse> {
   const query = buildSearchParams(params)
   const suffix = query.toString() ? `?${query}` : ''
   return apiFetch<PaperRunListResponse>(`${API_BASE}/papers${suffix}`, undefined, 'List paper runs')

@@ -201,8 +201,18 @@ export interface TrainingTaskDeleteResult {
       deleted_dirs: string[]
       failed: [string, string][]
       total_size: number
-      summary: string
-    }
+	      summary: string
+	    }
+  paper_cleanup?: {
+    status: string
+    mode: string
+    summary?: string
+    task_id?: string
+    deleted?: number
+    total?: number
+    paper_ids?: string[]
+    failed_artifacts?: [string, string][]
+  }
 }
 
 /**

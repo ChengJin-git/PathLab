@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import or_, select
@@ -402,6 +403,8 @@ async def test_delete_training_task_returns_after_db_delete_without_waiting_for_
     monkeypatch.setattr(training_routes, "invalidate_chat_context", lambda *_args: _async_value(None))
     monkeypatch.setattr(training_routes.storage_manager, "delete_training_task_files", fail_if_cleanup_runs_inline)
     monkeypatch.setattr(training_routes.asyncio, "create_task", create_background_task)
+    list_papers = AsyncMock()
+    monkeypatch.setattr(training_routes.PaperGenerationRunRepository, "list_for_user", list_papers)
 
     response = await training_routes.delete_training_task(
         "task_123",
@@ -412,6 +415,8 @@ async def test_delete_training_task_returns_after_db_delete_without_waiting_for_
 
     assert response["task_id"] == "task_123"
     assert response["storage_cleanup"]["status"] == "scheduled"
+    assert response["paper_cleanup"]["status"] == "skipped"
+    list_papers.assert_not_awaited()
     assert scheduled
 
 

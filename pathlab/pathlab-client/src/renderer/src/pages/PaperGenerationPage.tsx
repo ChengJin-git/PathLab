@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Loader2, Plus, RefreshCw, Search, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -14,6 +14,7 @@ import { paperStageLabel, paperStatusLabel, paperTemplateTitle } from '../lib/pa
 
 const ACTIVE_STATUSES = new Set(['pending', 'running'])
 const RUNS_PER_PAGE = 5
+const FILTERED_RUNS_PER_PAGE = 10
 
 function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'completed') return 'secondary'
@@ -53,12 +54,24 @@ function RunRow({ run, onOpen }: { run: PaperRunSummary; onOpen: () => void }) {
 
 export default function PaperGenerationPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { t } = useTranslation()
+  const sourceTaskId = searchParams.get('source_task_id')?.trim() || ''
+  const routeState = location.state as { sourceTaskId?: string; sourceTaskName?: string } | null
+  const sourceTaskName = sourceTaskId && routeState?.sourceTaskId === sourceTaskId ? routeState.sourceTaskName : ''
+  const isSourceTaskView = Boolean(sourceTaskId)
   const [titleSearch, setTitleSearch] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const runsPerPage = isSourceTaskView ? FILTERED_RUNS_PER_PAGE : RUNS_PER_PAGE
+  const queryOffset = isSourceTaskView ? (currentPage - 1) * runsPerPage : 0
   const runsQuery = useQuery({
-    queryKey: ['paper-runs'],
-    queryFn: () => listPaperRuns({ limit: 50 }),
+    queryKey: ['paper-runs', sourceTaskId, isSourceTaskView ? currentPage : 'all'],
+    queryFn: () => listPaperRuns({
+      limit: isSourceTaskView ? runsPerPage : 50,
+      offset: queryOffset,
+      source_task_id: sourceTaskId || undefined,
+    }),
     refetchInterval: (query) => {
       const hasActive = query.state.data?.items?.some((run) => ACTIVE_STATUSES.has(run.status))
       return hasActive ? 2000 : false
@@ -72,10 +85,20 @@ export default function PaperGenerationPage() {
   }, [normalizedTitleSearch, runsQuery.data?.items])
   const hasRuns = Boolean(runsQuery.data?.items.length)
   const hasSearch = Boolean(normalizedTitleSearch)
-  const totalPages = Math.max(1, Math.ceil(visibleRuns.length / RUNS_PER_PAGE) || 1)
-  const paginationStart = visibleRuns.length === 0 ? 0 : (currentPage - 1) * RUNS_PER_PAGE + 1
-  const paginationEnd = Math.min(currentPage * RUNS_PER_PAGE, visibleRuns.length)
-  const paginatedRuns = visibleRuns.slice((currentPage - 1) * RUNS_PER_PAGE, currentPage * RUNS_PER_PAGE)
+  const sourceTotal = runsQuery.data?.total ?? 0
+  const totalPages = isSourceTaskView
+    ? Math.max(1, Math.ceil(sourceTotal / runsPerPage) || 1)
+    : Math.max(1, Math.ceil(visibleRuns.length / runsPerPage) || 1)
+  const paginationStart = isSourceTaskView
+    ? (sourceTotal === 0 ? 0 : queryOffset + 1)
+    : (visibleRuns.length === 0 ? 0 : (currentPage - 1) * runsPerPage + 1)
+  const paginationEnd = isSourceTaskView
+    ? Math.min(queryOffset + visibleRuns.length, sourceTotal)
+    : Math.min(currentPage * runsPerPage, visibleRuns.length)
+  const paginationTotal = isSourceTaskView ? sourceTotal : visibleRuns.length
+  const paginatedRuns = isSourceTaskView
+    ? visibleRuns
+    : visibleRuns.slice((currentPage - 1) * runsPerPage, currentPage * runsPerPage)
 
   useEffect(() => {
     setCurrentPage(1)
@@ -84,6 +107,17 @@ export default function PaperGenerationPage() {
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages))
   }, [totalPages])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [sourceTaskId])
+
+  const clearSourceTaskFilter = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('source_task_id')
+    setSearchParams(next)
+    setCurrentPage(1)
+  }
 
   return (
     <div className="w-full px-4 py-4 sm:px-6 sm:py-8">
@@ -94,6 +128,11 @@ export default function PaperGenerationPage() {
               <ArrowLeft className="h-4 w-4" />
               {t('common.back')}
             </Button>
+            {isSourceTaskView ? (
+              <Button variant="outline" size="sm" onClick={clearSourceTaskFilter} className="rounded-full">
+                {t('paperAgent.runs.clearSourceTaskFilter')}
+              </Button>
+            ) : null}
             <Button variant="outline" size="sm" onClick={() => runsQuery.refetch()} className="gap-2">
               <RefreshCw className="h-4 w-4" />
               {t('paperAgent.common.refresh')}
@@ -107,9 +146,13 @@ export default function PaperGenerationPage() {
 
         <Card className="border-slate-200 bg-white/95 shadow-sm">
           <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-            <div>
-              <CardTitle>{t('paperAgent.runs.workspaceIndex')}</CardTitle>
-              <CardDescription>{t('paperAgent.runs.pollingDescription')}</CardDescription>
+            <div className="min-w-0">
+              <CardTitle>{isSourceTaskView ? t('paperAgent.runs.sourceTaskTitle') : t('paperAgent.runs.workspaceIndex')}</CardTitle>
+              <CardDescription>
+                {isSourceTaskView
+                  ? t('paperAgent.runs.sourceTaskDescription', { taskName: sourceTaskName || sourceTaskId })
+                  : t('paperAgent.runs.pollingDescription')}
+              </CardDescription>
             </div>
             <Badge variant="outline">{t('paperAgent.runs.total', { count: runsQuery.data?.total ?? 0 })}</Badge>
           </CardHeader>
@@ -154,13 +197,13 @@ export default function PaperGenerationPage() {
             ) : visibleRuns.length ? (
               <div className="space-y-3">
                 {paginatedRuns.map((run) => <RunRow key={run.paper_id} run={run} onOpen={() => navigate(`/papers/${run.paper_id}`)} />)}
-                {visibleRuns.length > RUNS_PER_PAGE ? (
+                {paginationTotal > runsPerPage ? (
                   <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm font-medium text-slate-500">
                       {t('paperAgent.runs.paginationRange', {
                         start: paginationStart,
                         end: paginationEnd,
-                        total: visibleRuns.length,
+                        total: paginationTotal,
                       })}
                     </div>
                     <div className="flex items-center justify-between gap-3 sm:justify-end">

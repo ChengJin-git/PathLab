@@ -136,6 +136,7 @@ _VALIDATION_GUARD_REPORT_PATHS = {
 _VALIDATION_WARNINGS_PATH = "validation/warnings.md"
 _REFINEMENT_LOG_PATH = "validation/refinement_log.json"
 _MAX_SAMPLE_ISSUES = 3
+_MAX_PAPERS_PER_SOURCE_TASK = 20
 _RUN_UNTIL_OUTLINE_HANDLER = "paper_generation.run_until_outline"
 _RUN_AFTER_OUTLINE_HANDLER = "paper_generation.run_after_outline"
 _RENDER_EXPORT_HANDLER = "paper_generation.render_export"
@@ -770,6 +771,31 @@ async def create_paper_run(
             detail="selected_templates must contain exactly one target template.",
         )
 
+    user_filter = None if _is_admin(user) else str(user.id)
+    for source_task in body.source_tasks:
+        _, source_task_paper_count = await PaperGenerationRunRepository.list_for_user(
+            db,
+            user_filter,
+            limit=1,
+            offset=0,
+            source_task_id=source_task.task_id,
+        )
+        if source_task_paper_count >= _MAX_PAPERS_PER_SOURCE_TASK:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "PAPER_LIMIT_EXCEEDED",
+                    "message": (
+                        f"Source task {source_task.task_id} already has "
+                        f"{source_task_paper_count} paper runs. Delete some papers "
+                        "before creating more."
+                    ),
+                    "source_task_id": source_task.task_id,
+                    "current_count": source_task_paper_count,
+                    "limit": _MAX_PAPERS_PER_SOURCE_TASK,
+                },
+            )
+
     paper_id = _new_paper_id()
     config = PaperConfig(
         paper_id=paper_id,
@@ -849,10 +875,11 @@ async def list_paper_runs(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    source_task_id: Optional[str] = Query(None, min_length=1),
 ) -> PaperRunListResponse:
     user_filter = None if _is_admin(user) else str(user.id)
     rows, total = await PaperGenerationRunRepository.list_for_user(
-        db, user_filter, limit=limit, offset=offset
+        db, user_filter, limit=limit, offset=offset, source_task_id=source_task_id
     )
     items = []
     for row in rows:

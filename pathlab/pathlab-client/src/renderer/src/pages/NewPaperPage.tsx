@@ -1,14 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, Check, FileText, Loader2, Plus, Search, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Check, FileText, Loader2, Plus, Search, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { ModalShell } from '../components/ui/modal-shell'
-import { createPaperRun, type CreatePaperRunRequest, type TaskRole, type TemplateId } from '../api/papers'
+import { createPaperRun, listPaperRuns, MAX_PAPERS_PER_SOURCE_TASK, type CreatePaperRunRequest, type TaskRole, type TemplateId } from '../api/papers'
 import { getTrainingTasks, type TrainingTask } from '../api/training'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { cn, formatDateTime } from '../lib/utils'
@@ -27,16 +27,21 @@ function taskTitle(task: TrainingTask): string {
 
 export default function NewPaperPage() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
   const { t } = useTranslation()
   const qc = useQueryClient()
   const { addPaperGenerationTask } = useBackgroundTask()
+  const routeState = location.state as { sourceTaskId?: string; sourceTaskName?: string } | null
+  const initialTaskId = (searchParams.get('task_id') || routeState?.sourceTaskId || '').trim()
+  const initialTaskName = (searchParams.get('task_name') || routeState?.sourceTaskName || '').trim()
   const [title, setTitle] = useState('')
   const [idea, setIdea] = useState('')
   const [template, setTemplate] = useState<TemplateId>('miccai')
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(initialTaskName || initialTaskId)
   const [manualTaskId, setManualTaskId] = useState('')
-  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([])
-  const [selectedRoles, setSelectedRoles] = useState<Record<string, TaskRole>>({})
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>(initialTaskId ? [initialTaskId] : [])
+  const [selectedRoles, setSelectedRoles] = useState<Record<string, TaskRole>>(initialTaskId ? { [initialTaskId]: 'main' } : {})
   const [showConfirmModal, setShowConfirmModal] = useState(false)
 
   const tasksQuery = useQuery({
@@ -44,17 +49,77 @@ export default function NewPaperPage() {
     queryFn: () => getTrainingTasks({ page: 1, page_size: 50, search: search || undefined, sort_by: 'updated' }),
   })
 
+  const paperLimitQuery = useQuery({
+    queryKey: ['paper-source-task-limits', selectedTaskIds],
+    queryFn: async () => {
+      const entries = await Promise.all(
+        selectedTaskIds.map(async (taskId) => {
+          const response = await listPaperRuns({ source_task_id: taskId, limit: 1, offset: 0 })
+          return [taskId, response.total] as const
+        }),
+      )
+      return Object.fromEntries(entries) as Record<string, number>
+    },
+    enabled: selectedTaskIds.length > 0,
+    staleTime: 15 * 1000,
+  })
+
   const tasks = tasksQuery.data?.items ?? []
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.task_id, task])), [tasks])
+  const paperCountsByTaskId = paperLimitQuery.data ?? {}
+  const limitedTaskIds = selectedTaskIds.filter((taskId) => (paperCountsByTaskId[taskId] ?? 0) >= MAX_PAPERS_PER_SOURCE_TASK)
+  const firstLimitedTaskId = limitedTaskIds[0]
+  const hasPaperLimitBlock = limitedTaskIds.length > 0
+  const isCheckingPaperLimit = paperLimitQuery.isFetching && selectedTaskIds.length > 0
+
+  useEffect(() => {
+    if (!initialTaskId) return
+    setSelectedTaskIds((current) => current.includes(initialTaskId) ? current : [initialTaskId, ...current])
+    setSelectedRoles((roles) => ({ [initialTaskId]: 'main', ...roles }))
+  }, [initialTaskId])
 
   const createMutation = useMutation({
     mutationFn: (request: CreatePaperRunRequest) => createPaperRun(request),
     onSuccess: (created) => {
       addPaperGenerationTask(created.paper_id, title)
       void qc.invalidateQueries({ queryKey: ['paper-runs'] })
+      void qc.invalidateQueries({ queryKey: ['paper-source-task-limits'] })
       navigate(`/papers/${created.paper_id}`)
     },
   })
+
+  const firstLimitedTaskName = firstLimitedTaskId
+    ? tasksById.get(firstLimitedTaskId)?.task_name ?? (firstLimitedTaskId === initialTaskId && initialTaskName ? initialTaskName : firstLimitedTaskId)
+    : ''
+  const firstLimitedTaskCount = firstLimitedTaskId
+    ? paperCountsByTaskId[firstLimitedTaskId] ?? MAX_PAPERS_PER_SOURCE_TASK
+    : 0
+  const paperLimitMessage = firstLimitedTaskId
+    ? t('paperAgent.new.paperLimitReached', {
+        taskId: firstLimitedTaskId,
+        taskName: firstLimitedTaskName,
+        count: firstLimitedTaskCount,
+        limit: MAX_PAPERS_PER_SOURCE_TASK,
+      })
+    : ''
+  const createErrorCode = createMutation.error && typeof createMutation.error === 'object' && 'code' in createMutation.error
+    ? String((createMutation.error as { code?: unknown }).code ?? '')
+    : ''
+  const createErrorMessage = createMutation.error
+    ? createErrorCode === 'PAPER_LIMIT_EXCEEDED'
+      ? t('paperAgent.new.paperLimitExceededServer', { limit: MAX_PAPERS_PER_SOURCE_TASK })
+      : createMutation.error instanceof Error ? createMutation.error.message : String(createMutation.error)
+    : ''
+  const createDisabled = !selectedTaskIds.length || createMutation.isPending || isCheckingPaperLimit || hasPaperLimitBlock
+
+  const openTaskPapers = (taskId: string) => {
+    navigate(`/papers?source_task_id=${encodeURIComponent(taskId)}`, {
+      state: {
+        sourceTaskId: taskId,
+        sourceTaskName: tasksById.get(taskId)?.task_name ?? (taskId === initialTaskId ? initialTaskName : undefined),
+      },
+    })
+  }
 
   const toggleTask = (taskId: string) => {
     setSelectedTaskIds((current) => {
@@ -77,7 +142,7 @@ export default function NewPaperPage() {
   }
 
   const handleCreate = () => {
-    if (!selectedTaskIds.length) return
+    if (createDisabled) return
     const sourceTasks = selectedTaskIds.map((taskId, index) => ({
       task_id: taskId,
       role: selectedRoles[taskId] ?? (index === 0 ? 'main' : 'baseline'),
@@ -95,7 +160,7 @@ export default function NewPaperPage() {
   }
 
   const openConfirmModal = () => {
-    if (!selectedTaskIds.length || createMutation.isPending) return
+    if (createDisabled) return
     setShowConfirmModal(true)
   }
 
@@ -184,6 +249,40 @@ export default function NewPaperPage() {
                   <Plus className="h-4 w-4" /> {t('paperAgent.common.add')}
                 </Button>
               </div>
+
+              {isCheckingPaperLimit ? (
+                <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t('paperAgent.new.paperLimitChecking')}
+                </div>
+              ) : null}
+
+              {paperLimitQuery.error ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                  {t('paperAgent.new.paperLimitCheckFailed')}
+                </div>
+              ) : null}
+
+              {firstLimitedTaskId ? (
+                <div className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                    <div className="min-w-0">
+                      <div className="font-semibold text-red-900">{t('paperAgent.new.paperLimitTitle', { limit: MAX_PAPERS_PER_SOURCE_TASK })}</div>
+                      <div className="mt-1 text-sm leading-6 text-red-700">{paperLimitMessage}</div>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openTaskPapers(firstLimitedTaskId)}
+                    className="shrink-0 bg-white"
+                  >
+                    {t('paperAgent.new.manageTaskPapers')}
+                  </Button>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -240,14 +339,14 @@ export default function NewPaperPage() {
               </label>
               <div className="flex justify-end border-t border-slate-100 pt-4">
                 <Button
-                  variant="primary"
-                  className="gap-2"
-                  onClick={openConfirmModal}
-                  disabled={!selectedTaskIds.length || createMutation.isPending}
-                >
-                  <FileText className="h-4 w-4" />
-                  {t('paperAgent.new.create')}
-                </Button>
+	                  variant="primary"
+	                  className="gap-2"
+	                  onClick={openConfirmModal}
+	                  disabled={createDisabled}
+	                >
+	                  {createMutation.isPending || isCheckingPaperLimit ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+	                  {t('paperAgent.new.create')}
+	                </Button>
               </div>
             </CardContent>
           </Card>
@@ -286,7 +385,8 @@ export default function NewPaperPage() {
                 <div className="mt-2 space-y-2">
                   {selectedTaskIds.map((taskId) => (
                     <div key={taskId} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                      <div className="truncate text-sm font-semibold text-slate-950">{taskId}</div>
+                      <div className="truncate text-sm font-semibold text-slate-950">{tasksById.get(taskId)?.task_name ?? (taskId === initialTaskId && initialTaskName ? initialTaskName : taskId)}</div>
+                      <div className="mt-0.5 truncate text-xs text-slate-500">{taskId}</div>
                       <select
                         value={selectedRoles[taskId] ?? 'baseline'}
                         onChange={(event) => updateRole(taskId, event.target.value as TaskRole)}
@@ -298,19 +398,25 @@ export default function NewPaperPage() {
                     </div>
                   ))}
                 </div>
-              ) : <div className="mt-2 text-sm text-slate-400">{t('paperAgent.new.noTasksSelected')}</div>}
-            </div>
+	              ) : <div className="mt-2 text-sm text-slate-400">{t('paperAgent.new.noTasksSelected')}</div>}
+	            </div>
 
-            {createMutation.error ? (
-              <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{createMutation.error instanceof Error ? createMutation.error.message : String(createMutation.error)}</div>
-            ) : null}
-          </div>
+	            {paperLimitMessage ? (
+	              <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm leading-6 text-red-700">
+	                {paperLimitMessage}
+	              </div>
+	            ) : null}
 
-          <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
-            <Button variant="primary" className="gap-2" onClick={handleCreate} disabled={!selectedTaskIds.length || createMutation.isPending}>
-              {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              {t('paperAgent.new.confirmCreate')}
-            </Button>
+	            {createErrorMessage ? (
+	              <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{createErrorMessage}</div>
+	            ) : null}
+	          </div>
+
+	          <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
+	            <Button variant="primary" className="gap-2" onClick={handleCreate} disabled={createDisabled}>
+	              {createMutation.isPending || isCheckingPaperLimit ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+	              {t('paperAgent.new.confirmCreate')}
+	            </Button>
           </div>
         </ModalShell>
       </div>

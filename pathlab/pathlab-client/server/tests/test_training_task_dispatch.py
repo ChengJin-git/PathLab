@@ -523,6 +523,10 @@ async def test_delete_active_training_task_publishes_cancellation_and_does_not_c
             "gateway.routes.training.publish_task_cancellation",
             new=publish_mock,
         ),
+        patch(
+            "gateway.routes.training.PaperGenerationRunRepository.list_for_user",
+            new=AsyncMock(),
+        ) as list_papers,
     ):
         response = await training_module.delete_training_task(
             task_id="train_delete_active", mode="standard", user=user, db=db
@@ -531,6 +535,7 @@ async def test_delete_active_training_task_publishes_cancellation_and_does_not_c
     assert response["task_id"] == "train_delete_active"
     publish_mock.assert_awaited_once_with("train_delete_active")
     mock_cancel_ai.assert_awaited_once_with("train_delete_active")
+    list_papers.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -571,11 +576,17 @@ async def test_delete_completed_training_task_still_publishes_cancellation_to_st
             "gateway.routes.training.publish_task_cancellation",
             new=publish_mock,
         ),
+        patch(
+            "gateway.routes.training._delete_papers_for_training_task",
+            new=AsyncMock(return_value={"status": "completed", "deleted": 2}),
+        ) as delete_papers,
     ):
         response = await training_module.delete_training_task(
             task_id="train_delete_completed", mode="complete", user=user, db=db
         )
 
     assert response["task_id"] == "train_delete_completed"
+    assert response["paper_cleanup"]["deleted"] == 2
     publish_mock.assert_awaited_once_with("train_delete_completed")
     mock_cancel_ai.assert_awaited_once_with("train_delete_completed")
+    delete_papers.assert_awaited_once_with(db, "train_delete_completed", None)

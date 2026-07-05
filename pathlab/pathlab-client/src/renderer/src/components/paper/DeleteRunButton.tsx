@@ -18,7 +18,11 @@ export function DeleteRunButton({ paperId, onDeleted }: DeleteRunButtonProps) {
   const deleteMutation = useMutation({
     mutationFn: () => deletePaperRun(paperId),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['paper-runs'] })
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['paper-runs'] }),
+        qc.invalidateQueries({ queryKey: ['related-paper-runs'] }),
+        qc.invalidateQueries({ queryKey: ['paper-source-task-limits'] }),
+      ])
       onDeleted()
     },
   })
