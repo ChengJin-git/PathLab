@@ -681,9 +681,8 @@ export default function TaskDetailPage() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 font-semibold text-slate-950">
                       <FileText className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:text-slate-700" />
-                      <span className="truncate">{paper.title || paper.paper_id}</span>
+                      <span className="truncate">{paper.title || t('paperAgent.detail.fallbackTitle')}</span>
                     </div>
-                    <div className="mt-1 truncate text-xs text-slate-500">{paper.paper_id}</div>
                   </div>
                   <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-bold ${paperStatusClassName(paper.status)}`}>
                     {paperStatusLabel(t, paper.status)}
@@ -900,7 +899,7 @@ export default function TaskDetailPage() {
       {/* Task Info Grid */}
       <Card surface="elevated" className="overflow-hidden border-[color:var(--surface-border)] p-4 shadow-[var(--shadow-elevated)] sm:p-6">
         <div className={`grid grid-cols-2 ${isAdmin && displayTask.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
-          <div className="min-w-0">
+          {!isExternalValidation ? <div className="min-w-0">
             <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.taskId')}</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
               <div className="truncate font-mono text-[11px] font-bold text-slate-700 sm:text-sm">{displayTask.task_id}</div>
@@ -935,7 +934,7 @@ export default function TaskDetailPage() {
                   {t('taskDetail.copied')}
                 </div>
               )}
-          </div>
+          </div> : null}
           <div>
             <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">
               {t('taskDetail.data')}

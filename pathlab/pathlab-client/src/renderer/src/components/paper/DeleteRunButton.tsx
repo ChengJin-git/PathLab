@@ -40,7 +40,7 @@ export function DeleteRunButton({ paperId, onDeleted }: DeleteRunButtonProps) {
             <div>
               <h3 className="text-base font-semibold text-slate-950">{t('paperAgent.delete.heading')}</h3>
               <p className="mt-1 text-sm leading-6 text-slate-500">
-                {t('paperAgent.delete.description', { paperId })}
+                {t('paperAgent.delete.description')}
               </p>
             </div>
           </div>

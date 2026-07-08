@@ -4240,7 +4240,7 @@
       "noSearchResultsDescription": "請嘗試其他標題關鍵字，或清除搜尋查看全部運行記錄。",
       "emptyTitle": "暫時未有論文運行",
       "emptyDescription": "建立一個運行後即可進入只讀工作區。",
-      "noSourceTasks": "未記錄來源任務 ID"
+      "noSourceTasks": "未記錄來源任務"
     },
     "new": {
       "title": "新建論文運行",
@@ -4249,14 +4249,16 @@
       "sourceTasksDescription": "選擇一個或多個訓練運行，並為後續證據整理分配角色。",
       "searchTasksPlaceholder": "搜尋來源任務",
       "loadingTasks": "正在載入任務...",
-      "noTasksMatched": "沒有匹配任務。如果後端存在該任務，可手動新增任務 ID。",
-      "manualTaskPlaceholder": "手動輸入任務 ID",
+      "noTasksMatched": "沒有匹配嘅來源任務。請嘗試其他搜尋字詞。",
       "templateTitle": "2. 模板",
       "templateDescription": "每次論文運行後端只接受一個模板。",
       "briefTitle": "3. 論文簡介",
       "briefDescription": "可選標題和想法內容會傳給論文 Agent。",
       "paperTitleLabel": "標題",
       "paperTitlePlaceholder": "可選論文標題",
+      "paperTitleChecking": "正在檢查已有論文標題...",
+      "paperTitleConflict": "已存在使用此標題嘅論文運行。請使用其他標題。",
+      "paperTitleCheckFailed": "暫時無法檢查已有論文標題，請稍後再試。",
       "userIdeaLabel": "用戶想法",
       "userIdeaPlaceholder": "可選論文思路、主張方向或寫作限制。",
       "runPackageTitle": "運行包",
@@ -4288,7 +4290,7 @@
     "delete": {
       "title": "刪除論文運行",
       "heading": "確認刪除此論文運行？",
-      "description": "此操作無法在前端撤銷。運行 ID：{{paperId}}",
+      "description": "此操作無法在前端撤銷。",
       "keep": "保留運行"
     },
     "pipeline": {

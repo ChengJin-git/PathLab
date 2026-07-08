@@ -4242,7 +4242,7 @@
       "noSearchResultsDescription": "Try another title keyword or clear the search to view all runs.",
       "emptyTitle": "No paper runs yet",
       "emptyDescription": "Create a run to start the read-only workspace.",
-      "noSourceTasks": "No source task IDs recorded"
+      "noSourceTasks": "No source tasks recorded"
     },
     "new": {
       "title": "New paper run",
@@ -4251,14 +4251,16 @@
       "sourceTasksDescription": "Select one or more training runs. Assign roles for downstream evidence organization.",
       "searchTasksPlaceholder": "Search source tasks",
       "loadingTasks": "Loading tasks...",
-      "noTasksMatched": "No tasks matched. Add a task ID manually if it exists in the backend.",
-      "manualTaskPlaceholder": "Manual task ID",
+      "noTasksMatched": "No source tasks matched. Try another search term.",
       "templateTitle": "2. Template",
       "templateDescription": "The paper backend accepts exactly one template for each run.",
       "briefTitle": "3. Paper brief",
       "briefDescription": "Optional title and idea content passed to the paper agent.",
       "paperTitleLabel": "Title",
       "paperTitlePlaceholder": "Optional manuscript title",
+      "paperTitleChecking": "Checking existing paper titles...",
+      "paperTitleConflict": "A paper run with this title already exists. Please choose a different title.",
+      "paperTitleCheckFailed": "Unable to check existing paper titles. Please try again later.",
       "userIdeaLabel": "User idea",
       "userIdeaPlaceholder": "Optional paper idea, claim direction, or writing constraints.",
       "runPackageTitle": "Run package",
@@ -4290,7 +4292,7 @@
     "delete": {
       "title": "Delete paper run",
       "heading": "Delete this paper run?",
-      "description": "This action cannot be undone from the frontend. Run ID: {{paperId}}",
+      "description": "This action cannot be undone from the frontend.",
       "keep": "Keep run"
     },
     "pipeline": {

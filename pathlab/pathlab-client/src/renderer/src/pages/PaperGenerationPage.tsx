@@ -36,9 +36,8 @@ function RunRow({ run, onOpen }: { run: PaperRunSummary; onOpen: () => void }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 font-semibold text-slate-950">
             <FileText className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:text-slate-700" />
-            <span className="truncate">{run.title || run.paper_id}</span>
+            <span className="truncate">{run.title || t('paperAgent.detail.fallbackTitle')}</span>
           </div>
-          <div className="mt-1 text-sm text-slate-500">{run.paper_id}</div>
         </div>
         <Badge variant={statusVariant(run.status)}>{paperStatusLabel(t, run.status)}</Badge>
       </div>
@@ -47,7 +46,6 @@ function RunRow({ run, onOpen }: { run: PaperRunSummary; onOpen: () => void }) {
         <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">{t('paperAgent.runRow.template')}</span><br />{run.selected_templates.map((template) => paperTemplateTitle(t, template)).join(', ') || '-'}</div>
         <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">{t('paperAgent.runRow.created')}</span><br />{formatDateTime(run.created_at)}</div>
       </div>
-      <div className="mt-3 text-xs text-slate-400">{run.source_task_ids.join(', ') || t('paperAgent.runs.noSourceTasks')}</div>
     </button>
   )
 }
@@ -150,7 +148,7 @@ export default function PaperGenerationPage() {
               <CardTitle>{isSourceTaskView ? t('paperAgent.runs.sourceTaskTitle') : t('paperAgent.runs.workspaceIndex')}</CardTitle>
               <CardDescription>
                 {isSourceTaskView
-                  ? t('paperAgent.runs.sourceTaskDescription', { taskName: sourceTaskName || sourceTaskId })
+                  ? t('paperAgent.runs.sourceTaskDescription', { taskName: sourceTaskName || t('paperAgent.runs.sourceTaskFilter') })
                   : t('paperAgent.runs.pollingDescription')}
               </CardDescription>
             </div>

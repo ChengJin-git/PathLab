@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ArrowLeft, Check, FileText, Loader2, Plus, Search, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Check, FileText, Loader2, Search, X } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { ModalShell } from '../components/ui/modal-shell'
-import { createPaperRun, listPaperRuns, MAX_PAPERS_PER_SOURCE_TASK, type CreatePaperRunRequest, type TaskRole, type TemplateId } from '../api/papers'
+import { createPaperRun, listPaperRuns, MAX_PAPERS_PER_SOURCE_TASK, type CreatePaperRunRequest, type PaperRunSummary, type TaskRole, type TemplateId } from '../api/papers'
 import { getTrainingTasks, type TrainingTask } from '../api/training'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { cn, formatDateTime } from '../lib/utils'
@@ -20,9 +20,25 @@ import {
 
 const TASK_ROLES: TaskRole[] = ['main', 'baseline', 'ablation', 'external_validation']
 const TEMPLATES: TemplateId[] = ['miccai', 'nature_scientific_reports']
+const PAPER_TITLE_CHECK_PAGE_SIZE = 200
 
 function taskTitle(task: TrainingTask): string {
   return task.task_name || task.task_id
+}
+
+async function listAllPaperRunSummaries(): Promise<PaperRunSummary[]> {
+  const firstPage = await listPaperRuns({ limit: PAPER_TITLE_CHECK_PAGE_SIZE, offset: 0 })
+  const items = [...firstPage.items]
+  let offset = items.length
+
+  while (offset < firstPage.total) {
+    const page = await listPaperRuns({ limit: PAPER_TITLE_CHECK_PAGE_SIZE, offset })
+    if (!page.items.length) break
+    items.push(...page.items)
+    offset += page.items.length
+  }
+
+  return items
 }
 
 export default function NewPaperPage() {
@@ -39,10 +55,11 @@ export default function NewPaperPage() {
   const [idea, setIdea] = useState('')
   const [template, setTemplate] = useState<TemplateId>('miccai')
   const [search, setSearch] = useState(initialTaskName || initialTaskId)
-  const [manualTaskId, setManualTaskId] = useState('')
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>(initialTaskId ? [initialTaskId] : [])
   const [selectedRoles, setSelectedRoles] = useState<Record<string, TaskRole>>(initialTaskId ? { [initialTaskId]: 'main' } : {})
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const titleAutoFillRef = useRef('')
+  const trimmedTitle = title.trim()
 
   const tasksQuery = useQuery({
     queryKey: ['paper-source-tasks', search],
@@ -64,13 +81,46 @@ export default function NewPaperPage() {
     staleTime: 15 * 1000,
   })
 
+  const paperRunTitleQuery = useQuery({
+    queryKey: ['paper-run-title-index'],
+    queryFn: listAllPaperRunSummaries,
+    enabled: Boolean(trimmedTitle),
+    staleTime: 15 * 1000,
+  })
+
   const tasks = tasksQuery.data?.items ?? []
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.task_id, task])), [tasks])
   const paperCountsByTaskId = paperLimitQuery.data ?? {}
+  const duplicateTitleRun = trimmedTitle
+    ? paperRunTitleQuery.data?.find((run) => run.title?.trim() === trimmedTitle)
+    : undefined
+  const hasTitleConflict = Boolean(duplicateTitleRun)
+  const isCheckingTitleUniqueness = Boolean(trimmedTitle) && paperRunTitleQuery.isFetching
+  const titleCheckFailed = Boolean(trimmedTitle) && paperRunTitleQuery.isError
+  const selectedSourceTaskId = selectedTaskIds[selectedTaskIds.length - 1]
+  const selectedSourceTaskName = selectedSourceTaskId
+    ? tasksById.get(selectedSourceTaskId)?.task_name ?? (selectedSourceTaskId === initialTaskId ? initialTaskName : '')
+    : ''
   const limitedTaskIds = selectedTaskIds.filter((taskId) => (paperCountsByTaskId[taskId] ?? 0) >= MAX_PAPERS_PER_SOURCE_TASK)
   const firstLimitedTaskId = limitedTaskIds[0]
   const hasPaperLimitBlock = limitedTaskIds.length > 0
   const isCheckingPaperLimit = paperLimitQuery.isFetching && selectedTaskIds.length > 0
+
+  useEffect(() => {
+    if (!selectedSourceTaskName) return
+    setTitle((current) => {
+      const previousAutoFill = titleAutoFillRef.current
+      if (!current.trim() || current === previousAutoFill) {
+        titleAutoFillRef.current = selectedSourceTaskName
+        return selectedSourceTaskName
+      }
+      if (previousAutoFill && current.startsWith(previousAutoFill)) {
+        titleAutoFillRef.current = selectedSourceTaskName
+        return `${selectedSourceTaskName}${current.slice(previousAutoFill.length)}`
+      }
+      return current
+    })
+  }, [selectedSourceTaskName])
 
   useEffect(() => {
     if (!initialTaskId) return
@@ -81,8 +131,9 @@ export default function NewPaperPage() {
   const createMutation = useMutation({
     mutationFn: (request: CreatePaperRunRequest) => createPaperRun(request),
     onSuccess: (created) => {
-      addPaperGenerationTask(created.paper_id, title)
+      addPaperGenerationTask(created.paper_id, trimmedTitle || null)
       void qc.invalidateQueries({ queryKey: ['paper-runs'] })
+      void qc.invalidateQueries({ queryKey: ['paper-run-title-index'] })
       void qc.invalidateQueries({ queryKey: ['paper-source-task-limits'] })
       navigate(`/papers/${created.paper_id}`)
     },
@@ -110,7 +161,7 @@ export default function NewPaperPage() {
       ? t('paperAgent.new.paperLimitExceededServer', { limit: MAX_PAPERS_PER_SOURCE_TASK })
       : createMutation.error instanceof Error ? createMutation.error.message : String(createMutation.error)
     : ''
-  const createDisabled = !selectedTaskIds.length || createMutation.isPending || isCheckingPaperLimit || hasPaperLimitBlock
+  const createDisabled = !selectedTaskIds.length || createMutation.isPending || isCheckingPaperLimit || hasPaperLimitBlock || isCheckingTitleUniqueness || hasTitleConflict || titleCheckFailed
 
   const openTaskPapers = (taskId: string) => {
     navigate(`/papers?source_task_id=${encodeURIComponent(taskId)}`, {
@@ -129,14 +180,6 @@ export default function NewPaperPage() {
     })
   }
 
-  const addManualTask = () => {
-    const taskId = manualTaskId.trim()
-    if (!taskId || selectedTaskIds.includes(taskId)) return
-    setSelectedTaskIds((current) => [...current, taskId])
-    setSelectedRoles((roles) => ({ ...roles, [taskId]: selectedTaskIds.length === 0 ? 'main' : 'baseline' }))
-    setManualTaskId('')
-  }
-
   const updateRole = (taskId: string, role: TaskRole) => {
     setSelectedRoles((roles) => ({ ...roles, [taskId]: role }))
   }
@@ -149,7 +192,7 @@ export default function NewPaperPage() {
       label: tasksById.get(taskId)?.task_name ?? null,
     }))
     createMutation.mutate({
-      title: title.trim() || null,
+      title: trimmedTitle || null,
       paper_type: 'research_paper',
       language: 'en',
       source_tasks: sourceTasks,
@@ -219,7 +262,7 @@ export default function NewPaperPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="truncate font-semibold">{taskTitle(task)}</div>
-                            <div className={cn('mt-1 text-xs', selected ? 'text-white/60' : 'text-slate-500')}>{task.task_id}</div>
+                            {!task.task_id.startsWith('extval_') ? <div className={cn('mt-1 text-xs', selected ? 'text-white/60' : 'text-slate-500')}>{task.task_id}</div> : null}
                           </div>
                           <span className={cn('inline-flex h-6 w-6 items-center justify-center rounded-full border', selected ? 'border-white/20 bg-white text-slate-950' : 'border-slate-200 bg-slate-50 text-transparent')}>
                             <Check className="h-3.5 w-3.5" />
@@ -237,18 +280,6 @@ export default function NewPaperPage() {
               ) : (
                 <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">{t('paperAgent.new.noTasksMatched')}</div>
               )}
-
-              <div className="flex gap-2">
-                <input
-                  value={manualTaskId}
-                  onChange={(event) => setManualTaskId(event.target.value)}
-                  placeholder={t('paperAgent.new.manualTaskPlaceholder')}
-                  className="min-w-0 flex-1 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-sky-500/10"
-                />
-                <Button variant="outline" className="gap-2" onClick={addManualTask} disabled={!manualTaskId.trim()}>
-                  <Plus className="h-4 w-4" /> {t('paperAgent.common.add')}
-                </Button>
-              </div>
 
               {isCheckingPaperLimit ? (
                 <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
@@ -324,8 +355,22 @@ export default function NewPaperPage() {
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder={t('paperAgent.new.paperTitlePlaceholder')}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-sky-500/10"
+                  aria-invalid={hasTitleConflict || titleCheckFailed}
+                  className={cn(
+                    'w-full rounded-2xl border bg-white px-3 py-2.5 text-sm outline-none transition focus:ring-4',
+                    hasTitleConflict || titleCheckFailed
+                      ? 'border-red-300 focus:border-red-400 focus:ring-red-500/10'
+                      : 'border-slate-200 focus:border-slate-400 focus:ring-sky-500/10',
+                  )}
                 />
+                {isCheckingTitleUniqueness ? (
+                  <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {t('paperAgent.new.paperTitleChecking')}
+                  </span>
+                ) : null}
+                {hasTitleConflict ? <span className="text-xs text-red-600">{t('paperAgent.new.paperTitleConflict')}</span> : null}
+                {titleCheckFailed ? <span className="text-xs text-red-600">{t('paperAgent.new.paperTitleCheckFailed')}</span> : null}
               </label>
               <label className="block space-y-1.5">
                 <span className="text-sm font-semibold text-slate-700">{t('paperAgent.new.userIdeaLabel')}</span>
@@ -344,7 +389,7 @@ export default function NewPaperPage() {
 	                  onClick={openConfirmModal}
 	                  disabled={createDisabled}
 	                >
-	                  {createMutation.isPending || isCheckingPaperLimit ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+	                  {createMutation.isPending || isCheckingPaperLimit || isCheckingTitleUniqueness ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
 	                  {t('paperAgent.new.create')}
 	                </Button>
               </div>
@@ -385,8 +430,7 @@ export default function NewPaperPage() {
                 <div className="mt-2 space-y-2">
                   {selectedTaskIds.map((taskId) => (
                     <div key={taskId} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                      <div className="truncate text-sm font-semibold text-slate-950">{tasksById.get(taskId)?.task_name ?? (taskId === initialTaskId && initialTaskName ? initialTaskName : taskId)}</div>
-                      <div className="mt-0.5 truncate text-xs text-slate-500">{taskId}</div>
+                      <div className="truncate text-sm font-semibold text-slate-950">{tasksById.get(taskId)?.task_name ?? (taskId === initialTaskId && initialTaskName ? initialTaskName : t('paperAgent.detail.tasks'))}</div>
                       <select
                         value={selectedRoles[taskId] ?? 'baseline'}
                         onChange={(event) => updateRole(taskId, event.target.value as TaskRole)}
@@ -414,7 +458,7 @@ export default function NewPaperPage() {
 
 	          <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
 	            <Button variant="primary" className="gap-2" onClick={handleCreate} disabled={createDisabled}>
-	              {createMutation.isPending || isCheckingPaperLimit ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+	              {createMutation.isPending || isCheckingPaperLimit || isCheckingTitleUniqueness ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
 	              {t('paperAgent.new.confirmCreate')}
 	            </Button>
           </div>

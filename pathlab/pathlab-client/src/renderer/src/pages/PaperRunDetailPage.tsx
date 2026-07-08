@@ -51,51 +51,16 @@ export default function PaperRunDetailPage() {
   }
 
   const run = runQuery.data
-  const sourceTaskIds = run?.source_task_ids ?? []
-  const primarySourceTask = run?.source_tasks?.find((task) => task.role === 'main') ?? run?.source_tasks?.[0]
-  const sourceTaskId = primarySourceTask?.task_id ?? sourceTaskIds[0]
-  const sourceTaskName = primarySourceTask?.label?.trim() || sourceTaskId || ''
-  const sourceTaskTooltip = sourceTaskName
-    ? t('paperAgent.detail.sourceTaskTooltip', { taskName: sourceTaskName })
-    : t('paperAgent.detail.sourceTaskUnavailable')
 
   return (
     <div className="w-full px-3 py-4 sm:px-4 lg:px-6 sm:py-6">
       <div className="flex w-full flex-col gap-5">
         <PageHeader
-          title={run?.title || paperId || t('paperAgent.detail.fallbackTitle')}
+          title={run?.title || t('paperAgent.detail.fallbackTitle')}
           description={t('paperAgent.detail.description')}
         >
           <div className="flex flex-wrap items-center gap-2">
             {run ? <Badge variant={statusBadgeVariant(run.status)}>{paperStatusLabel(t, run.status)}</Badge> : null}
-            {sourceTaskId ? (
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigate(`/task/${encodeURIComponent(sourceTaskId)}`)}
-                  className="gap-2"
-                >
-                  <ClipboardList className="h-4 w-4" />
-                  {t('paperAgent.detail.sourceTaskButton')}
-                </Button>
-                <div className="group relative">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    aria-label={sourceTaskTooltip}
-                    title={sourceTaskTooltip}
-                    className="h-9 w-9 text-slate-500"
-                  >
-                    <Info className="h-4 w-4" />
-                  </Button>
-                  <div className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 w-max max-w-[min(18rem,80vw)] -translate-x-1/2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-xs text-slate-700 opacity-0 shadow-lg transition group-focus-within:opacity-100 group-hover:opacity-100">
-                    <div className="font-semibold text-slate-500">{t('paperAgent.detail.sourceTaskNameLabel')}</div>
-                    <div className="mt-0.5 max-w-[16rem] truncate font-semibold text-slate-900">{sourceTaskName}</div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
             <Button variant="outline" size="sm" onClick={() => navigate('/papers')} className="gap-2">
               <ArrowLeft className="h-4 w-4" />
               {t('paperAgent.common.runs')}

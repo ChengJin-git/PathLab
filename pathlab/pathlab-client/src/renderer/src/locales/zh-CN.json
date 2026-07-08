@@ -4236,7 +4236,7 @@
       "noSearchResultsDescription": "请尝试其他标题关键词，或清除搜索查看全部运行记录。",
       "emptyTitle": "还没有论文运行",
       "emptyDescription": "创建一个运行后即可进入只读工作区。",
-      "noSourceTasks": "未记录来源任务 ID"
+      "noSourceTasks": "未记录来源任务"
     },
     "new": {
       "title": "新建论文运行",
@@ -4245,14 +4245,16 @@
       "sourceTasksDescription": "选择一个或多个训练运行，并为后续证据组织分配角色。",
       "searchTasksPlaceholder": "搜索来源任务",
       "loadingTasks": "正在加载任务...",
-      "noTasksMatched": "没有匹配任务。如果后端存在该任务，可手动添加任务 ID。",
-      "manualTaskPlaceholder": "手动输入任务 ID",
+      "noTasksMatched": "没有匹配的来源任务。请尝试其他搜索词。",
       "templateTitle": "2. 模板",
       "templateDescription": "每次论文运行后端只接受一个模板。",
       "briefTitle": "3. 论文简要",
       "briefDescription": "可选标题和想法内容会传给论文 Agent。",
       "paperTitleLabel": "标题",
       "paperTitlePlaceholder": "可选论文标题",
+      "paperTitleChecking": "正在检查已有论文标题...",
+      "paperTitleConflict": "已存在使用该标题的论文运行。请使用其他标题。",
+      "paperTitleCheckFailed": "暂时无法检查已有论文标题，请稍后重试。",
       "userIdeaLabel": "用户想法",
       "userIdeaPlaceholder": "可选论文思路、主张方向或写作约束。",
       "runPackageTitle": "运行包",
@@ -4284,7 +4286,7 @@
     "delete": {
       "title": "删除论文运行",
       "heading": "确认删除此论文运行？",
-      "description": "此操作无法在前端撤销。运行 ID：{{paperId}}",
+      "description": "此操作无法在前端撤销。",
       "keep": "保留运行"
     },
     "pipeline": {

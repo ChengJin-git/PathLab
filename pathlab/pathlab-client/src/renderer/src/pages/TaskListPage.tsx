@@ -630,7 +630,7 @@ export default function TaskListPage() {
                         {getStatusBadge(task.status, task.task_type, isSyntheticTask, isExternalValidation)}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">
+                    {!isExternalValidation && <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">
                       <span className="font-mono truncate hover:text-gray-600 transition-colors max-w-[120px] sm:max-w-none" title={task.task_id}>
                         {task.task_id}
                       </span>
@@ -655,7 +655,7 @@ export default function TaskListPage() {
                           </div>
                         )}
                       </div>
-                    </div>
+                    </div>}
                     {isAdmin && task.username && (
                       <div className="flex items-center gap-1 text-[10px] sm:text-xs text-gray-400">
                         <User className="w-3 h-3 text-gray-300 flex-shrink-0" />
