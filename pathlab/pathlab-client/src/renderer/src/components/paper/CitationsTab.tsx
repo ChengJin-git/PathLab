@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type MouseEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Copy,
   ExternalLink,
   FileText,
   Library,
@@ -19,6 +20,7 @@ import {
 import {
   deleteCitation,
   getCitations,
+  postPaperRenderExport,
   type CitationReference,
   type CitationsView,
   type VerifiedPoolSummary,
@@ -33,9 +35,10 @@ import { paperCitationTypeLabel, paperValidationStatusLabel } from '../../lib/pa
 
 interface CitationsTabProps {
   paperId: string
+  onPdfRefreshNeeded?: () => void
 }
 
-export function CitationsTab({ paperId }: CitationsTabProps) {
+export function CitationsTab({ paperId, onPdfRefreshNeeded }: CitationsTabProps) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const [modalOpen, setModalOpen] = useState(false)
@@ -46,11 +49,28 @@ export function CitationsTab({ paperId }: CitationsTabProps) {
     retry: false,
   })
 
+  const renderAfterDeleteMutation = useMutation({
+    mutationFn: () => postPaperRenderExport(paperId),
+    onSuccess: async () => {
+      onPdfRefreshNeeded?.()
+      await qc.invalidateQueries({ queryKey: ['paper-run', paperId] })
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (key: string) => deleteCitation(paperId, key),
-    onSuccess: async () => {
+    onSuccess: async (response) => {
       await qc.invalidateQueries({ queryKey: ['paper-citations', paperId] })
+      await qc.invalidateQueries({ queryKey: ['paper-sections', paperId] })
       await qc.invalidateQueries({ queryKey: ['paper-run', paperId] })
+      onPdfRefreshNeeded?.()
+      if (response.downstream_stale || (response.removed_from_sections?.length ?? 0) > 0) {
+        try {
+          await renderAfterDeleteMutation.mutateAsync()
+        } catch {
+          // Keep the citation deletion successful; the render error is shown separately.
+        }
+      }
     },
   })
 
@@ -119,6 +139,7 @@ export function CitationsTab({ paperId }: CitationsTabProps) {
   return (
     <div className="space-y-4">
       <CoverageStrip view={view} />
+      <CitationUsageHint />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.85fr)]">
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
@@ -143,6 +164,18 @@ export function CitationsTab({ paperId }: CitationsTabProps) {
             {deleteMutation.error ? (
               <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 {deleteMutation.error instanceof Error ? deleteMutation.error.message : String(deleteMutation.error)}
+              </div>
+            ) : null}
+            {renderAfterDeleteMutation.isPending ? (
+              <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
+                {t('paperAgent.citations.rerenderingAfterDelete')}
+              </div>
+            ) : null}
+            {renderAfterDeleteMutation.error ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                {renderAfterDeleteMutation.error instanceof Error
+                  ? renderAfterDeleteMutation.error.message
+                  : String(renderAfterDeleteMutation.error)}
               </div>
             ) : null}
             {selectedRefs.length ? (
@@ -242,8 +275,33 @@ function CitationCard({
 }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
+  const [copied, setCopied] = useState(false)
   const type = citationType(refData)
   const Icon = type === 'article' ? BookOpen : type === 'inproceedings' ? Users : FileText
+
+  const copyKey = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(refData.key)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = refData.key
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
+
   return (
     <article
       id={citationDomId(refData.key)}
@@ -252,10 +310,17 @@ function CitationCard({
         highlighted ? 'border-teal-400 shadow-[0_0_0_4px_rgba(45,212,191,0.18)]' : 'border-slate-200',
       )}
     >
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setExpanded((value) => !value)
+          }
+        }}
         onClick={() => setExpanded((value) => !value)}
-        className="flex w-full items-start gap-3 p-4 text-left"
+        className="flex w-full cursor-pointer items-start gap-3 p-4 text-left"
       >
         <span className="mt-0.5 rounded-2xl border border-slate-200 bg-slate-50 p-2 text-slate-600">
           <Icon className="h-4 w-4" />
@@ -264,12 +329,28 @@ function CitationCard({
           <span className="flex flex-wrap items-center gap-2">
             <TypeBadge type={type} />
             <span className="font-mono text-xs font-semibold text-slate-500">{refData.key}</span>
+            <button
+              type="button"
+              onClick={copyKey}
+              onKeyDown={(event) => event.stopPropagation()}
+              className={cn(
+                'inline-flex h-7 items-center gap-1 rounded-full border px-2 text-xs font-semibold transition',
+                copied
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700',
+              )}
+              aria-label={t('paperAgent.citations.copyKey')}
+              title={t('paperAgent.citations.copyKey')}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {copied ? t('paperAgent.citations.copiedKey') : t('paperAgent.citations.copyKey')}
+            </button>
             {refData.added_by === 'user' ? <Badge variant="outline" className="bg-amber-50 text-amber-800">{t('paperAgent.citations.manual')}</Badge> : null}
           </span>
           <span className="mt-1 line-clamp-2 block font-semibold leading-6 tracking-[-0.02em] text-slate-950">{refData.title}</span>
         </span>
         <span className="mt-1 text-slate-400">{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
-      </button>
+      </div>
 
       {expanded ? (
         <div className="border-t border-slate-100 px-4 pb-4 pt-3">
@@ -298,6 +379,21 @@ function CitationCard({
         </div>
       ) : null}
     </article>
+  )
+}
+
+function CitationUsageHint() {
+  const { t } = useTranslation()
+  return (
+    <div className="flex items-start gap-3 rounded-2xl border border-sky-100 bg-sky-50/80 px-4 py-3 text-sm text-sky-900">
+      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white text-sky-700 shadow-sm">
+        <Copy className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <div className="font-semibold">{t('paperAgent.citations.usageHintTitle')}</div>
+        <p className="mt-0.5 leading-6 text-sky-800">{t('paperAgent.citations.usageHintDescription')}</p>
+      </div>
+    </div>
   )
 }
 

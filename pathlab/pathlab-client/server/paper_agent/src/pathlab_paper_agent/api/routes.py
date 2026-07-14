@@ -521,6 +521,105 @@ def _append_required_key(paths: PaperRunPaths, key: str) -> None:
     _atomic_write_json(paths.outline_json, outline)
 
 
+_CITE_COMMAND_RE = re.compile(r"(\\cite[a-zA-Z*]*(?:\[[^\]]*\])*)\{([^{}]+)\}")
+
+
+def _remove_citation_key_from_text(text: str, key: str) -> str:
+    changed = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        prefix = match.group(1)
+        raw_keys = [part.strip() for part in match.group(2).split(",") if part.strip()]
+        if key not in raw_keys:
+            return match.group(0)
+        changed = True
+        remaining = [part for part in raw_keys if part != key]
+        return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
+
+    next_text = _CITE_COMMAND_RE.sub(repl, text)
+    if not changed:
+        return text
+    next_text = re.sub(r"[（(]\s*[）)]", "", next_text)
+    next_text = re.sub(r"[ \t]+([,.;:!?])", r"\1", next_text)
+    next_text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", next_text)
+    return next_text
+
+
+def _prune_unselected_citation_keys_from_text(text: str, selected_keys: set[str]) -> str:
+    changed = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        prefix = match.group(1)
+        raw_keys = [part.strip() for part in match.group(2).split(",") if part.strip()]
+        if not raw_keys:
+            return match.group(0)
+        remaining = [part for part in raw_keys if part in selected_keys]
+        if len(remaining) == len(raw_keys):
+            return match.group(0)
+        changed = True
+        return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
+
+    next_text = _CITE_COMMAND_RE.sub(repl, text)
+    if not changed:
+        return text
+    next_text = re.sub(r"[（(]\s*[）)]", "", next_text)
+    next_text = re.sub(r"[ \t]+([,.;:!?])", r"\1", next_text)
+    next_text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", next_text)
+    return next_text
+
+
+def _remove_citation_key_from_sections(paths: PaperRunPaths, key: str) -> list[str]:
+    if not paths.sections_dir.is_dir():
+        return []
+    changed_sections: list[str] = []
+    for path in sorted(paths.sections_dir.glob("*.tex")):
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8")
+        updated = _remove_citation_key_from_text(current, key)
+        if updated == current:
+            continue
+        _atomic_write_text(path, updated)
+        changed_sections.append(path.relative_to(paths.root).as_posix())
+    return changed_sections
+
+
+def _sync_section_citations_to_selected_refs(
+    paths: PaperRunPaths,
+    selected_refs: list[CitationReferenceModel] | None = None,
+) -> list[str]:
+    if not (paths.citations_dir / "selected_refs.json").exists() or not paths.sections_dir.is_dir():
+        return []
+    refs = selected_refs if selected_refs is not None else _load_selected_refs(paths)
+    selected_keys = {ref.key for ref in refs}
+    changed_sections: list[str] = []
+    for path in sorted(paths.sections_dir.glob("*.tex")):
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8")
+        updated = _prune_unselected_citation_keys_from_text(current, selected_keys)
+        if updated == current:
+            continue
+        _atomic_write_text(path, updated)
+        changed_sections.append(path.relative_to(paths.root).as_posix())
+    return changed_sections
+
+
+def _mark_citation_section_sync_stale(paths: PaperRunPaths, changed_sections: list[str]) -> list[str]:
+    if not changed_sections:
+        return []
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        return []
+    for rel_path in changed_sections:
+        _register_edited_section(manifest, Path(rel_path).stem, rel_path)
+    stale_artifacts = _mark_downstream_artifacts_stale(manifest)
+    _save_manifest(paths, manifest)
+    return stale_artifacts
+
+
 def _append_citation_stage_log(paths: PaperRunPaths, *, status: str, message: str) -> None:
     manifest = _load_manifest(paths)
     if manifest is None:
@@ -1114,6 +1213,13 @@ async def rerender_paper_export(
     if not paths.sections_dir.is_dir() or not any(paths.sections_dir.glob("*.tex")):
         raise HTTPException(status_code=409, detail="section source has not been generated yet")
 
+    changed_sections = _sync_section_citations_to_selected_refs(paths)
+    _mark_citation_section_sync_stale(paths, changed_sections)
+    if changed_sections:
+        manifest = _load_manifest(paths)
+        if manifest is None:
+            raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+
     now = datetime.now(UTC)
     manifest.status = PaperRunStatus.running
     manifest.current_stage = PaperRunStage.rendering
@@ -1219,6 +1325,8 @@ async def get_paper_sections(
 ) -> PaperSectionListResponse:
     await _load_or_404(db, paper_id, user)
     paths = PaperRunPaths.for_paper(paper_id)
+    changed_sections = _sync_section_citations_to_selected_refs(paths)
+    _mark_citation_section_sync_stale(paths, changed_sections)
     manifest = _load_manifest(paths)
     return PaperSectionListResponse(sections=_public_sections(paths, manifest))
 
@@ -1277,6 +1385,8 @@ async def get_paper_citations(
     await _load_or_404(db, paper_id, user)
     paths = PaperRunPaths.for_paper(paper_id)
     selected_refs = _load_selected_refs(paths)
+    changed_sections = _sync_section_citations_to_selected_refs(paths, selected_refs)
+    _mark_citation_section_sync_stale(paths, changed_sections)
     outline = _load_json_file(paths.outline_json)
     return CitationsView(
         paper_id=paper_id,
@@ -1376,12 +1486,23 @@ async def delete_paper_citation(
 
     remaining = [item for item in selected_refs if item.key != key]
     _write_selected_refs(paths, remaining)
+    changed_sections = _sync_section_citations_to_selected_refs(paths, remaining)
+    stale_artifacts = _mark_citation_section_sync_stale(paths, changed_sections)
     _append_citation_stage_log(
         paths,
         status="citation_removed",
-        message=f"Removed citation {key}",
+        message=(
+            f"Removed citation {key}; removed manuscript cite from "
+            f"{len(changed_sections)} section(s); {len(stale_artifacts)} downstream artifact(s) marked stale."
+        ),
     )
-    return CitationDeleteResponse(deleted=True, key=key)
+    return CitationDeleteResponse(
+        deleted=True,
+        key=key,
+        removed_from_sections=changed_sections,
+        downstream_stale=bool(stale_artifacts),
+        stale_artifacts=stale_artifacts,
+    )
 
 
 # ---------------------------------------------------------------------------

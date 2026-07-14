@@ -379,6 +379,9 @@ class AddCitationResponse(BaseModel):
 class CitationDeleteResponse(BaseModel):
     deleted: bool
     key: str
+    removed_from_sections: list[str] = Field(default_factory=list)
+    downstream_stale: bool = False
+    stale_artifacts: list[str] = Field(default_factory=list)
 
 
 class PaperRunDetail(PaperRunSummary):

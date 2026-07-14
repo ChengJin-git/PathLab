@@ -287,6 +287,12 @@ export interface components {
             deleted: boolean;
             /** Key */
             key: string;
+            /** Removed From Sections */
+            removed_from_sections?: string[];
+            /** Downstream Stale */
+            downstream_stale?: boolean;
+            /** Stale Artifacts */
+            stale_artifacts?: string[];
         };
         /**
          * CitationReference

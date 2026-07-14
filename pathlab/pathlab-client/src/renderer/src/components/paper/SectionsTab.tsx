@@ -6,6 +6,7 @@ import type { TFunction } from 'i18next'
 import { AlertTriangle, CheckCircle2, FileCode2, Loader2, PencilLine, Redo2, Save, Undo2, X } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
+  getCitations,
   getPaperSections,
   putPaperSection,
   type PaperSection,
@@ -306,6 +307,68 @@ function lockedTokenReadableValue(text: string): string {
   return value.split('/').pop() || value
 }
 
+function citationKeysFromLatexToken(text: string): string[] {
+  const match = text.match(/^\\cite[a-zA-Z*]*(?:\[[^\]]*\])*\{([^{}]+)\}$/)
+  if (!match) return []
+  return match[1]
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function isCitationKeyBoundaryChar(value: string | undefined): boolean {
+  return !!value && /[A-Za-z0-9_.:-]/.test(value)
+}
+
+function isWrappedCitationKey(before: string | undefined, after: string | undefined): boolean {
+  return (before === '(' && after === ')') || (before === '（' && after === '）')
+}
+
+function replaceBareCitationKeys(text: string, validKeys: Set<string>): string {
+  const keys = Array.from(validKeys)
+    .filter((key) => key.trim().length >= 3)
+    .sort((left, right) => right.length - left.length)
+  if (!keys.length) return text
+
+  const keyPattern = new RegExp(keys.map(escapeRegExp).join('|'), 'g')
+  return text.replace(keyPattern, (match: string, offset: number, source: string) => {
+    const before = source[offset - 1]
+    const after = source[offset + match.length]
+    if (isWrappedCitationKey(before, after)) return match
+    if (isCitationKeyBoundaryChar(before) || isCitationKeyBoundaryChar(after)) return match
+    return `\\cite{${match}}`
+  })
+}
+
+function materializeTypedCitations(text: string, validKeys: Set<string>): string {
+  if (validKeys.size === 0) return text
+
+  const preserved: string[] = []
+  const stash = (value: string) => {
+    const marker = `\uE000${preserved.length}\uE001`
+    preserved.push(value)
+    return marker
+  }
+
+  let next = text.replace(/\\cite[a-zA-Z*]*(?:\[[^\]]*\])*\{[^{}]+\}/g, (match) => stash(match))
+  next = replaceBareCitationKeys(next, validKeys)
+  return next.replace(/\uE000(\d+)\uE001/g, (_, index: string) => preserved[Number(index)] ?? '')
+}
+
+function materializeDraftBody(segments: DraftSegment[], validKeys: Set<string>): string {
+  return segments
+    .map((segment) =>
+      segment.kind === 'editable'
+        ? materializeTypedCitations(segment.text, validKeys)
+        : segment.text,
+    )
+    .join('')
+}
+
 function lockedImportName(value: string, t: TFunction): string {
   const fileName = value.split('/').pop() || value
   const importNameByFile: Record<string, string> = {
@@ -322,11 +385,14 @@ function lockedImportName(value: string, t: TFunction): string {
   return importNameByFile[fileName] ?? t('paperAgent.sections.lockedImportNames.generic')
 }
 
-function LockedLatexToken({ text }: { text: string }) {
+function LockedLatexToken({ text, onRemove }: { text: string; onRemove?: () => void }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
+  if (!text) return null
   const isBlock = text.includes('\n') || /^\\begin\{/.test(text)
   const isImport = /^\\(?:input|include)/.test(text)
+  const citationKeys = citationKeysFromLatexToken(text)
+  const isCitation = citationKeys.length > 0
   const label = lockedTokenLabel(text, t)
   const readableValue = lockedTokenReadableValue(text)
   const importName = isImport ? lockedImportName(readableValue, t) : ''
@@ -368,15 +434,33 @@ function LockedLatexToken({ text }: { text: string }) {
   }
 
   const button = (
-    <button
-      type="button"
-      className="inline-flex w-fit select-none items-center rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-200"
-      aria-label={t('paperAgent.sections.lockedTokenAria')}
-      title={t('paperAgent.sections.lockedTokenTitle')}
-      onClick={() => setExpanded((open) => !open)}
-    >
-      {label}
-    </button>
+    <span className="inline-flex max-w-full items-center gap-1 align-middle">
+      <button
+        type="button"
+        className="inline-flex min-w-0 max-w-full select-none items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-200"
+        aria-label={t('paperAgent.sections.lockedTokenAria')}
+        title={t('paperAgent.sections.lockedTokenTitle')}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        <span className="shrink-0">{label}</span>
+        {isCitation && readableValue ? (
+          <span className="min-w-0 truncate font-mono text-[11px] text-sky-900">
+            {readableValue}
+          </span>
+        ) : null}
+      </button>
+      {isCitation && onRemove ? (
+        <button
+          type="button"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-rose-100 bg-rose-50 text-rose-600 transition hover:border-rose-200 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-100"
+          aria-label={t('paperAgent.sections.removeCitation')}
+          title={t('paperAgent.sections.removeCitation')}
+          onClick={onRemove}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </span>
   )
 
   const details = expanded ? (
@@ -575,6 +659,13 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
     retry: false,
   })
 
+  const citationsQuery = useQuery({
+    queryKey: ['paper-citations', paperId],
+    queryFn: () => getCitations(paperId),
+    retry: false,
+    staleTime: 10_000,
+  })
+
   const sectionsByName = useMemo(() => {
     const map = new Map<string, PaperSection>()
     for (const section of sectionsQuery.data?.sections ?? []) {
@@ -590,15 +681,27 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
     [selected?.text, selectedSection],
   )
   const readableSegments = useMemo(() => latexDraftSegments(selectedBodyView.bodyText), [selectedBodyView.bodyText])
+  const citationKeySet = useMemo(
+    () => new Set((citationsQuery.data?.selected_refs ?? []).map((ref) => ref.key)),
+    [citationsQuery.data?.selected_refs],
+  )
   const isEditing = editingSection === selectedSection
-  const draftBodyText = useMemo(() => draftSegments.map((segment) => segment.text).join(''), [draftSegments])
-  const isDirty = isEditing && selected ? draftBodyText !== selectedBodyView.bodyText : false
+  const draftBodyWithCitations = useMemo(
+    () => materializeDraftBody(draftSegments, citationKeySet),
+    [citationKeySet, draftSegments],
+  )
+  const isDirty = isEditing && selected ? draftBodyWithCitations !== selectedBodyView.bodyText : false
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!selected) throw new Error(t('paperAgent.sections.sourceUnavailable', { section: labelForSection(selectedSection, t) }))
+      const citations = citationsQuery.data ?? await queryClient.fetchQuery({
+        queryKey: ['paper-citations', paperId],
+        queryFn: () => getCitations(paperId),
+      })
+      const validKeys = new Set((citations.selected_refs ?? []).map((ref) => ref.key))
       return putPaperSection(paperId, selectedSection, {
-        text: selectedBodyView.toSource(draftBodyText),
+        text: selectedBodyView.toSource(materializeDraftBody(draftSegments, validKeys)),
         source_hash: selected.content_hash,
       })
     },
@@ -614,6 +717,7 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
         }
       })
       await queryClient.invalidateQueries({ queryKey: ['paper-run', paperId] })
+      await queryClient.invalidateQueries({ queryKey: ['paper-citations', paperId] })
       setEditingSection(null)
       setDraftSegments(latexDraftSegments(sectionBodyView(response.section.text, response.section.section_name).bodyText))
       setDraftHistory([])
@@ -912,7 +1016,11 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
                 <LockedLatexBlock text={selectedBodyView.prefixText} edge="top" />
                 {draftSegments.map((segment) =>
                   segment.kind === 'locked' ? (
-                    <LockedLatexToken key={segment.id} text={segment.text} />
+                    <LockedLatexToken
+                      key={segment.id}
+                      text={segment.text}
+                      onRemove={() => updateDraftSegment(segment.id, '')}
+                    />
                   ) : segment.kind === 'heading' ? (
                     <LatexHeadingToken key={segment.id} text={segment.text} />
                   ) : (

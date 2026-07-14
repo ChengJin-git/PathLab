@@ -271,7 +271,7 @@ export function WorkspaceTabs({
         <TablesTab paperId={paperId} />
       </Tabs.Content>
       <Tabs.Content value="citations" className="p-4 focus:outline-none sm:p-5">
-        <CitationsTab paperId={paperId} />
+        <CitationsTab paperId={paperId} onPdfRefreshNeeded={onPdfRefreshNeeded} />
       </Tabs.Content>
       <Tabs.Content value="validation" className="p-4 focus:outline-none sm:p-5">
         <ValidationTab paperId={paperId} run={run} validationSummary={run.validation_summary ?? null} />

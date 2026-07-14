@@ -1040,6 +1040,25 @@
           "key": {
             "type": "string",
             "title": "Key"
+          },
+          "removed_from_sections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Removed From Sections"
+          },
+          "downstream_stale": {
+            "type": "boolean",
+            "title": "Downstream Stale",
+            "default": false
+          },
+          "stale_artifacts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Stale Artifacts"
           }
         },
         "type": "object",
