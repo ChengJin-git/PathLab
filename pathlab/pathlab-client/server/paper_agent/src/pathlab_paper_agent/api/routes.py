@@ -39,7 +39,7 @@ from pathlab_paper_agent.bootstrap import ensure_server_on_path
 
 ensure_server_on_path()
 
-from backend.auth import current_active_user, User  # noqa: E402
+from backend.auth import current_active_user, get_user_from_header_or_param, User  # noqa: E402
 from backend.database import get_db  # noqa: E402
 from backend.database.repositories import PaperGenerationRunRepository  # noqa: E402
 
@@ -207,6 +207,22 @@ def _load_manifest(paths: PaperRunPaths) -> Optional[PaperManifest]:
     except Exception as exc:
         logger.warning(
             "paper_generation: failed to parse manifest for %s: %s",
+            paths.paper_id,
+            exc,
+        )
+        return None
+
+
+def _load_config(paths: PaperRunPaths) -> Optional[PaperConfig]:
+    if not paths.config.exists():
+        return None
+    try:
+        return PaperConfig.model_validate(
+            json.loads(paths.config.read_text(encoding="utf-8"))
+        )
+    except Exception as exc:
+        logger.warning(
+            "paper_generation: failed to parse config for %s: %s",
             paths.paper_id,
             exc,
         )
@@ -911,9 +927,11 @@ async def get_paper_run(
     row = await _load_or_404(db, paper_id, user)
     paths = PaperRunPaths.for_paper(paper_id)
     manifest = _load_manifest(paths)
+    config = _load_config(paths)
     summary = _row_to_summary(row, manifest)
     return PaperRunDetail(
         **summary.model_dump(),
+        source_tasks=config.source_tasks if config is not None else [],
         artifacts=_public_artifacts(manifest),
         stage_log=manifest.stage_log if manifest is not None else [],
         validation_summary=_validation_summary(paths),
@@ -1353,8 +1371,6 @@ async def delete_paper_citation(
     ref = next((item for item in selected_refs if item.key == key), None)
     if ref is None:
         return _error_response(404, "not_found", f"Citation {key} not found.")
-    if ref.added_by != "user":
-        return _error_response(403, "not_user_added", "Only user-added citations can be deleted.")
     if key in _collect_required_keys(_load_json_file(paths.outline_json)):
         return _error_response(409, "still_required", f"Citation {key} is still required by the outline.")
 
@@ -1362,8 +1378,8 @@ async def delete_paper_citation(
     _write_selected_refs(paths, remaining)
     _append_citation_stage_log(
         paths,
-        status="user_removed",
-        message=f"User removed citation {key}",
+        status="citation_removed",
+        message=f"Removed citation {key}",
     )
     return CitationDeleteResponse(deleted=True, key=key)
 
@@ -1573,7 +1589,7 @@ async def delete_paper_run(
 async def download_paper_file_by_query(
     paper_id: str,
     path: str = Query(...),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db),
 ):
     return await _download_paper_file_impl(paper_id, path, user, db)
@@ -1583,7 +1599,7 @@ async def download_paper_file_by_query(
 async def download_paper_file(
     paper_id: str,
     path: str,
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db),
 ):
     return await _download_paper_file_impl(paper_id, path, user, db)
@@ -1629,4 +1645,11 @@ async def _download_paper_file_impl(
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Path is a directory.")
 
-    return FileResponse(target)
+    return FileResponse(
+        target,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )

@@ -2007,6 +2007,14 @@
             "type": "array",
             "title": "Source Task Ids"
           },
+          "source_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/SourceTaskRef"
+            },
+            "type": "array",
+            "title": "Source Tasks",
+            "default": []
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",

@@ -6,6 +6,7 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import replace
 from typing import Any
+from urllib.parse import quote
 
 import bibtexparser
 import httpx
@@ -51,23 +52,57 @@ def fetch_doi_metadata(doi: str) -> CitationCandidate:
         raise ManualCitationError("invalid_doi", "DOI must start with 10.<registrant>/...")
     try:
         with httpx.Client(follow_redirects=True, timeout=8.0) as client:
-            response = client.get(
-                f"https://doi.org/{normalized}",
-                headers={"Accept": "application/x-bibtex"},
-            )
-            response.raise_for_status()
-    except httpx.HTTPError as exc:
+            try:
+                response = client.get(
+                    f"https://doi.org/{normalized}",
+                    headers={"Accept": "application/x-bibtex"},
+                )
+                response.raise_for_status()
+                candidate = parse_bibtex_string(response.text)
+                return replace(
+                    candidate,
+                    source="doi",
+                    doi=candidate.doi or normalized,
+                    url=candidate.url or f"https://doi.org/{normalized}",
+                )
+            except (ManualCitationError, httpx.HTTPError):
+                return _fetch_crossref_metadata(client, normalized)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
         raise ManualCitationError(
             "fetch_failed",
             f"Failed to fetch DOI metadata for {normalized}.",
             status_code=502,
         ) from exc
-    candidate = parse_bibtex_string(response.text)
-    return replace(
-        candidate,
+
+
+def _fetch_crossref_metadata(client: httpx.Client, doi: str) -> CitationCandidate:
+    response = client.get(f"https://api.crossref.org/works/{quote(doi, safe='')}")
+    response.raise_for_status()
+    message = response.json().get("message") or {}
+    title = _first_text(message.get("title"))
+    if not title:
+        raise ValueError("Crossref response did not include a title.")
+    journal = _first_text(message.get("container-title"))
+    doi_value = normalize_doi(message.get("DOI") or doi) or doi
+    return CitationCandidate(
+        title=title,
         source="doi",
-        doi=candidate.doi or normalized,
-        url=candidate.url or f"https://doi.org/{normalized}",
+        authors=_crossref_authors(message.get("author")),
+        year=_crossref_year(message),
+        venue=journal,
+        entry_type=_crossref_entry_type(message.get("type")),
+        journal=journal,
+        volume=_string_or_none(message.get("volume")),
+        number=_string_or_none(message.get("issue")),
+        pages=_string_or_none(message.get("page")),
+        publisher=_string_or_none(message.get("publisher")),
+        publication_type=_string_or_none(message.get("type")),
+        doi=doi_value,
+        url=_string_or_none(message.get("URL")) or f"https://doi.org/{doi_value}",
+        raw={
+            "crossref_type": message.get("type"),
+            "crossref_member": message.get("member"),
+        },
     )
 
 
@@ -260,6 +295,64 @@ def _infer_entry_type(journal: str | None, booktitle: str | None) -> str:
         return "inproceedings"
     if journal:
         return "article"
+    return "misc"
+
+
+def _first_text(value: Any) -> str | None:
+    if isinstance(value, list):
+        for item in value:
+            text = _collapse_ws(str(item)) if item is not None else ""
+            if text:
+                return text
+        return None
+    text = _collapse_ws(str(value)) if value is not None else ""
+    return text or None
+
+
+def _crossref_authors(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    authors: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = _first_text(item.get("name"))
+        given = _first_text(item.get("given"))
+        family = _first_text(item.get("family"))
+        if name:
+            authors.append(name)
+        elif given and family:
+            authors.append(f"{given} {family}")
+        elif family:
+            authors.append(family)
+        elif given:
+            authors.append(given)
+    return tuple(authors)
+
+
+def _crossref_year(message: dict[str, Any]) -> int | None:
+    for field in ("published-print", "published-online", "published", "issued", "created"):
+        value = message.get(field)
+        if not isinstance(value, dict):
+            continue
+        parts = value.get("date-parts")
+        if not isinstance(parts, list) or not parts:
+            continue
+        first = parts[0]
+        if not isinstance(first, list) or not first:
+            continue
+        year = _parse_year(first[0])
+        if year is not None:
+            return year
+    return None
+
+
+def _crossref_entry_type(value: Any) -> str:
+    entry_type = _collapse_ws(str(value or "")).casefold()
+    if entry_type in {"journal-article", "posted-content"}:
+        return "article"
+    if entry_type in {"proceedings-article", "proceedings"}:
+        return "inproceedings"
     return "misc"
 
 

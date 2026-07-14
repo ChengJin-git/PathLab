@@ -384,6 +384,7 @@ class CitationDeleteResponse(BaseModel):
 class PaperRunDetail(PaperRunSummary):
     """Detailed run view returned by GET /papers/{id}."""
 
+    source_tasks: list[SourceTaskRef] = Field(default_factory=list)
     artifacts: list[PaperRunArtifact] = Field(default_factory=list)
     stage_log: list[PaperStageLogEntry] = Field(default_factory=list)
     validation_summary: ValidationSummary = Field(default_factory=ValidationSummary)

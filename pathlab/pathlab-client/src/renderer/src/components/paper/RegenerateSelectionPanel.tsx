@@ -32,7 +32,7 @@ export interface SelectionInfo {
 
 interface RegenerateSelectionPanelProps {
   paperId: string
-  sectionName: string
+  sectionName: string | null
   templateId?: TemplateId
   selection: SelectionInfo | null
   onClear: () => void
@@ -47,7 +47,16 @@ const FRIENDLY_ERROR_CODES = new Set([
   'selection_not_found',
   'ambiguous_selection',
   'selection_too_short',
+  'claim_guard_rejected',
+  'validation_rejected',
 ])
+
+function isClaimGuardMessage(message: string | null | undefined): boolean {
+  return Boolean(message && (
+    message.includes('claim_guard') ||
+    message.includes('validation rejected regenerated candidate')
+  ))
+}
 
 function extractBackendCode(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
@@ -72,12 +81,16 @@ function extractBackendCode(error: unknown): string | null {
 function errorMessage(error: unknown, t: TFunction): string {
   const code = extractBackendCode(error)
   if (code && FRIENDLY_ERROR_CODES.has(code)) return t(`paperAgent.regenerate.errors.${code}`)
+  if (error instanceof Error && isClaimGuardMessage(error.message)) {
+    return t('paperAgent.regenerate.errors.claim_guard_rejected')
+  }
   return error instanceof Error ? error.message : String(error)
 }
 
 function jobErrorMessage(job: RegenerateJobEntry, t: TFunction): string {
   const code = job.error_code ?? ''
   if (FRIENDLY_ERROR_CODES.has(code)) return t(`paperAgent.regenerate.errors.${code}`)
+  if (isClaimGuardMessage(job.error_message)) return t('paperAgent.regenerate.errors.claim_guard_rejected')
   return job.error_message || t('paperAgent.regenerate.fallbackJobError')
 }
 
@@ -98,7 +111,7 @@ export function RegenerateSelectionPanel({
   const [note, setNote] = useState('')
   const [regenId, setRegenId] = useState<string | null>(null)
   const [rejectError, setRejectError] = useState<unknown>(null)
-  const selectionSignature = selection
+  const selectionSignature = selection && sectionName
     ? `${sectionName}:${selection.source ?? 'source'}:${selection.charStart ?? 'pdf'}:${selection.charEnd ?? 'pdf'}:${selection.text.length}:${selection.text.slice(0, 120)}`
     : 'none'
   const isPdfSelection =
@@ -121,7 +134,7 @@ export function RegenerateSelectionPanel({
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      if (!selection) throw new Error(t('paperAgent.regenerate.errors.selectFirst'))
+      if (!selection || !sectionName) throw new Error(t('paperAgent.regenerate.errors.selectFirst'))
       const cached = queryClient.getQueryData<PaperSectionListResponse>(['paper-sections', paperId])
       const sections = cached ?? (await getPaperSections(paperId))
       const section = sections.sections?.find((item) => item.section_name === sectionName)
@@ -201,7 +214,8 @@ export function RegenerateSelectionPanel({
   const completedJob = job?.status === 'completed' ? job : null
   const failedJob = job?.status === 'failed' ? job : null
   const terminalState = job && ['rejected', 'cancelled'].includes(job.status) ? job.status : null
-  const canSubmit = Boolean(selection) && !startMutation.isPending && !isSubmittingOrPolling && !completedJob
+  const canSubmit = Boolean(selection && sectionName) && !startMutation.isPending && !isSubmittingOrPolling && !completedJob
+  const sectionLabel = sectionName ? labelForSection(sectionName, t) : t('paperAgent.regenerate.selectedSectionPlaceholder')
 
   const helperCopy = useMemo(() => {
     if (!selection) return t('paperAgent.regenerate.helperNoSelection')
@@ -259,7 +273,7 @@ export function RegenerateSelectionPanel({
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">{t('paperAgent.regenerate.title')}</div>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Sparkles className="h-4 w-4 text-sky-500" />
-              {labelForSection(sectionName, t)}
+              {sectionLabel}
             </CardTitle>
           </div>
           {selection ? (

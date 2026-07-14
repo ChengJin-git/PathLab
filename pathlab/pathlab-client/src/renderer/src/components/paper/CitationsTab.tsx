@@ -59,6 +59,7 @@ export function CitationsTab({ paperId }: CitationsTabProps) {
   const requiredKeys = view?.required_keys ?? []
   const refsByKey = useMemo(() => new Map(selectedRefs.map((ref) => [ref.key, ref])), [selectedRefs])
   const selectedKeySet = useMemo(() => new Set(selectedRefs.map((ref) => ref.key)), [selectedRefs])
+  const requiredKeySet = useMemo(() => new Set(requiredKeys), [requiredKeys])
 
   const focusCitation = (key: string) => {
     setHighlightKey(key)
@@ -149,6 +150,7 @@ export function CitationsTab({ paperId }: CitationsTabProps) {
                 <CitationCard
                   key={ref.key}
                   refData={ref}
+                  required={requiredKeySet.has(ref.key)}
                   highlighted={highlightKey === ref.key}
                   deleting={deleteMutation.isPending && deleteMutation.variables === ref.key}
                   onDelete={(key) => deleteMutation.mutate(key)}
@@ -227,11 +229,13 @@ export function CitationsTab({ paperId }: CitationsTabProps) {
 
 function CitationCard({
   refData,
+  required,
   highlighted,
   deleting,
   onDelete,
 }: {
   refData: CitationReference
+  required: boolean
   highlighted: boolean
   deleting: boolean
   onDelete: (key: string) => void
@@ -279,18 +283,17 @@ function CitationCard({
           </dl>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <ExternalLinks refData={refData} />
-            {refData.added_by === 'user' ? (
-              <Button
-                size="sm"
-                variant="destructive"
-                className="gap-2"
-                onClick={() => onDelete(refData.key)}
-                disabled={deleting}
-              >
-                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                {t('paperAgent.citations.delete')}
-              </Button>
-            ) : null}
+            <Button
+              size="sm"
+              variant="destructive"
+              className="gap-2"
+              onClick={() => onDelete(refData.key)}
+              disabled={deleting || required}
+              title={required ? t('paperAgent.citations.requiredCannotDelete') : t('paperAgent.citations.delete')}
+            >
+              {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              {required ? t('paperAgent.citations.requiredCannotDeleteShort') : t('paperAgent.citations.delete')}
+            </Button>
           </div>
         </div>
       ) : null}

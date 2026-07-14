@@ -333,8 +333,8 @@ export function deletePaperRun(
   }>(`${API_BASE}/papers/${encodeURIComponent(paperId)}`, { method: 'DELETE' }, 'Delete paper run')
 }
 
-export function getPaperFileBlob(paperId: string, path: string): Promise<Blob> {
-  return apiFetchBlob(paperFileEndpoint(paperId, path), undefined, 'Get paper artifact')
+export function getPaperFileBlob(paperId: string, path: string, options?: RequestInit): Promise<Blob> {
+  return apiFetchBlob(paperFileEndpoint(paperId, path), options, 'Get paper artifact')
 }
 
 export async function getPaperFileText(paperId: string, path: string): Promise<string> {
@@ -360,6 +360,14 @@ export function downloadPaperFile(
   return downloadApiFile(paperFileEndpoint(paperId, path), filename, undefined, 'Download paper artifact')
 }
 
-export function downloadPaperExport(paperId: string, template: string = 'miccai'): Promise<DownloadApiFileResult> {
-  return downloadPaperFile(paperId, `exports/${template}_bundle.zip`, `${template}_bundle.zip`)
+export function downloadPaperExport(
+  paperId: string,
+  template: string = 'miccai',
+  fallbackFilename?: string,
+): Promise<DownloadApiFileResult> {
+  return downloadPaperFile(
+    paperId,
+    `exports/${template}_bundle.zip`,
+    fallbackFilename ?? `${template}_bundle.zip`,
+  )
 }

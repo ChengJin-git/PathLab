@@ -46,6 +46,7 @@ from .schemas import (
     GuardIssueSummary,
     GuardResultSummary,
     OutlineApprovalRequest,
+    PaperConfig,
     PaperRunCreateResponse,
     PaperRunDetail,
     PaperRunListResponse,
@@ -820,8 +821,23 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
             raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        paths = PaperRunPaths.for_paper(paper_id)
+        source_tasks = []
+        if paths.config.exists():
+            try:
+                config = PaperConfig.model_validate(
+                    json.loads(paths.config.read_text(encoding="utf-8"))
+                )
+                source_tasks = config.source_tasks
+            except Exception as exc:
+                logger.warning(
+                    "paper_generation: failed to parse config for %s: %s",
+                    paper_id,
+                    exc,
+                )
         return PaperRunDetail(
             **summary.model_dump(),
+            source_tasks=source_tasks,
             artifacts=manifest_artifacts(manifest),
             stage_log=manifest.stage_log,
             validation_summary=_validation_summary(PaperRunPaths.for_paper(paper_id)),
@@ -1213,8 +1229,6 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
         ref = next((item for item in selected_refs if item.key == key), None)
         if ref is None:
             return _error_response(404, "not_found", f"Citation {key} not found.")
-        if ref.added_by != "user":
-            return _error_response(403, "not_user_added", "Only user-added citations can be deleted.")
         if key in _collect_required_keys(_read_json_object(paths.outline_json)):
             return _error_response(409, "still_required", f"Citation {key} is still required by the outline.")
 
@@ -1222,8 +1236,8 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
         _write_selected_refs(paths, remaining)
         _append_citation_stage_log(
             paths,
-            status="user_removed",
-            message=f"User removed citation {key}",
+            status="citation_removed",
+            message=f"Removed citation {key}",
         )
         return CitationDeleteResponse(deleted=True, key=key)
 
@@ -1255,6 +1269,13 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
             raise HTTPException(status_code=404, detail="File not found.")
         if target.is_dir():
             raise HTTPException(status_code=400, detail="Path is a directory.")
-        return FileResponse(target)
+        return FileResponse(
+            target,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     return app

@@ -658,6 +658,8 @@ export interface components {
             selected_templates: components["schemas"]["TemplateId"][];
             /** Source Task Ids */
             source_task_ids: string[];
+            /** Source Tasks */
+            source_tasks?: components["schemas"]["SourceTaskRef"][];
             /**
              * Created At
              * Format: date-time

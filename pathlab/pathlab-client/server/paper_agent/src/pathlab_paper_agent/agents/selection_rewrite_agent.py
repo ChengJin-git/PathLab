@@ -48,7 +48,10 @@ class SelectionRewriteAgent:
                     content=(
                         "You edit one sentence/span in a scientific manuscript. "
                         "Rewrite only the selected source span. Do not add new metrics, citations, "
-                        "cohorts, datasets, or claims. Preserve LaTeX commands/placeholders when present. "
+                        "cohorts, datasets, or claims. Preserve the same evidence scope and claim strength. "
+                        "When the user asks to shorten, compress wording only; do not introduce or strengthen "
+                        "external validation, baseline comparison, superiority, or statistical significance claims. "
+                        "Preserve LaTeX commands/placeholders when present. "
                         'Return JSON only: {"replacement_text": "...", "rationale": "..."}'
                     ),
                 ),
@@ -72,6 +75,8 @@ class SelectionRewriteAgent:
                 "Return a replacement for the selected source span only.",
                 "Do not return a full paragraph or a LaTeX section heading.",
                 "Do not introduce raw \\cite{} commands or new metric values.",
+                "Do not add or strengthen claims about external validation, outperforming baselines, superiority, or statistical significance.",
+                "If the user asks to shorten, preserve the same meaning while removing nonessential wording.",
             ],
         }
         return json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
