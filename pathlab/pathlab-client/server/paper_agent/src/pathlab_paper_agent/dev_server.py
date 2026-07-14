@@ -358,6 +358,14 @@ def _append_required_key(paths: PaperRunPaths, key: str) -> None:
 
 
 _CITE_COMMAND_RE = re.compile(r"(\\cite[a-zA-Z*]*(?:\[[^\]]*\])*)\{([^{}]+)\}")
+_BARE_CITATION_KEY_RE = re.compile(r"[A-Z][A-Za-z0-9:-]*\d{4}_[A-Za-z0-9_:-]+")
+
+
+def _cleanup_citation_spacing(text: str) -> str:
+    text = re.sub(r"[（(]\s*[）)]", "", text)
+    text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)
+    text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", text)
+    return text
 
 
 def _remove_citation_key_from_text(text: str, key: str) -> str:
@@ -374,12 +382,12 @@ def _remove_citation_key_from_text(text: str, key: str) -> str:
         return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
 
     next_text = _CITE_COMMAND_RE.sub(repl, text)
+    if key in next_text:
+        changed = True
+        next_text = next_text.replace(key, "")
     if not changed:
         return text
-    next_text = re.sub(r"[（(]\s*[）)]", "", next_text)
-    next_text = re.sub(r"[ \t]+([,.;:!?])", r"\1", next_text)
-    next_text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", next_text)
-    return next_text
+    return _cleanup_citation_spacing(next_text)
 
 
 def _prune_unselected_citation_keys_from_text(text: str, selected_keys: set[str]) -> str:
@@ -398,12 +406,19 @@ def _prune_unselected_citation_keys_from_text(text: str, selected_keys: set[str]
         return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
 
     next_text = _CITE_COMMAND_RE.sub(repl, text)
+
+    def bare_repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        key = match.group(0)
+        if key in selected_keys:
+            return key
+        changed = True
+        return ""
+
+    next_text = _BARE_CITATION_KEY_RE.sub(bare_repl, next_text)
     if not changed:
         return text
-    next_text = re.sub(r"[（(]\s*[）)]", "", next_text)
-    next_text = re.sub(r"[ \t]+([,.;:!?])", r"\1", next_text)
-    next_text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", next_text)
-    return next_text
+    return _cleanup_citation_spacing(next_text)
 
 
 def _remove_citation_key_from_sections(paths: PaperRunPaths, key: str) -> list[str]:
@@ -1345,7 +1360,12 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
 
         remaining = [item for item in selected_refs if item.key != key]
         _write_selected_refs(paths, remaining)
-        changed_sections = _sync_section_citations_to_selected_refs(paths, remaining)
+        changed_sections = sorted(
+            {
+                *_remove_citation_key_from_sections(paths, key),
+                *_sync_section_citations_to_selected_refs(paths, remaining),
+            }
+        )
         stale_artifacts = _mark_citation_section_sync_stale(paths, changed_sections)
         _append_citation_stage_log(
             paths,
