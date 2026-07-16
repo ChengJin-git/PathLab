@@ -9,6 +9,7 @@ import {
   getCitations,
   getPaperSections,
   putPaperSection,
+  type CitationReference,
   type PaperSection,
   type PaperSectionListResponse,
   type TemplateId,
@@ -316,6 +317,22 @@ function citationKeysFromLatexToken(text: string): string[] {
     .filter(Boolean)
 }
 
+function citationTitleMap(refs: CitationReference[] | undefined): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const ref of refs ?? []) {
+    const title = ref.title?.trim()
+    if (ref.key) map.set(ref.key, title || ref.key)
+  }
+  return map
+}
+
+function citationDisplayValue(keys: string[], titleByKey?: Map<string, string>): string {
+  return keys
+    .map((key) => titleByKey?.get(key) || key)
+    .filter(Boolean)
+    .join('; ')
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
@@ -385,7 +402,15 @@ function lockedImportName(value: string, t: TFunction): string {
   return importNameByFile[fileName] ?? t('paperAgent.sections.lockedImportNames.generic')
 }
 
-function LockedLatexToken({ text, onRemove }: { text: string; onRemove?: () => void }) {
+function LockedLatexToken({
+  text,
+  citationTitles,
+  onRemove,
+}: {
+  text: string
+  citationTitles?: Map<string, string>
+  onRemove?: () => void
+}) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   if (!text) return null
@@ -395,6 +420,7 @@ function LockedLatexToken({ text, onRemove }: { text: string; onRemove?: () => v
   const isCitation = citationKeys.length > 0
   const label = lockedTokenLabel(text, t)
   const readableValue = lockedTokenReadableValue(text)
+  const displayValue = isCitation ? citationDisplayValue(citationKeys, citationTitles) : readableValue
   const importName = isImport ? lockedImportName(readableValue, t) : ''
 
   if (isImport) {
@@ -439,13 +465,13 @@ function LockedLatexToken({ text, onRemove }: { text: string; onRemove?: () => v
         type="button"
         className="inline-flex min-w-0 max-w-full select-none items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-200"
         aria-label={t('paperAgent.sections.lockedTokenAria')}
-        title={t('paperAgent.sections.lockedTokenTitle')}
+        title={displayValue || t('paperAgent.sections.lockedTokenTitle')}
         onClick={() => setExpanded((open) => !open)}
       >
         <span className="shrink-0">{label}</span>
-        {isCitation && readableValue ? (
-          <span className="min-w-0 truncate font-mono text-[11px] text-sky-900">
-            {readableValue}
+        {isCitation && displayValue ? (
+          <span className="min-w-0 max-w-[28rem] truncate text-[11px] text-sky-900">
+            {displayValue}
           </span>
         ) : null}
       </button>
@@ -469,7 +495,7 @@ function LockedLatexToken({ text, onRemove }: { text: string; onRemove?: () => v
         <span className="block font-semibold text-slate-800">{label}</span>
         <span className="block">
           {readableValue
-            ? t('paperAgent.sections.lockedTokenPreservedWithValue', { value: readableValue })
+            ? t('paperAgent.sections.lockedTokenPreservedWithValue', { value: displayValue || readableValue })
             : t('paperAgent.sections.lockedTokenPreserved')}
         </span>
       </span>
@@ -683,6 +709,10 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
   const readableSegments = useMemo(() => latexDraftSegments(selectedBodyView.bodyText), [selectedBodyView.bodyText])
   const citationKeySet = useMemo(
     () => new Set((citationsQuery.data?.selected_refs ?? []).map((ref) => ref.key)),
+    [citationsQuery.data?.selected_refs],
+  )
+  const citationTitles = useMemo(
+    () => citationTitleMap(citationsQuery.data?.selected_refs),
     [citationsQuery.data?.selected_refs],
   )
   const isEditing = editingSection === selectedSection
@@ -1019,6 +1049,7 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
                     <LockedLatexToken
                       key={segment.id}
                       text={segment.text}
+                      citationTitles={citationTitles}
                       onRemove={() => updateDraftSegment(segment.id, '')}
                     />
                   ) : segment.kind === 'heading' ? (
@@ -1059,7 +1090,7 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
                       data-source-end={segment.sourceEnd}
                       data-source-kind="locked"
                     >
-                      <LockedLatexToken text={segment.text} />
+                      <LockedLatexToken text={segment.text} citationTitles={citationTitles} />
                     </span>
                   ) : segment.kind === 'heading' ? (
                     <div
