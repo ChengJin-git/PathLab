@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   AlertCircle,
+  AlertTriangle,
   BookOpen,
   CheckCircle2,
   ChevronDown,
@@ -29,6 +30,7 @@ import { cn } from '../../lib/utils'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Card, CardContent } from '../ui/card'
+import { ModalShell } from '../ui/modal-shell'
 import { Tooltip } from '../ui/tooltip'
 import { AddCitationModal } from './AddCitationModal'
 import { paperCitationTypeLabel, paperValidationStatusLabel } from '../../lib/paperI18n'
@@ -43,6 +45,7 @@ export function CitationsTab({ paperId, onPdfRefreshNeeded }: CitationsTabProps)
   const qc = useQueryClient()
   const [modalOpen, setModalOpen] = useState(false)
   const [highlightKey, setHighlightKey] = useState<string | null>(null)
+  const [pendingDeleteRef, setPendingDeleteRef] = useState<CitationReference | null>(null)
   const citationsQuery = useQuery({
     queryKey: ['paper-citations', paperId],
     queryFn: () => getCitations(paperId),
@@ -60,6 +63,7 @@ export function CitationsTab({ paperId, onPdfRefreshNeeded }: CitationsTabProps)
   const deleteMutation = useMutation({
     mutationFn: (key: string) => deleteCitation(paperId, key),
     onSuccess: async (response) => {
+      setPendingDeleteRef(null)
       await qc.invalidateQueries({ queryKey: ['paper-citations', paperId] })
       await qc.invalidateQueries({ queryKey: ['paper-sections', paperId] })
       await qc.invalidateQueries({ queryKey: ['paper-run', paperId] })
@@ -73,6 +77,11 @@ export function CitationsTab({ paperId, onPdfRefreshNeeded }: CitationsTabProps)
       }
     },
   })
+
+  const requestDeleteCitation = (ref: CitationReference) => {
+    deleteMutation.reset()
+    setPendingDeleteRef(ref)
+  }
 
   const view = citationsQuery.data
   const selectedRefs = view?.selected_refs ?? []
@@ -186,7 +195,7 @@ export function CitationsTab({ paperId, onPdfRefreshNeeded }: CitationsTabProps)
                   required={requiredKeySet.has(ref.key)}
                   highlighted={highlightKey === ref.key}
                   deleting={deleteMutation.isPending && deleteMutation.variables === ref.key}
-                  onDelete={(key) => deleteMutation.mutate(key)}
+                  onDelete={() => requestDeleteCitation(ref)}
                 />
               ))
             ) : (
@@ -256,7 +265,78 @@ export function CitationsTab({ paperId, onPdfRefreshNeeded }: CitationsTabProps)
         onDuplicate={focusCitation}
         onAdded={focusCitation}
       />
+      <DeleteCitationConfirmModal
+        refData={pendingDeleteRef}
+        isDeleting={deleteMutation.isPending}
+        error={deleteMutation.error}
+        onCancel={() => {
+          deleteMutation.reset()
+          setPendingDeleteRef(null)
+        }}
+        onConfirm={() => {
+          if (pendingDeleteRef) deleteMutation.mutate(pendingDeleteRef.key)
+        }}
+      />
     </div>
+  )
+}
+
+function DeleteCitationConfirmModal({
+  refData,
+  isDeleting,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  refData: CitationReference | null
+  isDeleting: boolean
+  error: unknown
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <ModalShell
+      isOpen={!!refData}
+      onClose={isDeleting ? undefined : onCancel}
+      title={t('paperAgent.citations.confirmDeleteTitle')}
+    >
+      <div className="space-y-4 p-5">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 rounded-2xl border border-red-100 bg-red-50 p-2 text-red-600">
+            <AlertTriangle className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-slate-950">
+              {t('paperAgent.citations.confirmDeleteHeading')}
+            </h3>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              {t('paperAgent.citations.confirmDeleteDescription')}
+            </p>
+            {refData ? (
+              <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="line-clamp-2 text-sm font-semibold text-slate-950">{refData.title}</div>
+                <div className="mt-1 truncate font-mono text-xs text-slate-500">{refData.key}</div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        {error ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {error instanceof Error ? error.message : String(error)}
+          </div>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel} disabled={isDeleting}>
+            {t('paperAgent.common.cancel')}
+          </Button>
+          <Button variant="destructive" className="gap-2" onClick={onConfirm} disabled={isDeleting}>
+            {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            {t('paperAgent.citations.confirmDeleteConfirm')}
+          </Button>
+        </div>
+      </div>
+    </ModalShell>
   )
 }
 
@@ -271,7 +351,7 @@ function CitationCard({
   required: boolean
   highlighted: boolean
   deleting: boolean
-  onDelete: (key: string) => void
+  onDelete: () => void
 }) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
@@ -368,7 +448,7 @@ function CitationCard({
               size="sm"
               variant="destructive"
               className="gap-2"
-              onClick={() => onDelete(refData.key)}
+              onClick={onDelete}
               disabled={deleting || required}
               title={required ? t('paperAgent.citations.requiredCannotDelete') : t('paperAgent.citations.delete')}
             >
