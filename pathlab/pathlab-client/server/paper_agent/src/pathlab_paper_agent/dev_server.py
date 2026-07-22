@@ -36,6 +36,7 @@ from .pipeline import (
 )
 from .regenerate import MissingSectionDraftError, UnknownSectionError, latest_regenerate_log_summary, regenerate_section
 from .process_logging import append_pipeline_event
+from .outline_markdown import outline_to_markdown
 from .schemas import (
     AddCitationPreview,
     AddCitationRequest,
@@ -237,6 +238,59 @@ def _collect_required_keys(outline: object) -> list[str]:
             for key in _string_array(section.get("citations")):
                 found.add(key)
     return sorted(found)
+
+
+def _write_outline_artifacts(paths: PaperRunPaths, manifest, outline: dict[str, object]) -> None:
+    paths.outline_json.parent.mkdir(parents=True, exist_ok=True)
+    paths.outline_json.write_text(json.dumps(outline, indent=2, ensure_ascii=False), encoding="utf-8")
+    paths.outline_markdown.write_text(outline_to_markdown(outline), encoding="utf-8")
+    manifest.artifact_index["drafts/outline.json"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "Outline",
+        "content_type": "application/json",
+    }
+
+
+def _outline_payload_changed(paths: PaperRunPaths, outline: dict[str, object]) -> bool:
+    if not paths.outline_json.is_file():
+        return True
+    try:
+        current = json.loads(paths.outline_json.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return True
+    return json.dumps(current, sort_keys=True, ensure_ascii=False) != json.dumps(outline, sort_keys=True, ensure_ascii=False)
+
+
+def _mark_outline_modified_by_user(outline: dict[str, object]) -> None:
+    extensions = outline.get("pathlab_extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+    extensions["outline_modified_by_user"] = True
+    outline["pathlab_extensions"] = extensions
+
+
+def _append_outline_edit_stage_log(manifest, *, approved: bool) -> None:
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.outlining.value,
+            "status": "user_edited",
+            "ts": now,
+            "started_at": now,
+            "finished_at": now,
+            "duration_ms": 0,
+            "message": "User edited outline and approved it." if approved else "User edited outline.",
+        }
+    )
+    manifest.artifact_index["drafts/大纲.md"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "大纲",
+        "content_type": "text/markdown",
+    }
 
 
 def _int_value(value: object, default: int) -> int:
@@ -1212,11 +1266,13 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
                 detail=f"outline cannot be edited at status {manifest.status.value}",
             )
 
-        paths.outline_json.parent.mkdir(parents=True, exist_ok=True)
-        paths.outline_json.write_text(
-            json.dumps(body.outline.model_dump(mode="json"), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        outline_payload = body.outline.model_dump(mode="json")
+        outline_changed = _outline_payload_changed(paths, outline_payload)
+        if outline_changed:
+            _mark_outline_modified_by_user(outline_payload)
+        _write_outline_artifacts(paths, manifest, outline_payload)
+        if outline_changed:
+            _append_outline_edit_stage_log(manifest, approved=body.approve)
 
         if not body.approve:
             manifest.status = PaperRunStatus.awaiting_outline_approval

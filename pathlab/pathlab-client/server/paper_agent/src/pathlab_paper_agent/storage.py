@@ -134,6 +134,9 @@ class PaperRunPaths:
     def outline_json(self) -> Path: return self.drafts_dir / "outline.json"
 
     @property
+    def outline_markdown(self) -> Path: return self.drafts_dir / "大纲.md"
+
+    @property
     def intro_rw_draft_dir(self) -> Path: return self.drafts_dir / "intro_rw_draft"
 
     @property

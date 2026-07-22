@@ -105,6 +105,7 @@ from pathlab_paper_agent.regenerate import (  # noqa: E402
 )
 from pathlab_paper_agent.process_logging import append_pipeline_event  # noqa: E402
 from pathlab_paper_agent.diagnostics import inspect_paper_run  # noqa: E402
+from pathlab_paper_agent.outline_markdown import outline_to_markdown  # noqa: E402
 from pathlab_paper_agent.validators.identifier_guard import scan_text  # noqa: E402
 from pathlab_paper_agent.scaffold import initialize_paper_run  # noqa: E402
 from pathlab_paper_agent.pipeline import request_pause  # noqa: E402
@@ -573,6 +574,59 @@ def _append_required_key(paths: PaperRunPaths, key: str) -> None:
     extensions["outline_modified_by_user"] = True
     outline["pathlab_extensions"] = extensions
     _atomic_write_json(paths.outline_json, outline)
+    _atomic_write_text(paths.outline_markdown, outline_to_markdown(outline))
+
+
+def _write_outline_artifacts(paths: PaperRunPaths, manifest: PaperManifest, outline: dict[str, object]) -> None:
+    _atomic_write_json(paths.outline_json, outline)
+    _atomic_write_text(paths.outline_markdown, outline_to_markdown(outline))
+    manifest.artifact_index["drafts/outline.json"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "Outline",
+        "content_type": "application/json",
+    }
+
+
+def _outline_payload_changed(paths: PaperRunPaths, outline: dict[str, object]) -> bool:
+    if not paths.outline_json.is_file():
+        return True
+    try:
+        current = json.loads(paths.outline_json.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return True
+    return json.dumps(current, sort_keys=True, ensure_ascii=False) != json.dumps(outline, sort_keys=True, ensure_ascii=False)
+
+
+def _mark_outline_modified_by_user(outline: dict[str, object]) -> None:
+    extensions = outline.get("pathlab_extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+    extensions["outline_modified_by_user"] = True
+    outline["pathlab_extensions"] = extensions
+
+
+def _append_outline_edit_stage_log(manifest: PaperManifest, *, approved: bool) -> None:
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.outlining.value,
+            "status": "user_edited",
+            "ts": now,
+            "started_at": now,
+            "finished_at": now,
+            "duration_ms": 0,
+            "message": "User edited outline and approved it." if approved else "User edited outline.",
+        }
+    )
+    manifest.artifact_index["drafts/大纲.md"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "大纲",
+        "content_type": "text/markdown",
+    }
 
 
 _CITE_COMMAND_RE = re.compile(r"(\\cite[a-zA-Z*]*(?:\[[^\]]*\])*)\{([^{}]+)\}")
@@ -1232,11 +1286,13 @@ async def update_paper_outline(
             detail=f"manifest.json not found for paper {paper_id}",
         )
 
-    paths.outline_json.parent.mkdir(parents=True, exist_ok=True)
-    paths.outline_json.write_text(
-        json.dumps(body.outline.model_dump(mode="json"), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    outline_payload = body.outline.model_dump(mode="json")
+    outline_changed = _outline_payload_changed(paths, outline_payload)
+    if outline_changed:
+        _mark_outline_modified_by_user(outline_payload)
+    _write_outline_artifacts(paths, manifest, outline_payload)
+    if outline_changed:
+        _append_outline_edit_stage_log(manifest, approved=body.approve)
 
     if not body.approve:
         manifest.status = PaperRunStatus.awaiting_outline_approval

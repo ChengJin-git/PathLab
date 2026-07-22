@@ -7,10 +7,11 @@ from typing import Any
 
 from pathlab_paper_agent.schemas import OutlineDocument, PaperManifest  # noqa: E402
 from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.outline_markdown import outline_to_markdown  # noqa: E402
 
 from ..agents import OutlineAgent, OutlineInputs
 from ..process_logging import register_private_log_artifact, write_stage_process_log
-from .common import load_config, register_artifact, write_json
+from .common import load_config, register_artifact, write_json, write_text
 
 _PROCESS_LOG_REL_PATH = "logs/outlining_log.private.json"
 
@@ -39,12 +40,20 @@ def run(
     try:
         outline = outline_agent.generate(OutlineInputs.from_paths(paths, config))
         outline_document = OutlineDocument.model_validate(outline)
-        write_json(paths.outline_json, outline_document.model_dump(mode="json"))
+        outline_payload = outline_document.model_dump(mode="json")
+        write_json(paths.outline_json, outline_payload)
+        write_text(paths.outline_markdown, outline_to_markdown(outline_payload))
         register_artifact(
             manifest,
             "drafts/outline.json",
             label="Outline",
             content_type="application/json",
+        )
+        register_artifact(
+            manifest,
+            "drafts/大纲.md",
+            label="大纲",
+            content_type="text/markdown",
         )
         status = "completed"
     except Exception as exc:
