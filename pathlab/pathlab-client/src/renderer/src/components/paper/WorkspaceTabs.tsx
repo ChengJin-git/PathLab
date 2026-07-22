@@ -11,6 +11,7 @@ import {
   Image,
   Library,
   Loader2,
+  RotateCcw,
   ShieldCheck,
   Table2,
   XCircle,
@@ -18,6 +19,7 @@ import {
 import type { LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { PaperRunDetail, PaperRunStage, PaperStageLogEntry } from '../../api/papers'
+import { paperStageLabel } from '../../lib/paperI18n'
 import { CitationsTab } from './CitationsTab'
 import { FiguresTab } from './FiguresTab'
 import { OutlineTab } from './OutlineTab'
@@ -28,10 +30,10 @@ import { ValidationTab } from './ValidationTab'
 
 export const WORKSPACE_TAB_VALUES = [
   'outline',
-  'sections',
-  'figures',
   'tables',
+  'figures',
   'citations',
+  'sections',
   'validation',
   'pdf',
 ] as const
@@ -44,11 +46,14 @@ interface WorkspaceTabsProps {
   onValueChange: (value: WorkspaceTabValue) => void
   pdfRefreshKey: number
   onPdfRefreshNeeded: () => void
+  onRerunStage?: (stage: PaperRunStage) => void
+  rerunningStage?: PaperRunStage | null
 }
 
 interface TabDefinition {
   value: WorkspaceTabValue
   icon: LucideIcon
+  rerunStage: PaperRunStage
 }
 
 type TabState = 'completed' | 'running' | 'waiting' | 'failed' | 'warning' | 'pending'
@@ -60,13 +65,13 @@ interface StageRowDefinition {
 }
 
 const TABS: TabDefinition[] = [
-  { value: 'outline', icon: FileJson },
-  { value: 'sections', icon: FileCode2 },
-  { value: 'figures', icon: Image },
-  { value: 'tables', icon: Table2 },
-  { value: 'citations', icon: Library },
-  { value: 'validation', icon: ShieldCheck },
-  { value: 'pdf', icon: BookOpen },
+  { value: 'outline', icon: FileJson, rerunStage: 'outlining' },
+  { value: 'tables', icon: Table2, rerunStage: 'building_evidence' },
+  { value: 'figures', icon: Image, rerunStage: 'plotting' },
+  { value: 'citations', icon: Library, rerunStage: 'literature_review' },
+  { value: 'sections', icon: FileCode2, rerunStage: 'section_writing' },
+  { value: 'validation', icon: ShieldCheck, rerunStage: 'validating' },
+  { value: 'pdf', icon: BookOpen, rerunStage: 'rendering' },
 ]
 
 const STAGE_ROWS: StageRowDefinition[] = [
@@ -139,7 +144,7 @@ function tabState(run: PaperRunDetail, tab: WorkspaceTabValue): TabState {
 function tabStateMessage(run: PaperRunDetail, tab: WorkspaceTabValue): string | undefined {
   const logs = run.stage_log ?? []
   const rows = STAGE_ROWS.filter((row) => row.tab === tab)
-  return [...logs].reverse().find((entry) => rows.some((row) => row.stages.includes(entry.stage as PaperRunStage)))?.message
+  return [...logs].reverse().find((entry) => rows.some((row) => row.stages.includes(entry.stage as PaperRunStage)))?.message ?? undefined
 }
 
 function stateIcon(state: TabState) {
@@ -207,6 +212,8 @@ export function WorkspaceTabs({
   onValueChange,
   pdfRefreshKey,
   onPdfRefreshNeeded,
+  onRerunStage,
+  rerunningStage,
 }: WorkspaceTabsProps) {
   const { t } = useTranslation()
   const templateId = run.selected_templates[0]
@@ -217,7 +224,7 @@ export function WorkspaceTabs({
       onValueChange={(next) => {
         if (isWorkspaceTabValue(next)) onValueChange(next)
       }}
-      className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm"
+      className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
     >
       <div className="overflow-x-auto border-b border-slate-100 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_transparent_34%),linear-gradient(180deg,_#ffffff,_#f8fafc)] p-3">
         <Tabs.List
@@ -231,28 +238,47 @@ export function WorkspaceTabs({
             const latestMessage = tabStateMessage(run, tab.value)
             const tabLabel = t(`paperAgent.tabs.${tab.value}`)
             const statusLabel = t(`paperAgent.tabs.status.${state}`)
+            const rerunLabel = t('paperAgent.rerun.stageAction', { stage: paperStageLabel(t, tab.rerunStage) })
+            const isRerunning = rerunningStage === tab.rerunStage
+            const isRerunDisabled = run.status === 'pending' || run.status === 'running' || Boolean(rerunningStage)
             return (
-              <Tabs.Trigger
-                key={tab.value}
-                value={tab.value}
-                title={latestMessage ? `${tabLabel} · ${statusLabel} · ${latestMessage}` : `${tabLabel} · ${statusLabel}`}
-                className={cn(
-                  'flex min-h-[4.8rem] min-w-0 flex-col items-start justify-between rounded-2xl border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm',
-                  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-500/20',
-                  tabButtonClass(state, selected),
-                )}
-              >
-                <span className="flex w-full items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-2">
+              <div key={tab.value} className="relative min-w-0">
+                <Tabs.Trigger
+                  value={tab.value}
+                  title={latestMessage ? `${tabLabel} · ${statusLabel} · ${latestMessage}` : `${tabLabel} · ${statusLabel}`}
+                  className={cn(
+                    'flex min-h-[4.8rem] w-full min-w-0 flex-col items-start justify-between rounded-2xl border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:shadow-sm',
+                    'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-500/20',
+                    tabButtonClass(state, selected),
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2 pr-10">
                     <Icon className="h-5 w-5 shrink-0" />
                     <span className="truncate text-base font-semibold">{tabLabel}</span>
                   </span>
-                  <span className="shrink-0">{stateIcon(state)}</span>
-                </span>
-                <span className={cn('max-w-full truncate rounded-full px-2 py-0.5 text-[11px] font-semibold', statusPillClass(state, selected))}>
-                  {statusLabel}
-                </span>
-              </Tabs.Trigger>
+                  <span className={cn('inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-[11px] font-semibold', statusPillClass(state, selected))}>
+                    {stateIcon(state)}
+                    {statusLabel}
+                  </span>
+                </Tabs.Trigger>
+                {onRerunStage ? (
+                  <button
+                    type="button"
+                    title={rerunLabel}
+                    aria-label={rerunLabel}
+                    onClick={() => onRerunStage(tab.rerunStage)}
+                    disabled={isRerunDisabled}
+                    className={cn(
+                      'absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border transition hover:-translate-y-0.5 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-40',
+                      selected
+                        ? 'border-white/25 bg-white/10 text-white hover:bg-white/20'
+                        : 'border-slate-200 bg-white/80 text-slate-500 hover:border-slate-300 hover:bg-white hover:text-slate-700',
+                    )}
+                  >
+                    {isRerunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                  </button>
+                ) : null}
+              </div>
             )
           })}
         </Tabs.List>

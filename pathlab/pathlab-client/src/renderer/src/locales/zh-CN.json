@@ -4317,6 +4317,16 @@
     "diagnostics": {
       "rawMetricFinalFailure": "章节生成失败：模型在 {{section}} 章节反复直接写入实验数值 {{value}}，未使用锁定指标占位符。请重试章节阶段，或检查证据锁中的指标。"
     },
+    "rerun": {
+      "stageAction": "从 {{stage}} 重新运行",
+      "failedTitle": "论文流水线失败",
+      "failedDescription": "重试会加载此前成功阶段的历史，并从失败阶段继续运行。",
+      "retryFailed": "重试失败阶段",
+      "confirmOutline": "此重新运行会重新生成大纲，并让论文回到大纲确认状态。",
+      "confirmSections": "此重新运行可能覆盖已编辑的论文章节。当前章节会在运行前生成快照。",
+      "confirmCitations": "此重新运行可能覆盖用户编辑过的引用和参考文献文件。",
+      "confirmDownstream": "所选阶段会加载此前成功历史重新运行，并刷新下游阶段以保持一致。"
+    },
     "outline": {
       "loading": "正在加载大纲...",
       "emptyTitle": "大纲尚未生成",

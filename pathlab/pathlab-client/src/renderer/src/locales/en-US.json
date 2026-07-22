@@ -4323,6 +4323,16 @@
     "diagnostics": {
       "rawMetricFinalFailure": "Section generation failed: the model repeatedly wrote the experimental value {{value}} directly in {{section}} instead of using a locked metric placeholder. Retry the section stage, or check the metrics in the evidence lock."
     },
+    "rerun": {
+      "stageAction": "Rerun from {{stage}}",
+      "failedTitle": "Paper pipeline failed",
+      "failedDescription": "Retry will rerun the failed stage with prior successful history loaded.",
+      "retryFailed": "Retry failed stage",
+      "confirmOutline": "This rerun regenerates the outline and returns the paper to outline approval.",
+      "confirmSections": "This rerun may overwrite edited manuscript sections. Current sections are snapshotted before rerun.",
+      "confirmCitations": "This rerun may overwrite user-edited citations and bibliography files.",
+      "confirmDownstream": "The selected stage will rerun with prior successful history loaded, then downstream stages will refresh for consistency."
+    },
     "outline": {
       "loading": "Loading outline...",
       "emptyTitle": "Outline not generated yet",

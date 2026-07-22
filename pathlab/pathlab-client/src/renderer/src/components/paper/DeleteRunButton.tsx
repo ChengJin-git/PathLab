@@ -3,15 +3,17 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react'
 import { deletePaperRun } from '../../api/papers'
+import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { ModalShell } from '../ui/modal-shell'
 
 interface DeleteRunButtonProps {
   paperId: string
   onDeleted: () => void
+  className?: string
 }
 
-export function DeleteRunButton({ paperId, onDeleted }: DeleteRunButtonProps) {
+export function DeleteRunButton({ paperId, onDeleted, className }: DeleteRunButtonProps) {
   const { t } = useTranslation()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const qc = useQueryClient()
@@ -29,7 +31,7 @@ export function DeleteRunButton({ paperId, onDeleted }: DeleteRunButtonProps) {
 
   return (
     <>
-      <Button variant="destructive" size="sm" className="gap-2" onClick={() => setConfirmOpen(true)}>
+      <Button variant="destructive" size="sm" className={cn('gap-2', className)} onClick={() => setConfirmOpen(true)}>
         <Trash2 className="h-4 w-4" />
         {t('paperAgent.common.delete')}
       </Button>

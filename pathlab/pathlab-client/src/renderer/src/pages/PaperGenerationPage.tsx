@@ -30,21 +30,23 @@ function RunRow({ run, onOpen }: { run: PaperRunSummary; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="group w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+      className="group w-full rounded-2xl border border-slate-200 bg-white px-5 py-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg hover:shadow-slate-200/70 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-500/15"
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 font-semibold text-slate-950">
-            <FileText className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:text-slate-700" />
-            <span className="truncate">{run.title || t('paperAgent.detail.fallbackTitle')}</span>
+          <div className="flex items-center gap-3 font-semibold text-slate-950">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-400 ring-1 ring-slate-200 transition group-hover:bg-slate-100 group-hover:text-slate-700">
+              <FileText className="h-4 w-4" />
+            </span>
+            <span className="line-clamp-2 text-base leading-snug tracking-[-0.015em] sm:text-lg">{run.title || t('paperAgent.detail.fallbackTitle')}</span>
           </div>
         </div>
-        <Badge variant={statusVariant(run.status)}>{paperStatusLabel(t, run.status)}</Badge>
+        <Badge variant={statusVariant(run.status)} className="mt-1 h-8 px-3 tracking-[0.16em] shadow-sm">{paperStatusLabel(t, run.status)}</Badge>
       </div>
-      <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
-        <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">{t('paperAgent.runRow.stage')}</span><br />{paperStageLabel(t, run.current_stage)}</div>
-        <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">{t('paperAgent.runRow.template')}</span><br />{run.selected_templates.map((template) => paperTemplateTitle(t, template)).join(', ') || '-'}</div>
-        <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">{t('paperAgent.runRow.created')}</span><br />{formatDateTime(run.created_at)}</div>
+      <div className="mt-5 grid gap-3 text-sm text-slate-700 sm:grid-cols-3">
+        <div className="rounded-xl bg-slate-50/80 px-4 py-3 ring-1 ring-slate-100"><span className="text-xs font-medium text-slate-400">{t('paperAgent.runRow.stage')}</span><br /><span className="font-medium">{paperStageLabel(t, run.current_stage)}</span></div>
+        <div className="rounded-xl bg-slate-50/80 px-4 py-3 ring-1 ring-slate-100"><span className="text-xs font-medium text-slate-400">{t('paperAgent.runRow.template')}</span><br /><span className="font-medium">{run.selected_templates.map((template) => paperTemplateTitle(t, template)).join(', ') || '-'}</span></div>
+        <div className="rounded-xl bg-slate-50/80 px-4 py-3 ring-1 ring-slate-100"><span className="text-xs font-medium text-slate-400">{t('paperAgent.runRow.created')}</span><br /><span className="font-medium">{formatDateTime(run.created_at)}</span></div>
       </div>
     </button>
   )
@@ -118,52 +120,58 @@ export default function PaperGenerationPage() {
   }
 
   return (
-    <div className="w-full px-4 py-4 sm:px-6 sm:py-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <PageHeader title={t('paperAgent.runs.title')} description={t('paperAgent.runs.description')}>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigate('/tools')} className="gap-2">
+    <div className="w-full px-4 py-5 sm:px-6 sm:py-9">
+      <div className="mx-auto flex max-w-7xl flex-col gap-7">
+        <PageHeader
+          title={t('paperAgent.runs.title')}
+          description={t('paperAgent.runs.description')}
+          className="mb-3 items-start gap-5 pb-6 lg:flex-row"
+          titleClassName="text-[2.1rem] leading-[1.05] tracking-[-0.03em] sm:text-[2.75rem] lg:text-[3.2rem]"
+          actionsClassName="w-full justify-start gap-2 sm:w-auto sm:justify-end lg:pt-2"
+        >
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <Button variant="outline" size="sm" onClick={() => navigate('/tools')} className="h-10 gap-2 px-3.5 text-sm shadow-sm">
               <ArrowLeft className="h-4 w-4" />
               {t('common.back')}
             </Button>
             {isSourceTaskView ? (
-              <Button variant="outline" size="sm" onClick={clearSourceTaskFilter} className="rounded-full">
+              <Button variant="outline" size="sm" onClick={clearSourceTaskFilter} className="h-10 px-3.5 text-sm shadow-sm">
                 {t('paperAgent.runs.clearSourceTaskFilter')}
               </Button>
             ) : null}
-            <Button variant="outline" size="sm" onClick={() => runsQuery.refetch()} className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => runsQuery.refetch()} className="h-10 gap-2 px-3.5 text-sm shadow-sm">
               <RefreshCw className="h-4 w-4" />
               {t('paperAgent.common.refresh')}
             </Button>
-            <Button size="sm" onClick={() => navigate('/papers/new')} className="gap-2">
+            <Button size="sm" onClick={() => navigate('/papers/new')} className="h-10 gap-2 px-4 text-sm shadow-lg shadow-slate-300/40">
               <Plus className="h-4 w-4" />
               {t('paperAgent.common.newPaper')}
             </Button>
           </div>
         </PageHeader>
 
-        <Card className="border-slate-200 bg-white/95 shadow-sm">
-          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+        <Card className="overflow-hidden border-slate-200 bg-white shadow-sm">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 px-6 pb-4 pt-6 sm:px-7 sm:pt-7">
             <div className="min-w-0">
-              <CardTitle>{isSourceTaskView ? t('paperAgent.runs.sourceTaskTitle') : t('paperAgent.runs.workspaceIndex')}</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-[1.65rem] tracking-[-0.025em] sm:text-[1.9rem]">{isSourceTaskView ? t('paperAgent.runs.sourceTaskTitle') : t('paperAgent.runs.workspaceIndex')}</CardTitle>
+              <CardDescription className="mt-1 text-base text-slate-500">
                 {isSourceTaskView
                   ? t('paperAgent.runs.sourceTaskDescription', { taskName: sourceTaskName || t('paperAgent.runs.sourceTaskFilter') })
                   : t('paperAgent.runs.pollingDescription')}
               </CardDescription>
             </div>
-            <Badge variant="outline">{t('paperAgent.runs.total', { count: runsQuery.data?.total ?? 0 })}</Badge>
+            <Badge variant="outline" className="mt-1 h-8 px-3 tracking-[0.18em] shadow-sm">{t('paperAgent.runs.total', { count: runsQuery.data?.total ?? 0 })}</Badge>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative w-full sm:max-w-md">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <CardContent className="space-y-5 px-6 pb-6 sm:px-7 sm:pb-7">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="relative w-full sm:max-w-xl">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
                 <Input
                   value={titleSearch}
                   onChange={(event) => setTitleSearch(event.target.value)}
                   placeholder={t('paperAgent.runs.searchTitlePlaceholder')}
                   aria-label={t('paperAgent.runs.searchTitleAria')}
-                  className="h-10 rounded-xl border-slate-200 bg-white pl-9 pr-10 shadow-none"
+                  className="h-12 rounded-2xl border-slate-200 bg-white pl-12 pr-11 text-base shadow-sm shadow-slate-100/80 placeholder:text-slate-400 focus-visible:ring-4 focus-visible:ring-sky-500/15"
                 />
                 {titleSearch ? (
                   <Button
@@ -172,7 +180,7 @@ export default function PaperGenerationPage() {
                     size="icon"
                     onClick={() => setTitleSearch('')}
                     aria-label={t('paperAgent.runs.clearSearch')}
-                    className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2 rounded-lg text-slate-400 hover:text-slate-700"
+                    className="absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 rounded-xl text-slate-400 hover:text-slate-700"
                   >
                     <X className="h-4 w-4" />
                   </Button>

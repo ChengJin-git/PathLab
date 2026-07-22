@@ -4321,6 +4321,16 @@
     "diagnostics": {
       "rawMetricFinalFailure": "章節生成失敗：模型在 {{section}} 章節反覆直接寫入實驗數值 {{value}}，未使用鎖定指標佔位符。請重試章節階段，或檢查證據鎖中的指標。"
     },
+    "rerun": {
+      "stageAction": "由 {{stage}} 重新運行",
+      "failedTitle": "論文流水線失敗",
+      "failedDescription": "重試會載入之前成功階段的歷史，並由失敗階段繼續運行。",
+      "retryFailed": "重試失敗階段",
+      "confirmOutline": "此重新運行會重新生成大綱，並讓論文回到大綱確認狀態。",
+      "confirmSections": "此重新運行可能覆蓋已編輯的論文章節。當前章節會在運行前建立快照。",
+      "confirmCitations": "此重新運行可能覆蓋用戶編輯過的引用和參考文獻文件。",
+      "confirmDownstream": "所選階段會載入之前成功歷史重新運行，並刷新下游階段以保持一致。"
+    },
     "outline": {
       "loading": "正在載入大綱...",
       "emptyTitle": "大綱尚未生成",

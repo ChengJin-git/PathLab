@@ -112,6 +112,21 @@ export interface PostPaperRenderExportResponse {
   message?: string
 }
 
+export interface PostPaperStageRerunBody {
+  continue_downstream?: boolean
+  include_previous_successful_output?: boolean
+  confirm_overwrite_sections?: boolean
+  confirm_overwrite_citations?: boolean
+  confirm_regenerate_outline?: boolean
+}
+
+export interface PostPaperStageRerunResponse {
+  paper_id: string
+  status: PaperRunStatus
+  current_stage: PaperRunStage
+  message?: string
+}
+
 type BackendErrorDetail = {
   code?: string
   message?: string
@@ -198,6 +213,41 @@ export function postPaperRenderExport(paperId: string): Promise<PostPaperRenderE
       `${API_BASE}/papers/${encodeURIComponent(paperId)}/render-export`,
       { method: 'POST' },
       'Render/export paper',
+    ),
+  )
+}
+
+export function postPaperRetry(
+  paperId: string,
+  body?: PostPaperStageRerunBody,
+): Promise<PostPaperStageRerunResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PostPaperStageRerunResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/retry`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      },
+      'Retry paper run',
+    ),
+  )
+}
+
+export function postPaperStageRerun(
+  paperId: string,
+  stage: PaperRunStage | string,
+  body?: PostPaperStageRerunBody,
+): Promise<PostPaperStageRerunResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PostPaperStageRerunResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/stages/${encodeURIComponent(stage)}:rerun`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      },
+      'Rerun paper stage',
     ),
   )
 }
