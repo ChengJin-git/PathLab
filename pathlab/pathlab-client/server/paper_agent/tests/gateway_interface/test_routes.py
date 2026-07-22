@@ -8,7 +8,7 @@ import json
 import pytest
 
 from backend.database.repositories.paper_generation import PaperGenerationRunRepository
-from pathlab_paper_agent.schemas import PaperRunStage, PaperRunStatus
+from pathlab_paper_agent.schemas import PaperPauseResponse, PaperRunStage, PaperRunStatus
 from pathlab_paper_agent.storage import PaperRunPaths
 
 
@@ -21,6 +21,7 @@ def test_paper_generation_router_imports_with_pause_route() -> None:
         if getattr(route, "path", None) == "/papers/{paper_id}/pause"
     ]
     assert len(pause_routes) == 1
+    assert getattr(pause_routes[0], "response_model", None) is PaperPauseResponse
 
 
 def _valid_outline() -> dict:

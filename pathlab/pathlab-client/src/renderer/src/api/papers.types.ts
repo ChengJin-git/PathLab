@@ -44,6 +44,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/papers/{paper_id}/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Run Diagnostics */
+        get: operations["get_paper_run_diagnostics_papers__paper_id__diagnostics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/papers/{paper_id}/outline": {
         parameters: {
             query?: never;
@@ -61,6 +78,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/papers/{paper_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause Paper Run */
+        post: operations["pause_paper_run_papers__paper_id__pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/render-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rerender Paper Export */
+        post: operations["rerender_paper_export_papers__paper_id__render_export_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Failed Paper Stage */
+        post: operations["retry_failed_paper_stage_papers__paper_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/stages/{stage}:rerun": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rerun Paper Stage */
+        post: operations["rerun_paper_stage_papers__paper_id__stages__stage__rerun_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/papers/{paper_id}/sections": {
         parameters: {
             query?: never;
@@ -71,6 +156,23 @@ export interface paths {
         /** Get Paper Sections */
         get: operations["get_paper_sections_papers__paper_id__sections_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/sections/{section_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Paper Section */
+        put: operations["update_paper_section_papers__paper_id__sections__section_name__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -265,6 +367,25 @@ export interface components {
              */
             refs_bib_path: string;
         };
+        /**
+         * ArtifactReadinessIssue
+         * @description Backend-facing artifact readiness issue for diagnostics and failures.
+         */
+        ArtifactReadinessIssue: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /**
+             * Severity
+             * @default error
+             * @enum {string}
+             */
+            severity: "error" | "warning";
+            stage?: components["schemas"]["PaperRunStage"] | null;
+            /** Path */
+            path?: string | null;
+        };
         /** CitationCoverageSummary */
         CitationCoverageSummary: {
             /** Selected Count */
@@ -289,8 +410,11 @@ export interface components {
             key: string;
             /** Removed From Sections */
             removed_from_sections?: string[];
-            /** Downstream Stale */
-            downstream_stale?: boolean;
+            /**
+             * Downstream Stale
+             * @default false
+             */
+            downstream_stale: boolean;
             /** Stale Artifacts */
             stale_artifacts?: string[];
         };
@@ -613,6 +737,18 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PaperPauseResponse
+         * @description POST /papers/{paper_id}/pause response.
+         */
+        PaperPauseResponse: {
+            /** Paper Id */
+            paper_id: string;
+            status: components["schemas"]["PaperRunStatus"];
+            current_stage: components["schemas"]["PaperRunStage"];
+            /** Message */
+            message: string;
+        };
+        /**
          * PaperRunArtifact
          * @description Public artifact metadata shown in the UI.
          */
@@ -638,6 +774,11 @@ export interface components {
             label?: string | null;
             /** Content Type */
             content_type?: string | null;
+            /**
+             * Stale
+             * @default false
+             */
+            stale: boolean;
         };
         /** PaperRunCreateResponse */
         PaperRunCreateResponse: {
@@ -666,8 +807,6 @@ export interface components {
             selected_templates: components["schemas"]["TemplateId"][];
             /** Source Task Ids */
             source_task_ids: string[];
-            /** Source Tasks */
-            source_tasks?: components["schemas"]["SourceTaskRef"][];
             /**
              * Created At
              * Format: date-time
@@ -677,11 +816,59 @@ export interface components {
             finished_at: string | null;
             /** Error Message */
             error_message: string | null;
+            /** Source Tasks */
+            source_tasks?: components["schemas"]["SourceTaskRef"][];
             /** Artifacts */
             artifacts?: components["schemas"]["PaperRunArtifact"][];
             /** Stage Log */
             stage_log?: components["schemas"]["PaperStageLogEntry"][];
             validation_summary?: components["schemas"]["ValidationSummary"];
+        };
+        /**
+         * PaperRunDiagnostics
+         * @description Operational inspection payload for a paper run.
+         */
+        PaperRunDiagnostics: {
+            /** Paper Id */
+            paper_id: string;
+            status?: components["schemas"]["PaperRunStatus"] | null;
+            current_stage?: components["schemas"]["PaperRunStage"] | null;
+            /** Title */
+            title?: string | null;
+            /** Selected Templates */
+            selected_templates?: components["schemas"]["TemplateId"][];
+            /** Source Task Ids */
+            source_task_ids?: string[];
+            /** Latest Error */
+            latest_error?: {
+                [key: string]: unknown;
+            } | null;
+            /** Artifact Issues */
+            artifact_issues?: components["schemas"]["ArtifactReadinessIssue"][];
+            /** Stage Diagnostics */
+            stage_diagnostics?: components["schemas"]["StageDiagnostic"][];
+            /**
+             * Stage Log Count
+             * @default 0
+             */
+            stage_log_count: number;
+            /**
+             * Artifact Count
+             * @default 0
+             */
+            artifact_count: number;
+            /** Pipeline Log Path */
+            pipeline_log_path?: string | null;
+            /**
+             * Missing Artifact Count
+             * @default 0
+             */
+            missing_artifact_count: number;
+            /**
+             * Stale Artifact Count
+             * @default 0
+             */
+            stale_artifact_count: number;
         };
         /** PaperRunListResponse */
         PaperRunListResponse: {
@@ -703,7 +890,7 @@ export interface components {
          * PaperRunStatus
          * @enum {string}
          */
-        PaperRunStatus: "pending" | "running" | "awaiting_outline_approval" | "completed" | "failed" | "cancelled";
+        PaperRunStatus: "pending" | "running" | "paused" | "awaiting_outline_approval" | "completed" | "failed" | "cancelled";
         /**
          * PaperRunSummary
          * @description Returned by GET /papers and GET /papers/{id}.
@@ -756,6 +943,27 @@ export interface components {
             sections?: components["schemas"]["PaperSection"][];
         };
         /**
+         * PaperSectionUpdateRequest
+         * @description User edit payload for replacing one public section source file.
+         */
+        PaperSectionUpdateRequest: {
+            /** Text */
+            text: string;
+            /** Source Hash */
+            source_hash?: string | null;
+        };
+        /** PaperSectionUpdateResponse */
+        PaperSectionUpdateResponse: {
+            section: components["schemas"]["PaperSection"];
+            /**
+             * Downstream Stale
+             * @default false
+             */
+            downstream_stale: boolean;
+            /** Stale Artifacts */
+            stale_artifacts?: string[];
+        };
+        /**
          * PaperStageLogEntry
          * @description Frontend-facing stage log entry with backwards-compatible fields.
          */
@@ -777,10 +985,43 @@ export interface components {
             duration_ms?: number | null;
             /** Message */
             message?: string | null;
+            /** Error Code */
+            error_code?: string | null;
             /** Error Message */
             error_message?: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * PaperStageRerunRequest
+         * @description POST /papers/{paper_id}/stages/{stage}:rerun body.
+         */
+        PaperStageRerunRequest: {
+            /**
+             * Continue Downstream
+             * @default true
+             */
+            continue_downstream: boolean;
+            /**
+             * Include Previous Successful Output
+             * @default true
+             */
+            include_previous_successful_output: boolean;
+            /**
+             * Confirm Overwrite Sections
+             * @default false
+             */
+            confirm_overwrite_sections: boolean;
+            /**
+             * Confirm Overwrite Citations
+             * @default false
+             */
+            confirm_overwrite_citations: boolean;
+            /**
+             * Confirm Regenerate Outline
+             * @default false
+             */
+            confirm_regenerate_outline: boolean;
         };
         /**
          * RefinementSummary
@@ -978,6 +1219,28 @@ export interface components {
             label?: string | null;
         };
         /**
+         * StageDiagnostic
+         * @description Compact latest state for a stage in diagnostics responses.
+         */
+        StageDiagnostic: {
+            /** Stage */
+            stage: string;
+            /** Status */
+            status: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Message */
+            message?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+        };
+        /**
          * TaskRole
          * @enum {string}
          */
@@ -1053,6 +1316,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                source_task_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -1177,6 +1441,37 @@ export interface operations {
             };
         };
     };
+    get_paper_run_diagnostics_papers__paper_id__diagnostics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperRunDiagnostics"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_paper_outline_papers__paper_id__outline_put: {
         parameters: {
             query?: never;
@@ -1214,6 +1509,141 @@ export interface operations {
             };
         };
     };
+    pause_paper_run_papers__paper_id__pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperPauseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rerender_paper_export_papers__paper_id__render_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_failed_paper_stage_papers__paper_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PaperStageRerunRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rerun_paper_stage_papers__paper_id__stages__stage__rerun_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+                stage: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["PaperStageRerunRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_paper_sections_papers__paper_id__sections_get: {
         parameters: {
             query?: never;
@@ -1232,6 +1662,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaperSectionListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_paper_section_papers__paper_id__sections__section_name__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+                section_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaperSectionUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaperSectionUpdateResponse"];
                 };
             };
             /** @description Validation Error */
@@ -1496,8 +1962,12 @@ export interface operations {
         parameters: {
             query: {
                 path: string;
+                /** @description JWT token for image authentication */
+                token?: string | null;
             };
-            header?: never;
+            header?: {
+                Authorization?: string | null;
+            };
             path: {
                 paper_id: string;
             };
@@ -1527,8 +1997,13 @@ export interface operations {
     };
     download_paper_file_papers__paper_id__files__path__get: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                /** @description JWT token for image authentication */
+                token?: string | null;
+            };
+            header?: {
+                Authorization?: string | null;
+            };
             path: {
                 paper_id: string;
                 path: string;

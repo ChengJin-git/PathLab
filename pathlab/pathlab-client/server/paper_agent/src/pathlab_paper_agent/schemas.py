@@ -204,6 +204,15 @@ class PaperStageRerunRequest(BaseModel):
     confirm_regenerate_outline: bool = False
 
 
+class PaperPauseResponse(BaseModel):
+    """POST /papers/{paper_id}/pause response."""
+
+    paper_id: str
+    status: PaperRunStatus
+    current_stage: PaperRunStage
+    message: str
+
+
 class FigureManifestItem(BaseModel):
     """Frontend-facing schema for one figure entry in `figures/manifest.json`."""
 

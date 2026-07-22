@@ -55,6 +55,7 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     OutlineApprovalRequest,
     PaperConfig,
     PaperManifest,
+    PaperPauseResponse,
     PaperRunDiagnostics,
     PaperRunArtifact,
     PaperRunCreateResponse,
@@ -1376,12 +1377,12 @@ async def update_paper_outline(
     }
 
 
-@router.post("/{paper_id}/pause", response_model=None)
+@router.post("/{paper_id}/pause", response_model=PaperPauseResponse)
 async def pause_paper_run(
     paper_id: str,
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, object] | JSONResponse:
+) -> PaperPauseResponse | JSONResponse:
     row = await _load_or_404(db, paper_id, user)
     paths = PaperRunPaths.for_paper(paper_id)
     manifest = _load_manifest(paths)
@@ -1403,12 +1404,12 @@ async def pause_paper_run(
         finished_at=None,
     )
     await db.commit()
-    return {
-        "paper_id": paper_id,
-        "status": PaperRunStatus.paused.value,
-        "current_stage": manifest.current_stage.value,
-        "message": "Pause requested; the pipeline will stop at the next stage boundary.",
-    }
+    return PaperPauseResponse(
+        paper_id=paper_id,
+        status=PaperRunStatus.paused,
+        current_stage=manifest.current_stage,
+        message="Pause requested; the pipeline will stop at the next stage boundary.",
+    )
 
 
 # ---------------------------------------------------------------------------
