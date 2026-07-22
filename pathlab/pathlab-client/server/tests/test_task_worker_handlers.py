@@ -59,6 +59,12 @@ def test_resolve_training_patch_then_run_handler():
     assert resolve_handler("training.patch_then_run").__name__ == "handle_training_patch_then_run"
 
 
+def test_resolve_paper_generation_rerun_handler():
+    from task_worker.handlers import resolve_handler
+
+    assert resolve_handler("paper_generation.rerun_from_stage").__name__ == "handle_paper_generation_rerun_from_stage"
+
+
 def test_unknown_handler_raises():
     from task_worker.handlers import resolve_handler, UnknownTaskHandlerError
 

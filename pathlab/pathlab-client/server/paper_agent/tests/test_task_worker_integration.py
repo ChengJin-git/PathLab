@@ -125,6 +125,15 @@ class _FakeProcess:
         return self._stdout, self._stderr
 
 
+class _SlowFakeProcess(_FakeProcess):
+    def kill(self) -> None:
+        self.returncode = -9
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        await task_worker.asyncio.sleep(10)
+        return self._stdout, self._stderr
+
+
 @pytest.mark.asyncio
 async def test_run_paper_generation_uses_subprocess_helper(tmp_path, monkeypatch):
     events: list[tuple] = []
@@ -165,6 +174,8 @@ async def test_run_paper_generation_uses_subprocess_helper(tmp_path, monkeypatch
     pythonpath_entries = env["PYTHONPATH"].split(os.pathsep)
     assert str(task_worker.server_root()) in pythonpath_entries
     assert str(task_worker.server_root() / "paper_agent" / "src") in pythonpath_entries
+    subprocess_log = tmp_path / "paper_generation" / "paper_full" / "logs" / "task_worker_subprocess.private.json"
+    assert subprocess_log.is_file()
 
 
 @pytest.mark.asyncio
@@ -190,6 +201,30 @@ async def test_run_paper_generation_records_subprocess_failure(tmp_path, monkeyp
     assert "STDOUT:\nout" in events[3][2]
     assert "STDERR:\nerr" in events[3][2]
     assert events[4] == ("commit",)
+    subprocess_log = tmp_path / "paper_generation" / "paper_fail" / "logs" / "task_worker_subprocess.private.json"
+    assert subprocess_log.is_file()
+    assert "err" in subprocess_log.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_run_paper_generation_times_out_subprocess(tmp_path, monkeypatch):
+    events: list[tuple] = []
+    _FakeRepo.events = events
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        return _SlowFakeProcess(returncode=None, stdout=b"slow out", stderr=b"slow err")
+
+    monkeypatch.setattr(task_worker.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setenv("PATHLAB_PAPER_AGENT_TIMEOUT_S", "0.01")
+
+    with _fake_backend(events, tmp_path):
+        with pytest.raises(TimeoutError, match="timed out"):
+            await task_worker.run_paper_generation("paper_timeout")
+
+    assert events[3][0:2] == ("mark_failed", "paper_timeout")
+    subprocess_log = tmp_path / "paper_generation" / "paper_timeout" / "logs" / "task_worker_subprocess.private.json"
+    assert subprocess_log.is_file()
+    assert '"status": "timeout"' in subprocess_log.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -245,6 +280,34 @@ async def test_split_jobs_use_subprocess_and_update_success_status(
     assert str(tmp_path.resolve() / "paper_generation" / "paper_split" / "config.json") in cmd
     env = calls[0]["kwargs"]["env"]
     assert "PATHLAB_PAPER_AGENT_NO_APPROVAL_GATE" not in env
+
+
+@pytest.mark.asyncio
+async def test_rerun_from_stage_passes_stage_to_subprocess(tmp_path, monkeypatch):
+    events: list[tuple] = []
+    _FakeRepo.events = events
+    calls: list[dict[str, object]] = []
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        calls.append({"cmd": cmd, "kwargs": kwargs})
+        return _FakeProcess()
+
+    monkeypatch.setattr(task_worker.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with _fake_backend(events, tmp_path):
+        await task_worker.rerun_from_stage("paper_rerun", stage="section_writing")
+
+    assert events == [
+        ("mark_started", "paper_rerun"),
+        ("update_stage", "paper_rerun", "section_writing", "running"),
+        ("commit",),
+        ("mark_completed", "paper_rerun"),
+        ("commit",),
+    ]
+    cmd = calls[0]["cmd"]
+    assert "run-from-stage" in cmd
+    assert "--stage" in cmd
+    assert "section_writing" in cmd
 
 
 @pytest.mark.asyncio

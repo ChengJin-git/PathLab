@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -215,10 +216,12 @@ def json_safe(value: Any) -> Any:
 
 def write_json_file(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, default=json_safe),
         encoding="utf-8",
     )
+    os.replace(tmp, path)
 
 
 def _read_log(path: Path, *, paper_id: str) -> dict[str, Any]:

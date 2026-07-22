@@ -55,12 +55,14 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     OutlineApprovalRequest,
     PaperConfig,
     PaperManifest,
+    PaperRunDiagnostics,
     PaperRunArtifact,
     PaperRunCreateResponse,
     PaperRunDetail,
     PaperRunListResponse,
     PaperRunStage,
     PaperRunStatus,
+    PaperStageRerunRequest,
     PaperRunSummary,
     PaperSectionRegenerateAcceptedResponse,
     PaperSection,
@@ -102,8 +104,10 @@ from pathlab_paper_agent.regenerate import (  # noqa: E402
     regenerate_section,
 )
 from pathlab_paper_agent.process_logging import append_pipeline_event  # noqa: E402
+from pathlab_paper_agent.diagnostics import inspect_paper_run  # noqa: E402
 from pathlab_paper_agent.validators.identifier_guard import scan_text  # noqa: E402
 from pathlab_paper_agent.scaffold import initialize_paper_run  # noqa: E402
+from pathlab_paper_agent.pipeline import request_pause  # noqa: E402
 from pathlab_paper_agent.storage import (  # noqa: E402
     PaperRunPaths,
     is_path_allowed_for_download,
@@ -140,8 +144,41 @@ _MAX_PAPERS_PER_SOURCE_TASK = 20
 _RUN_UNTIL_OUTLINE_HANDLER = "paper_generation.run_until_outline"
 _RUN_AFTER_OUTLINE_HANDLER = "paper_generation.run_after_outline"
 _RENDER_EXPORT_HANDLER = "paper_generation.render_export"
+_RERUN_FROM_STAGE_HANDLER = "paper_generation.rerun_from_stage"
 _SECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,80}$")
 _SECTION_EDIT_STALE_PREFIXES = ("final/", "exports/", "validation/")
+_EXECUTABLE_RERUN_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+    PaperRunStage.section_writing,
+    PaperRunStage.validating,
+    PaperRunStage.refining,
+    PaperRunStage.rendering,
+    PaperRunStage.exporting,
+}
+_OUTLINE_RERUN_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+}
+_SECTION_OVERWRITE_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+    PaperRunStage.section_writing,
+}
+_CITATION_OVERWRITE_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +199,7 @@ def _row_to_summary(row, manifest: Optional[PaperManifest] = None) -> PaperRunSu
     )
     use_manifest_state = manifest is not None and not (
         row_status
-        in {PaperRunStatus.completed, PaperRunStatus.failed, PaperRunStatus.cancelled}
+        in {PaperRunStatus.completed, PaperRunStatus.failed, PaperRunStatus.cancelled, PaperRunStatus.paused}
         and manifest.status == PaperRunStatus.running
     ) and not (
         row_status == PaperRunStatus.running and manifest_is_initial
@@ -268,6 +305,19 @@ async def _enqueue_paper_generation_job(paper_id: str, handler: str):
         job_kind="paper_generation",
         handler=handler,
         payload={"paper_id": paper_id},
+    )
+    await enqueue_task_descriptor(descriptor)
+    return descriptor
+
+
+async def _enqueue_paper_stage_rerun(paper_id: str, stage: PaperRunStage):
+    from gateway.task_dispatch import build_task_descriptor, enqueue_task_descriptor
+
+    descriptor = build_task_descriptor(
+        job_id=paper_id,
+        job_kind="paper_generation",
+        handler=_RERUN_FROM_STAGE_HANDLER,
+        payload={"paper_id": paper_id, "stage": stage.value},
     )
     await enqueue_task_descriptor(descriptor)
     return descriptor
@@ -495,6 +545,10 @@ def _error_response(status_code: int, code: str, message: str, **extra: object) 
     return JSONResponse(status_code=status_code, content=payload)
 
 
+def _http_error(status_code: int, code: str, message: str, **extra: object) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message, **extra})
+
+
 def _candidate_metadata_text(candidate: CitationCandidate) -> str:
     return "\n".join([candidate.title, *candidate.authors])
 
@@ -652,6 +706,95 @@ def _append_citation_stage_log(paths: PaperRunPaths, *, status: str, message: st
         }
     )
     _save_manifest(paths, manifest)
+
+
+def _coerce_rerun_stage(stage: str, manifest: PaperManifest | None = None) -> PaperRunStage:
+    if stage == PaperRunStage.failed.value and manifest is not None:
+        resolved = _latest_failed_stage(manifest)
+        if resolved is not None:
+            return resolved
+    if stage == PaperRunStage.created.value:
+        return PaperRunStage.collecting
+    try:
+        stage_enum = PaperRunStage(stage)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"unknown paper stage {stage!r}") from exc
+    if stage_enum not in _EXECUTABLE_RERUN_STAGES:
+        raise HTTPException(status_code=422, detail=f"stage {stage_enum.value} cannot be rerun")
+    return stage_enum
+
+
+def _latest_failed_stage(manifest: PaperManifest) -> PaperRunStage | None:
+    for entry in reversed(manifest.stage_log):
+        if str(entry.get("status")) != "failed":
+            continue
+        try:
+            stage = PaperRunStage(str(entry.get("stage")))
+        except ValueError:
+            continue
+        if stage in _EXECUTABLE_RERUN_STAGES:
+            return stage
+    return manifest.current_stage if manifest.current_stage in _EXECUTABLE_RERUN_STAGES else None
+
+
+def _has_user_section_edits(manifest: PaperManifest) -> bool:
+    return any(
+        entry.get("stage") == PaperRunStage.section_writing.value
+        and str(entry.get("status")) == "user_edited"
+        for entry in manifest.stage_log
+    )
+
+
+def _has_user_citation_edits(manifest: PaperManifest) -> bool:
+    return any(
+        entry.get("stage") == PaperRunStage.literature_review.value
+        and str(entry.get("status")) in {"user_added", "user_removed"}
+        for entry in manifest.stage_log
+    )
+
+
+def _validate_rerun_request(stage: PaperRunStage, manifest: PaperManifest, body: PaperStageRerunRequest) -> JSONResponse | None:
+    if not body.continue_downstream:
+        return _error_response(422, "downstream_required", "Paper stage reruns must continue through downstream stages.")
+    if not body.include_previous_successful_output:
+        return _error_response(422, "history_required", "Paper stage reruns always load previous successful upstream history.")
+    if stage in _OUTLINE_RERUN_STAGES and not body.confirm_regenerate_outline:
+        return _error_response(409, "confirm_regenerate_outline", "Rerunning this stage regenerates the outline.")
+    if stage in _SECTION_OVERWRITE_STAGES and _has_user_section_edits(manifest) and not body.confirm_overwrite_sections:
+        return _error_response(409, "confirm_overwrite_sections", "Rerunning this stage may overwrite edited manuscript sections.")
+    if stage in _CITATION_OVERWRITE_STAGES and _has_user_citation_edits(manifest) and not body.confirm_overwrite_citations:
+        return _error_response(409, "confirm_overwrite_citations", "Rerunning this stage may overwrite user-edited citations.")
+    return None
+
+
+def _append_rerun_queued(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    *,
+    stage: PaperRunStage,
+    message: str,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": stage.value,
+            "status": "rerun_queued",
+            "ts": now,
+            "started_at": now,
+            "finished_at": None,
+            "duration_ms": None,
+            "message": message,
+        }
+    )
+    append_pipeline_event(
+        paths,
+        manifest,
+        "rerun_queued",
+        stage=stage.value,
+        status="queued",
+        started_at=now,
+        message=message,
+    )
 
 
 def _guard_result_summary(paths: PaperRunPaths, guard: str, rel_path: str) -> GuardResultSummary | None:
@@ -1052,6 +1195,17 @@ async def get_paper_run(
     )
 
 
+@router.get("/{paper_id}/diagnostics", response_model=PaperRunDiagnostics)
+async def get_paper_run_diagnostics(
+    paper_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> PaperRunDiagnostics:
+    await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    return inspect_paper_run(paths, _load_manifest(paths))
+
+
 # ---------------------------------------------------------------------------
 # PUT /papers/{paper_id}/outline — save/approve editable outline
 # ---------------------------------------------------------------------------
@@ -1186,6 +1340,41 @@ async def update_paper_outline(
         "paper_id": paper_id,
         "approved": True,
         "current_stage": PaperRunStage.plotting.value,
+    }
+
+
+@router.post("/{paper_id}/pause", response_model=None)
+async def pause_paper_run(
+    paper_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    row = await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+
+    active_statuses = {PaperRunStatus.pending.value, PaperRunStatus.running.value}
+    active_manifest_statuses = {PaperRunStatus.pending, PaperRunStatus.running}
+    if row.status not in active_statuses and manifest.status not in active_manifest_statuses:
+        return _error_response(409, "not_active", f"paper run cannot be paused while status is {row.status}")
+
+    manifest = request_pause(paper_id)
+    await PaperGenerationRunRepository.update(
+        db,
+        paper_id,
+        status=PaperRunStatus.paused.value,
+        current_stage=manifest.current_stage.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db.commit()
+    return {
+        "paper_id": paper_id,
+        "status": PaperRunStatus.paused.value,
+        "current_stage": manifest.current_stage.value,
+        "message": "Pause requested; the pipeline will stop at the next stage boundary.",
     }
 
 
@@ -1326,6 +1515,155 @@ async def rerender_paper_export(
         "current_stage": PaperRunStage.rendering.value,
         "message": "Render/export job queued.",
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /papers/{paper_id}/retry and /stages/{stage}:rerun
+# ---------------------------------------------------------------------------
+
+async def _queue_stage_rerun(
+    *,
+    paper_id: str,
+    stage: PaperRunStage,
+    row,
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    db: AsyncSession,
+    body: PaperStageRerunRequest,
+) -> dict[str, object] | JSONResponse:
+    if row.status in {PaperRunStatus.pending.value, PaperRunStatus.running.value}:
+        return _error_response(409, "run_active", f"stage rerun cannot start while run status is {row.status}")
+    if row.status == PaperRunStatus.awaiting_outline_approval.value and stage not in _OUTLINE_RERUN_STAGES:
+        return _error_response(409, "outline_approval_required", "Approve the outline before rerunning post-outline stages.")
+    validation_error = _validate_rerun_request(stage, manifest, body)
+    if validation_error is not None:
+        return validation_error
+
+    previous_state = {
+        "status": manifest.status,
+        "current_stage": manifest.current_stage,
+        "error_message": manifest.error_message,
+        "finished_at": manifest.finished_at,
+        "stage_log_len": len(manifest.stage_log),
+    }
+    manifest.status = PaperRunStatus.running
+    manifest.current_stage = stage
+    manifest.error_message = None
+    manifest.finished_at = None
+    _append_rerun_queued(
+        paths,
+        manifest,
+        stage=stage,
+        message=f"Rerun from {stage.value} queued with successful upstream history.",
+    )
+    _save_manifest(paths, manifest)
+    await PaperGenerationRunRepository.update(
+        db,
+        paper_id,
+        status=PaperRunStatus.running.value,
+        current_stage=stage.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db.commit()
+
+    try:
+        await _enqueue_paper_stage_rerun(paper_id, stage)
+    except Exception as exc:
+        logger.exception("paper_generation: failed to enqueue rerun for %s from %s", paper_id, stage.value)
+        manifest.status = previous_state["status"]
+        manifest.current_stage = previous_state["current_stage"]
+        manifest.error_message = f"stage rerun enqueue failed: {exc}"
+        manifest.finished_at = previous_state["finished_at"]
+        del manifest.stage_log[int(previous_state["stage_log_len"]):]
+        failed_at = datetime.now(UTC)
+        manifest.stage_log.append(
+            {
+                "stage": stage.value,
+                "status": "failed",
+                "ts": failed_at.isoformat(),
+                "started_at": failed_at.isoformat(),
+                "finished_at": failed_at.isoformat(),
+                "duration_ms": 0,
+                "message": manifest.error_message,
+                "error_message": str(exc),
+            }
+        )
+        _save_manifest(paths, manifest)
+        await PaperGenerationRunRepository.update(
+            db,
+            paper_id,
+            status=previous_state["status"].value,
+            current_stage=previous_state["current_stage"].value,
+            error_message=manifest.error_message,
+            finished_at=previous_state["finished_at"],
+        )
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue paper stage rerun: {exc}") from exc
+
+    return {
+        "paper_id": paper_id,
+        "status": PaperRunStatus.running.value,
+        "current_stage": stage.value,
+        "message": f"Rerun from {stage.value} queued.",
+    }
+
+
+@router.post("/{paper_id}/retry", response_model=None)
+async def retry_failed_paper_stage(
+    paper_id: str,
+    body: PaperStageRerunRequest | None = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    row = await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+    if row.status != PaperRunStatus.failed.value and manifest.status != PaperRunStatus.failed:
+        return _error_response(409, "not_failed", "Only failed paper runs can use retry. Choose a stage rerun instead.")
+    stage = _latest_failed_stage(manifest)
+    if stage is None:
+        return _error_response(409, "failed_stage_unknown", "Could not determine which stage failed.")
+    return await _queue_stage_rerun(
+        paper_id=paper_id,
+        stage=stage,
+        row=row,
+        paths=paths,
+        manifest=manifest,
+        db=db,
+        body=body or PaperStageRerunRequest(
+            confirm_overwrite_sections=True,
+            confirm_overwrite_citations=True,
+            confirm_regenerate_outline=True,
+        ),
+    )
+
+
+@router.post("/{paper_id}/stages/{stage}:rerun", response_model=None)
+async def rerun_paper_stage(
+    paper_id: str,
+    stage: str,
+    body: PaperStageRerunRequest | None = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    row = await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+    stage_enum = _coerce_rerun_stage(stage, manifest)
+    return await _queue_stage_rerun(
+        paper_id=paper_id,
+        stage=stage_enum,
+        row=row,
+        paths=paths,
+        manifest=manifest,
+        db=db,
+        body=body or PaperStageRerunRequest(),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -75,6 +75,9 @@ class PaperRunPaths:
     @property
     def config(self) -> Path: return self.root / "config.json"
 
+    @property
+    def pause_request(self) -> Path: return self.root / ".pause_requested"
+
     # --- inputs ---
     @property
     def inputs_dir(self) -> Path: return self.root / "inputs"

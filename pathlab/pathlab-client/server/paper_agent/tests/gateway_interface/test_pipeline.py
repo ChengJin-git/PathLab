@@ -9,6 +9,9 @@ import pytest
 from pathlab_paper_agent.pipeline import initialize_paper_run
 from pathlab_paper_agent.schemas import (
     PaperConfig,
+    PaperManifest,
+    PaperRunStage,
+    PaperRunStatus,
     SourceTaskRef,
     TaskRole,
     TemplateId,
@@ -105,3 +108,85 @@ def test_run_render_export_replays_only_render_and_export(monkeypatch) -> None:
         ("paper_render_export", "exporting", None),
         ("paper_render_export", "completed", "Standalone paper-agent render/export completed."),
     ]
+
+
+def test_run_from_stage_replays_suffix_and_records_attempt(monkeypatch, tmp_path) -> None:
+    from pathlab_paper_agent import pipeline
+
+    calls: list[str] = []
+    now = pipeline.utc_now()
+    manifest = PaperManifest(
+        paper_id="paper_suffix",
+        status=PaperRunStatus.completed,
+        current_stage=PaperRunStage.completed,
+        created_at=now,
+        updated_at=now,
+        finished_at=now,
+        stage_log=[
+            {"stage": "collecting", "status": "completed", "ts": now.isoformat()},
+            {"stage": "building_evidence", "status": "completed", "ts": now.isoformat()},
+            {"stage": "outlining", "status": "completed", "ts": now.isoformat()},
+        ],
+    )
+
+    def fake_load_manifest(paper_id: str, **kwargs):  # noqa: ANN001, ANN003
+        assert paper_id == "paper_suffix"
+        return manifest
+
+    def fake_save_manifest(next_manifest, **kwargs):  # noqa: ANN001, ANN003
+        return PaperRunPaths.for_paper(next_manifest.paper_id)
+
+    def fake_run_stage(paper_id: str, stage, **kwargs):  # noqa: ANN001, ANN003
+        stage_value = stage.value if hasattr(stage, "value") else str(stage)
+        calls.append(stage_value)
+        manifest.current_stage = PaperRunStage(stage_value)
+        manifest.stage_log.append({"stage": stage_value, "status": "completed", "ts": now.isoformat()})
+        if stage_value == "completed":
+            manifest.status = PaperRunStatus.completed
+        return manifest
+
+    monkeypatch.setattr(pipeline, "load_manifest", fake_load_manifest)
+    monkeypatch.setattr(pipeline, "save_manifest", fake_save_manifest)
+    monkeypatch.setattr(pipeline, "run_stage", fake_run_stage)
+    monkeypatch.setattr(pipeline, "_ensure_run_from_config", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline.PaperRunPaths, "for_paper", lambda paper_id: PaperRunPaths(paper_id=paper_id, root=tmp_path / paper_id))
+
+    result = pipeline.run_from_stage("paper_suffix", "section_writing", uploads_dir=tmp_path)
+
+    assert result is manifest
+    assert calls == ["section_writing", "validating", "refining", "rendering", "exporting", "completed"]
+    attempt = manifest.stage_attempts[-1]
+    assert attempt["stage"] == "section_writing"
+    assert attempt["status"] == "completed"
+    assert attempt["input_attempts"]
+
+
+def test_run_stage_failure_keeps_real_failed_stage(monkeypatch, tmp_path) -> None:
+    from pathlab_paper_agent import pipeline
+
+    paper_id = "paper_fail_stage"
+    paths = tmp_path / "paper_generation" / paper_id
+    paths.mkdir(parents=True)
+    now = pipeline.utc_now()
+    manifest = PaperManifest(
+        paper_id=paper_id,
+        status=PaperRunStatus.pending,
+        current_stage=PaperRunStage.created,
+        created_at=now,
+        updated_at=now,
+        finished_at=None,
+    )
+    (paths / "manifest.json").write_text(json.dumps(manifest.model_dump(mode="json")), encoding="utf-8")
+
+    def boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("section failed")
+
+    monkeypatch.setattr(pipeline, "run_section_writing", boom)
+
+    with pytest.raises(RuntimeError, match="section failed"):
+        pipeline.run_stage(paper_id, "section_writing", uploads_dir=tmp_path)
+
+    data = json.loads((paths / "manifest.json").read_text(encoding="utf-8"))
+    assert data["status"] == "failed"
+    assert data["current_stage"] == "section_writing"
+    assert data["stage_log"][-1]["stage"] == "section_writing"

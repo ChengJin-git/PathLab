@@ -4,19 +4,23 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 from typing import Optional
 
 from .bootstrap import configure_uploads_dir
+from .diagnostics import inspect_paper_run
 from .pipeline import (
     complete_run,
     create_dev_run,
     run_after_outline,
+    run_from_stage,
     run_render_export,
     run_stage,
     run_until_outline,
 )
 from .regenerate import latest_regenerate_log_summary, regenerate_section
+from .storage import PaperRunPaths
 
 
 def _add_common_runtime_args(parser: argparse.ArgumentParser) -> None:
@@ -49,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_stage_parser.add_argument("--stage", required=True)
     _add_common_runtime_args(run_stage_parser)
 
+    run_from_stage_parser = sub.add_parser("run-from-stage", help="Rerun from one executable stage using successful upstream history.")
+    run_from_stage_parser.add_argument("--paper-id", required=True)
+    run_from_stage_parser.add_argument("--stage", required=True)
+    _add_common_runtime_args(run_from_stage_parser)
+
     scaffold = sub.add_parser("scaffold", help="Create a dev paper run scaffold without Gateway.")
     scaffold.add_argument("--paper-id", default=None)
     _add_common_runtime_args(scaffold)
@@ -62,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
     regenerate.add_argument("--paper-id", required=True)
     regenerate.add_argument("--section", required=True)
     _add_common_runtime_args(regenerate)
+
+    inspect = sub.add_parser("inspect", help="Inspect paper-run state, latest errors, and artifact readiness.")
+    inspect.add_argument("--paper-id", required=True)
+    inspect.add_argument("--json", action="store_true", help="Emit full diagnostics as JSON.")
+    _add_common_runtime_args(inspect)
 
     return parser
 
@@ -83,6 +97,16 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.command == "run-stage":
         manifest = run_stage(
+            args.paper_id,
+            args.stage,
+            uploads_dir=uploads_dir,
+            config_path=args.config,
+        )
+        print(f"{manifest.paper_id}: {manifest.current_stage.value} ({manifest.status.value})")
+        return 0
+
+    if args.command == "run-from-stage":
+        manifest = run_from_stage(
             args.paper_id,
             args.stage,
             uploads_dir=uploads_dir,
@@ -119,6 +143,21 @@ def main(argv: Optional[list[str]] = None) -> int:
             f"{manifest.paper_id}: regenerate {args.section} -> {regenerated} "
             f"({manifest.current_stage.value}/{manifest.status.value})"
         )
+        return 0
+
+    if args.command == "inspect":
+        diagnostics = inspect_paper_run(PaperRunPaths.for_paper(args.paper_id))
+        payload = diagnostics.model_dump(mode="json")
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(f"{diagnostics.paper_id}: {diagnostics.current_stage or 'unknown'} ({diagnostics.status or 'unknown'})")
+            if diagnostics.latest_error:
+                print(f"latest error: {diagnostics.latest_error.get('code')}: {diagnostics.latest_error.get('message')}")
+            print(
+                f"artifacts: {diagnostics.artifact_count}, "
+                f"missing: {diagnostics.missing_artifact_count}, stale: {diagnostics.stale_artifact_count}"
+            )
         return 0
 
     if args.command == "serve":

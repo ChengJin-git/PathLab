@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -37,15 +38,19 @@ def json_default(obj: Any) -> Any:
 
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False, default=json_default),
         encoding="utf-8",
     )
+    os.replace(tmp, path)
 
 
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def read_json(path: Path) -> dict[str, Any]:

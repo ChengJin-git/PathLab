@@ -203,6 +203,58 @@ def test_dev_server_post_render_export_queues_background(tmp_path, monkeypatch) 
     assert manifest["current_stage"] == "rendering"
 
 
+def test_dev_server_post_stage_rerun_queues_background(tmp_path, monkeypatch) -> None:
+    from pathlab_paper_agent import dev_server
+
+    called: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        dev_server,
+        "_run_from_stage_for_dev",
+        lambda paper_id, stage, uploads_dir: called.append((paper_id, stage, str(uploads_dir))),
+    )
+    client = TestClient(dev_server.create_app(uploads_dir=tmp_path, auto_run=False))
+    paths = _make_run("paper_dev_rerun_stage")
+
+    response = client.post(
+        "/papers/paper_dev_rerun_stage/stages/section_writing:rerun",
+        json={"continue_downstream": True, "include_previous_successful_output": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "running"
+    assert response.json()["current_stage"] == "section_writing"
+    assert called == [("paper_dev_rerun_stage", "section_writing", str(tmp_path))]
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest["stage_log"][-1]["status"] == "rerun_queued"
+
+
+def test_dev_server_post_retry_uses_latest_failed_stage(tmp_path, monkeypatch) -> None:
+    from pathlab_paper_agent import dev_server
+
+    called: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        dev_server,
+        "_run_from_stage_for_dev",
+        lambda paper_id, stage, uploads_dir: called.append((paper_id, stage, str(uploads_dir))),
+    )
+    client = TestClient(dev_server.create_app(uploads_dir=tmp_path, auto_run=False))
+    paths = _make_run("paper_dev_retry")
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    manifest["status"] = PaperRunStatus.failed.value
+    manifest["current_stage"] = PaperRunStage.literature_review.value
+    manifest["error_message"] = "intro/RW draft response did not contain a JSON object"
+    manifest["stage_log"].append(
+        {"stage": PaperRunStage.literature_review.value, "status": "failed", "ts": "2026-01-01T00:00:00Z"}
+    )
+    paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    response = client.post("/papers/paper_dev_retry/retry", json={})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["current_stage"] == "literature_review"
+    assert called == [("paper_dev_retry", "literature_review", str(tmp_path))]
+
+
 def sections_hash(text: str) -> str:
     import hashlib
 
