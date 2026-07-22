@@ -675,6 +675,80 @@ async def test_run_once_requeues_claimed_descriptor_on_dispatch_failure(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_run_once_dispatches_paper_descriptors_in_background(monkeypatch):
+    from task_worker.main import TaskWorkerRuntime
+
+    descriptors = [
+        build_task_descriptor(
+            job_id="paper-a",
+            job_kind="paper_generation",
+            handler="paper_generation.run_until_outline",
+            payload={"paper_id": "paper-a"},
+        ),
+        build_task_descriptor(
+            job_id="paper-b",
+            job_kind="paper_generation",
+            handler="paper_generation.run_until_outline",
+            payload={"paper_id": "paper-b"},
+        ),
+    ]
+    claims = [_ClaimedDescriptor(descriptor) for descriptor in descriptors]
+    finish = asyncio.Event()
+    both_started = asyncio.Event()
+    events = []
+
+    async def fake_claim(timeout):
+        _ = timeout
+        return claims.pop(0) if claims else None
+
+    async def fake_cancelled(job_id):
+        events.append(("cancelled", job_id))
+        return False
+
+    async def fake_lock(job_id):
+        events.append(("lock", job_id))
+        return True
+
+    async def fake_dispatch(received):
+        events.append(("dispatch-start", received.job_id))
+        if len([event for event in events if event[0] == "dispatch-start"]) == 2:
+            both_started.set()
+        await finish.wait()
+        events.append(("dispatch-end", received.job_id))
+
+    async def fake_ack(raw, descriptor=None):
+        events.append(("ack", raw, descriptor.job_id if descriptor else None))
+
+    async def fake_release(job_id):
+        events.append(("release", job_id))
+
+    monkeypatch.setattr("task_worker.main.claim_task_descriptor", fake_claim)
+    monkeypatch.setattr("task_worker.main.is_task_cancelled", fake_cancelled)
+    monkeypatch.setattr("task_worker.main.acquire_job_lock", fake_lock)
+    monkeypatch.setattr("task_worker.main.dispatch_descriptor", fake_dispatch)
+    monkeypatch.setattr("task_worker.main.ack_task_descriptor", fake_ack)
+    monkeypatch.setattr("task_worker.main.release_job_lock", fake_release)
+
+    runtime = TaskWorkerRuntime()
+    await runtime.run_once()
+    await runtime.run_once()
+
+    await asyncio.wait_for(both_started.wait(), timeout=1.0)
+    assert ("dispatch-start", "paper-a") in events
+    assert ("dispatch-start", "paper-b") in events
+    assert not any(event[0] == "ack" for event in events)
+
+    finish.set()
+    while runtime._background_descriptor_tasks:
+        await asyncio.gather(*list(runtime._background_descriptor_tasks), return_exceptions=True)
+
+    assert ("ack", descriptors[0].to_json(), "paper-a") in events
+    assert ("ack", descriptors[1].to_json(), "paper-b") in events
+    assert ("release", "paper-a") in events
+    assert ("release", "paper-b") in events
+
+
+@pytest.mark.asyncio
 async def test_run_once_acks_duplicate_locked_descriptor(monkeypatch):
     from task_worker.main import TaskWorkerRuntime
 
