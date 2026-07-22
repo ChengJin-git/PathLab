@@ -190,3 +190,67 @@ def test_run_stage_failure_keeps_real_failed_stage(monkeypatch, tmp_path) -> Non
     assert data["status"] == "failed"
     assert data["current_stage"] == "section_writing"
     assert data["stage_log"][-1]["stage"] == "section_writing"
+
+
+def test_run_stage_pause_after_stage_discards_current_stage_outputs(monkeypatch) -> None:
+    from pathlab_paper_agent import pipeline
+    from pathlab_paper_agent.stages.common import write_json
+
+    paper_id = "paper_pause_discard"
+    paths = PaperRunPaths.for_paper(paper_id)
+    paths.ensure_dirs()
+    now = pipeline.utc_now()
+    original_section = paths.sections_dir / "abstract.tex"
+    original_section.write_text("original section", encoding="utf-8")
+    manifest = PaperManifest(
+        paper_id=paper_id,
+        status=PaperRunStatus.pending,
+        current_stage=PaperRunStage.created,
+        created_at=now,
+        updated_at=now,
+        finished_at=None,
+        artifact_index={
+            "drafts/sections/abstract.tex": {
+                "status": "ready",
+                "visibility": "public",
+                "downloadable": True,
+                "label": "Original abstract",
+            }
+        },
+    )
+    write_json(paths.manifest, manifest.model_dump(mode="json"))
+
+    def write_temp_outputs(next_paths, next_manifest):  # noqa: ANN001
+        original_section.write_text("temporary rewrite", encoding="utf-8")
+        new_section = next_paths.sections_dir / "methods.tex"
+        new_section.write_text("temporary methods", encoding="utf-8")
+        next_manifest.artifact_index["drafts/sections/abstract.tex"] = {
+            "status": "ready",
+            "visibility": "public",
+            "downloadable": True,
+            "label": "Temporary abstract",
+        }
+        next_manifest.artifact_index["drafts/sections/methods.tex"] = {
+            "status": "ready",
+            "visibility": "public",
+            "downloadable": True,
+            "label": "Temporary methods",
+        }
+        next_paths.pause_request.write_text("pause", encoding="utf-8")
+
+    monkeypatch.setattr(pipeline, "run_section_writing", write_temp_outputs)
+
+    result = pipeline.run_stage(paper_id, "section_writing")
+
+    assert result.status == PaperRunStatus.paused
+    assert result.current_stage == PaperRunStage.section_writing
+    assert original_section.read_text(encoding="utf-8") == "original section"
+    assert not (paths.sections_dir / "methods.tex").exists()
+    assert result.artifact_index["drafts/sections/abstract.tex"]["label"] == "Original abstract"
+    assert "drafts/sections/methods.tex" not in result.artifact_index
+    assert result.stage_log[-1]["status"] == PaperRunStatus.paused.value
+    assert "discarded" in result.stage_log[-1]["message"]
+    assert not any(
+        entry["stage"] == PaperRunStage.section_writing.value and entry["status"] == "completed"
+        for entry in result.stage_log
+    )

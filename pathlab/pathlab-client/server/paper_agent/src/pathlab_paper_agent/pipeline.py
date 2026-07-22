@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Optional
 
@@ -513,6 +514,93 @@ def _existing_stage_artifacts(paths: PaperRunPaths, manifest: PaperManifest, sta
     return sorted(rel_paths)
 
 
+def _stage_output_files_on_disk(paths: PaperRunPaths, stage: PaperRunStage) -> list[str]:
+    rel_paths: set[str] = set()
+    for prefix in _STAGE_OUTPUT_PREFIXES.get(stage, ()):
+        target = paths.root / prefix
+        if prefix.endswith("/"):
+            if not target.is_dir():
+                continue
+            rel_paths.update(
+                path.relative_to(paths.root).as_posix()
+                for path in target.rglob("*")
+                if path.is_file()
+            )
+        elif target.is_file():
+            rel_paths.add(prefix)
+    return sorted(rel_paths)
+
+
+def _snapshot_stage_state(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    stage: PaperRunStage,
+) -> dict[str, Any]:
+    rel_paths = sorted(
+        {
+            *_existing_stage_artifacts(paths, manifest, stage),
+            *_stage_output_files_on_disk(paths, stage),
+        }
+    )
+    file_contents: dict[str, bytes] = {}
+    for rel_path in rel_paths:
+        path = paths.root / rel_path
+        if path.is_file():
+            file_contents[rel_path] = path.read_bytes()
+    artifact_index = {
+        rel_path: deepcopy(raw)
+        for rel_path, raw in manifest.artifact_index.items()
+        if _artifact_belongs_to_stage(rel_path, stage)
+    }
+    return {
+        "file_contents": file_contents,
+        "artifact_index": artifact_index,
+    }
+
+
+def _remove_empty_parents(path: Path, stop_at: Path) -> None:
+    parent = path.parent
+    stop = stop_at.resolve()
+    while parent != stop and stop in parent.resolve().parents:
+        try:
+            parent.rmdir()
+        except OSError:
+            return
+        parent = parent.parent
+
+
+def _restore_stage_state(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    stage: PaperRunStage,
+    snapshot: dict[str, Any],
+) -> None:
+    file_contents = snapshot.get("file_contents", {})
+    if not isinstance(file_contents, dict):
+        file_contents = {}
+    before_files = {str(rel_path) for rel_path in file_contents}
+    after_files = set(_stage_output_files_on_disk(paths, stage))
+
+    for rel_path in sorted(after_files - before_files, reverse=True):
+        path = paths.root / rel_path
+        if path.is_file():
+            path.unlink()
+            _remove_empty_parents(path, paths.root)
+
+    for rel_path, content in file_contents.items():
+        path = paths.root / str(rel_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
+    for rel_path in list(manifest.artifact_index):
+        if _artifact_belongs_to_stage(rel_path, stage):
+            manifest.artifact_index.pop(rel_path, None)
+    artifact_index = snapshot.get("artifact_index", {})
+    if isinstance(artifact_index, dict):
+        for rel_path, raw in artifact_index.items():
+            manifest.artifact_index[str(rel_path)] = deepcopy(raw)
+
+
 def _sha256(path: Path) -> str | None:
     if not path.is_file():
         return None
@@ -696,6 +784,7 @@ def run_stage(
     )
     if paused_manifest is not None:
         return paused_manifest
+    stage_snapshot = _snapshot_stage_state(paths, manifest, stage_enum)
 
     try:
         manifest.status = PaperRunStatus.running
@@ -732,6 +821,18 @@ def run_stage(
         _execute_stage(paths, manifest, stage_enum)
         if stage_enum in _EXECUTABLE_STAGES:
             assert_stage_artifacts_ready(paths, manifest, stage_enum)
+        if _pause_requested(paths):
+            _restore_stage_state(paths, manifest, stage_enum, stage_snapshot)
+            return _mark_paused(
+                paths,
+                manifest,
+                stage_enum,
+                uploads_dir=uploads_dir,
+                message=(
+                    f"Pause requested; discarded temporary outputs from stage {stage_enum.value}. "
+                    "Rerun this stage to continue."
+                ),
+            )
         manifest.error_message = None
         finished_at = utc_now()
         if stage_enum == PaperRunStage.completed:
@@ -767,14 +868,6 @@ def run_stage(
             duration_ms=duration_ms,
             message=message or f"Stage {stage_enum.value} completed.",
         )
-        paused_manifest = _pause_after_stage_if_requested(
-            paths,
-            manifest,
-            stage_enum,
-            uploads_dir=uploads_dir,
-        )
-        if paused_manifest is not None:
-            return paused_manifest
     except Exception as exc:
         structured_error = error_payload(exc)
         diagnostics = inspect_paper_run(paths, manifest)
