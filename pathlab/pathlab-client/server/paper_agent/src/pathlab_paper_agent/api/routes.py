@@ -74,7 +74,6 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     RegenerateRejectRequest,
     RegenerateRejectResponse,
     RegenerateSectionRequest,
-    GuardIssueSummary,
     GuardResultSummary,
     RefinementSummary,
     ValidationSummary,
@@ -103,6 +102,7 @@ from pathlab_paper_agent.regenerate import (  # noqa: E402
     reject_regenerate,
     regenerate_section,
 )
+from pathlab_paper_agent.guard_summary import build_guard_result_summary  # noqa: E402
 from pathlab_paper_agent.process_logging import append_pipeline_event  # noqa: E402
 from pathlab_paper_agent.diagnostics import inspect_paper_run  # noqa: E402
 from pathlab_paper_agent.outline_markdown import outline_to_markdown  # noqa: E402
@@ -855,30 +855,7 @@ def _guard_result_summary(paths: PaperRunPaths, guard: str, rel_path: str) -> Gu
     report = _load_json_file(paths.root / rel_path)
     if not report:
         return None
-    raw_issues = report.get("issues") if isinstance(report.get("issues"), list) else []
-    issues = [issue for issue in raw_issues if isinstance(issue, dict)]
-    error_count = sum(1 for issue in issues if str(issue.get("severity") or "error") == "error")
-    warning_count = sum(1 for issue in issues if str(issue.get("severity") or "") == "warning")
-    sample_issues: list[GuardIssueSummary] = []
-    for issue in issues[:_MAX_SAMPLE_ISSUES]:
-        sample_issues.append(
-            GuardIssueSummary(
-                code=str(issue.get("code") or "unknown"),
-                message=str(issue.get("message") or ""),
-                severity=str(issue.get("severity") or "error"),
-                path=issue.get("path") if isinstance(issue.get("path"), str) else None,
-                context=issue.get("context") if isinstance(issue.get("context"), str) else None,
-            )
-        )
-    return GuardResultSummary(
-        guard=str(report.get("guard") or guard),
-        status=str(report.get("status") or ("fail" if error_count else "pass")),
-        issue_count=len(issues),
-        error_count=error_count,
-        warning_count=warning_count,
-        path=rel_path,
-        sample_issues=sample_issues,
-    )
+    return build_guard_result_summary(report, guard, max_sample_issues=_MAX_SAMPLE_ISSUES)
 
 
 def _score_total(score: object) -> float | None:

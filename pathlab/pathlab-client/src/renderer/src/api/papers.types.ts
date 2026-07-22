@@ -443,6 +443,8 @@ export interface components {
              * @default error
              */
             severity: string;
+            /** Location */
+            location?: string | null;
             /** Path */
             path?: string | null;
             /** Context */

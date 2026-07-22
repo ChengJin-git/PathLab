@@ -35,6 +35,7 @@ from .pipeline import (
     summarize_manifest,
 )
 from .regenerate import MissingSectionDraftError, UnknownSectionError, latest_regenerate_log_summary, regenerate_section
+from .guard_summary import build_guard_result_summary
 from .process_logging import append_pipeline_event
 from .outline_markdown import outline_to_markdown
 from .schemas import (
@@ -46,10 +47,8 @@ from .schemas import (
     CitationReference as CitationReferenceSchema,
     CitationsView,
     CreatePaperRequest,
-    GuardIssueSummary,
     GuardResultSummary,
     OutlineApprovalRequest,
-    PaperConfig,
     PaperStageRerunRequest,
     PaperRunCreateResponse,
     PaperRunDetail,
@@ -645,30 +644,7 @@ def _guard_result_summary(paths: PaperRunPaths, guard: str, rel_path: str) -> Gu
     report = _read_json_object(paths.root / rel_path)
     if not report:
         return None
-    raw_issues = report.get("issues") if isinstance(report.get("issues"), list) else []
-    issues = [issue for issue in raw_issues if isinstance(issue, dict)]
-    error_count = sum(1 for issue in issues if str(issue.get("severity") or "error") == "error")
-    warning_count = sum(1 for issue in issues if str(issue.get("severity") or "") == "warning")
-    sample_issues: list[GuardIssueSummary] = []
-    for issue in issues[:_MAX_SAMPLE_ISSUES]:
-        sample_issues.append(
-            GuardIssueSummary(
-                code=str(issue.get("code") or "unknown"),
-                message=str(issue.get("message") or ""),
-                severity=str(issue.get("severity") or "error"),
-                path=issue.get("path") if isinstance(issue.get("path"), str) else None,
-                context=issue.get("context") if isinstance(issue.get("context"), str) else None,
-            )
-        )
-    return GuardResultSummary(
-        guard=str(report.get("guard") or guard),
-        status=str(report.get("status") or ("fail" if error_count else "pass")),
-        issue_count=len(issues),
-        error_count=error_count,
-        warning_count=warning_count,
-        path=rel_path,
-        sample_issues=sample_issues,
-    )
+    return build_guard_result_summary(report, guard, max_sample_issues=_MAX_SAMPLE_ISSUES)
 
 
 def _score_total(score: object) -> float | None:

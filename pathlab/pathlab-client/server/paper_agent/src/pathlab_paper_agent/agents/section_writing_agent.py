@@ -7,6 +7,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from decimal import Decimal, InvalidOperation
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,7 @@ _DEFAULT_SECTION_ORDER = (
 _PROMPT_NAME = "section_writing_v1.txt"
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.IGNORECASE | re.DOTALL)
 _RAW_CITE_RE = re.compile(r"\\cite\w*(?:\[[^\]]*\])*\{([^}]+)\}")
+_METRIC_PLACEHOLDER_RE = re.compile(r"\{\{\s*m:[A-Za-z0-9_.:-]+\s*\}\}")
 _INCLUDEGRAPHICS_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
 _INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
 _METRIC_LIKE_NUMBER_RE = re.compile(
@@ -151,6 +153,7 @@ _DEFAULT_SECTION_LLM_REASONING_EFFORT = "medium"
 _DEFAULT_SECTION_LLM_MAX_COMPLETION_TOKENS = 32_768
 _DEFAULT_SECTION_WRITING_MODE = "single_call"
 _SECTION_WRITING_MODES = {"single_call", "per_section"}
+_MAX_METRIC_CONTRACT_REPAIR_ATTEMPTS = 2
 
 
 class SectionWritingAgentError(RuntimeError):
@@ -163,6 +166,21 @@ class SectionCitationContractError(SectionWritingAgentError):
 
 class SectionMetricContractError(SectionWritingAgentError):
     """Raised when metric placeholders cannot be rendered deterministically."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        section: str | None = None,
+        raw_value: str | None = None,
+        allowed_metric_keys: Sequence[str] | None = None,
+        repairable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.section = section
+        self.raw_value = raw_value
+        self.allowed_metric_keys = tuple(allowed_metric_keys or ())
+        self.repairable = repairable
 
 
 class SectionFigureTableContractError(SectionWritingAgentError):
@@ -192,6 +210,7 @@ class SectionWritingInputs:
     template_styles: tuple[dict[str, Any], ...]
     evidence_lock: dict[str, Any] = field(repr=False)
     private_source_ids: tuple[str, ...] = field(default_factory=tuple, repr=False)
+    previous_sections: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_paths(cls, paths: PaperRunPaths, config: Any) -> "SectionWritingInputs":
@@ -213,6 +232,7 @@ class SectionWritingInputs:
             template_styles=tuple(_template_styles(config)),
             evidence_lock=evidence_lock,
             private_source_ids=tuple(_private_source_ids_from_config_and_lock(config, evidence_lock)),
+            previous_sections=_read_existing_sections(paths),
         )
 
 
@@ -259,10 +279,60 @@ class SectionWritingAgent:
             generation_mode=self.generation_mode,
         )
         try:
-            if self.generation_mode == "per_section":
-                result = self._generate_per_section(inputs, required_sections)
-            else:
-                result = self._generate_single_call(inputs, required_sections)
+            result = self._generate_once(inputs, required_sections)
+        except SectionMetricContractError as exc:
+            if exc.raw_value:
+                self._emit(
+                    "raw_metric_detected",
+                    section=exc.section,
+                    raw_value=exc.raw_value,
+                    allowed_metric_keys=list(exc.allowed_metric_keys),
+                    repairable=exc.repairable,
+                    error_message=str(exc),
+                )
+            self._emit(
+                "llm_contract_repair_attempted",
+                contract="metric_placeholder",
+                attempt=1,
+                section=exc.section,
+                raw_value=exc.raw_value,
+                allowed_metric_keys=list(exc.allowed_metric_keys or _allowed_metric_keys(inputs)),
+                error_message=str(exc),
+            )
+            try:
+                result = self._generate_once(
+                    inputs,
+                    required_sections,
+                    metric_contract_repair=_metric_contract_repair_context(exc, inputs, attempt=1),
+                )
+            except SectionMetricContractError as repair_exc:
+                self._emit(
+                    "llm_contract_repair_failed",
+                    contract="metric_placeholder",
+                    attempt=1,
+                    section=repair_exc.section,
+                    raw_value=repair_exc.raw_value,
+                    allowed_metric_keys=list(repair_exc.allowed_metric_keys or _allowed_metric_keys(inputs)),
+                    error_message=str(repair_exc),
+                )
+                self._emit(
+                    "generate_failed",
+                    error_type=type(repair_exc).__name__,
+                    error_message=str(repair_exc),
+                )
+                raise
+            except Exception as repair_exc:
+                self._emit(
+                    "generate_failed",
+                    error_type=type(repair_exc).__name__,
+                    error_message=str(repair_exc),
+                )
+                raise
+            self._emit(
+                "llm_contract_repair_succeeded",
+                contract="metric_placeholder",
+                attempt=1,
+            )
         except Exception as exc:
             self._emit(
                 "generate_failed",
@@ -282,16 +352,43 @@ class SectionWritingAgent:
         )
         return result
 
+    def _generate_once(
+        self,
+        inputs: SectionWritingInputs,
+        required_sections: Sequence[str],
+        *,
+        metric_contract_repair: Mapping[str, Any] | None = None,
+    ) -> SectionWritingResult:
+        if self.generation_mode == "per_section":
+            return self._generate_per_section(
+                inputs,
+                required_sections,
+                metric_contract_repair=metric_contract_repair,
+            )
+        return self._generate_single_call(
+            inputs,
+            required_sections,
+            metric_contract_repair=metric_contract_repair,
+        )
+
     def _generate_single_call(
         self,
         inputs: SectionWritingInputs,
         required_sections: Sequence[str],
+        *,
+        metric_contract_repair: Mapping[str, Any] | None = None,
     ) -> SectionWritingResult:
-        prompt = self.build_prompt(inputs)
+        prompt = self.build_prompt(
+            inputs,
+            previous_sections=inputs.previous_sections,
+            metric_contract_repair=metric_contract_repair,
+        )
         self._emit("prompt_built", prompt_length=len(prompt))
-        raw_sections = self._request_raw_sections(prompt, step="section_writing")
+        step = "section_writing:metric_contract_repair" if metric_contract_repair else "section_writing"
+        raw_sections = self._request_raw_sections(prompt, step=step)
         self._emit("parse_completed", raw_section_keys=sorted(raw_sections.keys()))
         normalized = normalize_sections(raw_sections, required_sections)
+        allowed_metric_keys = _allowed_metric_keys(inputs)
         _assert_no_private_identifiers(normalized, context="section-writing output")
         _assert_no_private_source_identifiers(
             normalized,
@@ -300,7 +397,8 @@ class SectionWritingAgent:
         )
         _assert_no_private_source_placeholders(normalized, context="section-writing output")
         _assert_no_raw_cites(normalized)
-        _assert_no_raw_metric_values(normalized)
+        normalized = self._repair_unique_raw_metric_values(normalized, inputs)
+        _assert_no_raw_metric_values(normalized, allowed_metric_keys=allowed_metric_keys)
         used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
         normalized = _repair_missing_locked_block_inputs(normalized, inputs)
         _assert_locked_block_contract(normalized, inputs)
@@ -322,17 +420,26 @@ class SectionWritingAgent:
         self,
         inputs: SectionWritingInputs,
         required_sections: Sequence[str],
+        *,
+        metric_contract_repair: Mapping[str, Any] | None = None,
     ) -> SectionWritingResult:
         normalized: dict[str, str] = {}
+        allowed_metric_keys = _allowed_metric_keys(inputs)
         for slug in required_sections:
             self._emit("section_generate_start", section=slug)
             prompt = self.build_prompt(
                 inputs,
                 required_sections_override=[slug],
-                previous_sections=normalized,
+                previous_sections={**inputs.previous_sections, **normalized},
+                metric_contract_repair=metric_contract_repair,
             )
             self._emit("section_prompt_built", section=slug, prompt_length=len(prompt))
-            raw_sections = self._request_raw_sections(prompt, step=f"section_writing:{slug}")
+            step = (
+                f"section_writing:{slug}:metric_contract_repair"
+                if metric_contract_repair
+                else f"section_writing:{slug}"
+            )
+            raw_sections = self._request_raw_sections(prompt, step=step)
             self._emit(
                 "section_parse_completed",
                 section=slug,
@@ -351,7 +458,8 @@ class SectionWritingAgent:
             section_only = normalize_sections(raw_sections, [slug])
             section_only = {slug: section_only[slug]}
             _assert_no_raw_cites(section_only)
-            _assert_no_raw_metric_values(section_only)
+            section_only = self._repair_unique_raw_metric_values(section_only, inputs)
+            _assert_no_raw_metric_values(section_only, allowed_metric_keys=allowed_metric_keys)
             section_only = _repair_missing_locked_block_inputs(section_only, inputs)
             _assert_locked_block_contract(section_only, inputs)
             normalized[slug] = section_only[slug]
@@ -365,7 +473,8 @@ class SectionWritingAgent:
         )
         _assert_no_private_source_placeholders(normalized, context="section-writing output")
         _assert_no_raw_cites(normalized)
-        _assert_no_raw_metric_values(normalized)
+        normalized = self._repair_unique_raw_metric_values(normalized, inputs)
+        _assert_no_raw_metric_values(normalized, allowed_metric_keys=allowed_metric_keys)
         used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
         normalized = _repair_missing_locked_block_inputs(normalized, inputs)
         _assert_locked_block_contract(normalized, inputs)
@@ -420,6 +529,44 @@ class SectionWritingAgent:
         )
         return parse_sections_json(_response_text(response))
 
+    def _repair_unique_raw_metric_values(
+        self,
+        sections: Mapping[str, str],
+        inputs: SectionWritingInputs,
+    ) -> dict[str, str]:
+        entries = metric_entries(dict(inputs.evidence_lock))
+        if not entries:
+            return dict(sections)
+
+        repaired: dict[str, str] = {}
+        for slug, text in sections.items():
+            next_text, repairs = _replace_unique_raw_metric_values(text, entries)
+            for repair in repairs:
+                self._emit(
+                    "raw_metric_detected",
+                    section=slug,
+                    raw_value=repair["raw_value"],
+                    allowed_metric_keys=sorted(entries),
+                    repairable=True,
+                )
+                self._emit(
+                    "auto_metric_repair_attempted",
+                    section=slug,
+                    raw_value=repair["raw_value"],
+                    candidate_metric_keys=repair["candidate_metric_keys"],
+                    replacement_metric_key=repair.get("metric_key"),
+                    result=repair["result"],
+                )
+                if repair["result"] == "succeeded":
+                    self._emit(
+                        "auto_metric_repair_succeeded",
+                        section=slug,
+                        raw_value=repair["raw_value"],
+                        metric_key=repair["metric_key"],
+                    )
+            repaired[slug] = next_text
+        return repaired
+
     def _emit(self, event: str, **payload: Any) -> None:
         emit_event(self.event_sink, event, **payload)
 
@@ -429,6 +576,7 @@ class SectionWritingAgent:
         *,
         required_sections_override: Sequence[str] | None = None,
         previous_sections: Mapping[str, str] | None = None,
+        metric_contract_repair: Mapping[str, Any] | None = None,
     ) -> str:
         payload = _redact_private_source_identifiers(
             _prompt_payload(
@@ -439,6 +587,12 @@ class SectionWritingAgent:
             ),
             inputs.private_source_ids,
         )
+        if metric_contract_repair:
+            payload["metric_contract_repair"] = dict(metric_contract_repair)
+            contract = payload.get("section_contract")
+            if isinstance(contract, dict):
+                contract["repair_mode"] = "metric_placeholder"
+                contract["repair_attempt"] = metric_contract_repair.get("attempt")
         _assert_no_private_source_identifiers(
             payload,
             inputs.private_source_ids,
@@ -648,6 +802,16 @@ def _compact_reference_items(items: Sequence[Mapping[str, Any]]) -> list[dict[st
     return [_compact_reference_item(item) for item in items]
 
 
+def _read_existing_sections(paths: PaperRunPaths) -> dict[str, str]:
+    if not paths.sections_dir.exists():
+        return {}
+    return {
+        path.stem: path.read_text(encoding="utf-8")
+        for path in sorted(paths.sections_dir.glob("*.tex"))
+        if path.is_file()
+    }
+
+
 def _compact_reference_item(item: Mapping[str, Any]) -> dict[str, Any]:
     compact: dict[str, Any] = {}
     for field_name in _REFERENCE_PROMPT_FIELDS:
@@ -685,6 +849,7 @@ def _prompt_payload_private_phi_view(payload: Mapping[str, Any]) -> dict[str, An
 
 def _render_sections(sections: Mapping[str, str], inputs: SectionWritingInputs) -> dict[str, str]:
     allowed_keys = _ref_keys(inputs.selected_refs)
+    allowed_metric_keys = _allowed_metric_keys(inputs)
     evidence_lock = inputs.evidence_lock
     rendered: dict[str, str] = {}
     for slug, text in sections.items():
@@ -697,12 +862,20 @@ def _render_sections(sections: Mapping[str, str], inputs: SectionWritingInputs) 
         except KeyError as exc:
             key = exc.args[0] if exc.args else "unknown"
             raise SectionMetricContractError(
-                f"Metric placeholder {key!r} is not present in evidence_lock.private.json"
+                f"Metric placeholder {key!r} is not present in evidence_lock.private.json",
+                section=slug,
+                allowed_metric_keys=allowed_metric_keys,
+                repairable=True,
             ) from exc
         if "[CITE:" in with_metrics:
             raise SectionCitationContractError(f"Unrendered citation placeholder remains in {slug}")
         if "{{m:" in with_metrics:
-            raise SectionMetricContractError(f"Unrendered metric placeholder remains in {slug}")
+            raise SectionMetricContractError(
+                f"Unrendered metric placeholder remains in {slug}",
+                section=slug,
+                allowed_metric_keys=allowed_metric_keys,
+                repairable=True,
+            )
         rendered[slug] = _ensure_trailing_newline(_normalize_includegraphics_options(with_metrics))
     return rendered
 
@@ -857,16 +1030,189 @@ def _assert_no_raw_cites(sections: Mapping[str, str]) -> None:
             )
 
 
-def _assert_no_raw_metric_values(sections: Mapping[str, str]) -> None:
+def _assert_no_raw_metric_values(
+    sections: Mapping[str, str],
+    *,
+    allowed_metric_keys: Sequence[str] | None = None,
+) -> None:
     for slug, text in sections.items():
         without_placeholders = _strip_non_metric_latex_fragments(
-            re.sub(r"\{\{\s*m:[A-Za-z0-9_.:-]+\s*\}\}", "", text)
+            _METRIC_PLACEHOLDER_RE.sub("", text)
         )
         match = _METRIC_LIKE_NUMBER_RE.search(without_placeholders)
         if match:
             raise SectionMetricContractError(
-                f"Section {slug} contains raw metric-like value {match.group(0)!r}; use {{{{m:metric_key}}}}"
+                f"Section {slug} contains raw metric-like value {match.group(0)!r}; use {{{{m:metric_key}}}}",
+                section=slug,
+                raw_value=match.group(0),
+                allowed_metric_keys=allowed_metric_keys,
+                repairable=True,
             )
+
+
+def _allowed_metric_keys(inputs: SectionWritingInputs) -> tuple[str, ...]:
+    return tuple(sorted(metric_entries(dict(inputs.evidence_lock))))
+
+
+def _replace_unique_raw_metric_values(
+    text: str,
+    entries: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    protected_ranges = _raw_metric_protected_ranges(text)
+    replacements: list[tuple[int, int, str]] = []
+    repairs: list[dict[str, Any]] = []
+    for match in _METRIC_LIKE_NUMBER_RE.finditer(text):
+        if _overlaps_any_range(match.start(), match.end(), protected_ranges):
+            continue
+        raw_value = match.group(0)
+        candidate_keys = _metric_keys_matching_raw_value(raw_value, entries)
+        repair: dict[str, Any] = {
+            "raw_value": raw_value,
+            "candidate_metric_keys": list(candidate_keys),
+            "result": "no_unique_match",
+        }
+        if len(candidate_keys) == 1:
+            metric_key = candidate_keys[0]
+            replacement = f"{{{{m:{metric_key}}}}}"
+            replacements.append((match.start(), match.end(), replacement))
+            repair.update(
+                {
+                    "metric_key": metric_key,
+                    "result": "succeeded",
+                }
+            )
+        elif len(candidate_keys) > 1:
+            repair["result"] = "ambiguous"
+        repairs.append(repair)
+
+    if not replacements:
+        return text, repairs
+
+    repaired_parts: list[str] = []
+    cursor = 0
+    for start, end, replacement in replacements:
+        repaired_parts.append(text[cursor:start])
+        repaired_parts.append(replacement)
+        cursor = end
+    repaired_parts.append(text[cursor:])
+    return "".join(repaired_parts), repairs
+
+
+def _raw_metric_protected_ranges(text: str) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for regex in (_METRIC_PLACEHOLDER_RE, _INCLUDEGRAPHICS_RE):
+        ranges.extend((match.start(), match.end()) for match in regex.finditer(text))
+    return ranges
+
+
+def _overlaps_any_range(start: int, end: int, ranges: Sequence[tuple[int, int]]) -> bool:
+    return any(start < range_end and end > range_start for range_start, range_end in ranges)
+
+
+def _metric_keys_matching_raw_value(
+    raw_value: str,
+    entries: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, ...]:
+    normalized = _normalize_raw_metric_value(raw_value)
+    if not normalized:
+        return ()
+    matches: list[str] = []
+    for key, entry in sorted(entries.items()):
+        if normalized in _metric_value_variants(entry):
+            matches.append(str(key))
+    return tuple(matches)
+
+
+def _normalize_raw_metric_value(raw_value: str) -> str:
+    token = re.sub(r"^p\s*[<=>]\s*", "", raw_value.strip(), flags=re.IGNORECASE)
+    return token.strip()
+
+
+def _metric_value_variants(entry: Mapping[str, Any]) -> set[str]:
+    variants: set[str] = set()
+    for field_name in (
+        "value",
+        "formatted",
+        "display",
+        "text",
+        "ci_lower",
+        "ci_upper",
+        "std",
+        "mean",
+    ):
+        if field_name in entry:
+            variants.update(_variants_for_metric_value(entry[field_name]))
+    ci = entry.get("ci")
+    if isinstance(ci, list | tuple):
+        for item in ci:
+            variants.update(_variants_for_metric_value(item))
+    elif isinstance(ci, Mapping):
+        for item in ci.values():
+            variants.update(_variants_for_metric_value(item))
+    return {item for item in variants if item}
+
+
+def _variants_for_metric_value(value: Any) -> set[str]:
+    variants: set[str] = set()
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            variants.add(stripped)
+        numeric_source: Any = stripped.rstrip("%")
+    else:
+        numeric_source = value
+
+    dec = _decimal_or_none(numeric_source)
+    if dec is None:
+        return variants
+
+    for places in (0, 1, 2, 3, 4):
+        variants.add(_format_metric_decimal(dec, places))
+    pct = dec * Decimal("100")
+    for places in (0, 1, 2):
+        variants.add(f"{_format_metric_decimal(pct, places)}%")
+    return variants
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _format_metric_decimal(value: Decimal, places: int) -> str:
+    quant = Decimal("1") if places == 0 else Decimal("1").scaleb(-places)
+    text = format(value.quantize(quant), "f")
+    if "." not in text:
+        return text
+    stripped = text.rstrip("0").rstrip(".")
+    return stripped or "0"
+
+
+def _metric_contract_repair_context(
+    error: SectionMetricContractError,
+    inputs: SectionWritingInputs,
+    *,
+    attempt: int,
+) -> dict[str, Any]:
+    allowed_metric_keys = tuple(error.allowed_metric_keys or _allowed_metric_keys(inputs))
+    return {
+        "attempt": attempt,
+        "contract": "metric_placeholder",
+        "error_message": str(error),
+        "section": error.section,
+        "raw_value": error.raw_value,
+        "allowed_metric_keys": list(allowed_metric_keys),
+        "instructions": [
+            "Return the complete sections JSON again.",
+            "Do not write raw metric-like numbers in prose.",
+            "Replace any metric value with the exact {{m:metric_key}} placeholder from allowed_metric_keys.",
+            "Keep citation placeholders and locked block/table/figure references intact.",
+        ],
+    }
 
 
 def _strip_non_metric_latex_fragments(text: str) -> str:

@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import type { PaperRunStage, PaperRunStatus, TaskRole, TemplateId } from '../api/papers'
+import type { PaperRunStage, PaperRunStatus, PaperStageLogEntry, TaskRole, TemplateId } from '../api/papers'
 
 function fallbackLabel(value: string | null | undefined): string {
   if (!value) return '-'
@@ -16,6 +16,33 @@ export function paperStatusLabel(t: TFunction, status: PaperRunStatus | string):
 export function paperStageLabel(t: TFunction, stage: PaperRunStage | string | null | undefined): string {
   if (!stage) return '-'
   return t(`paperAgent.stage.${stage}`, { defaultValue: fallbackLabel(stage) })
+}
+
+export function paperStageDiagnosticMessage(
+  t: TFunction,
+  message: string | null | undefined,
+): string {
+  if (!message) return ''
+  const rawMetricMatch = message.match(/Section\s+([A-Za-z0-9_:-]+)\s+contains raw metric-like value\s+'([^']+)'/)
+  if (rawMetricMatch) {
+    return t('paperAgent.diagnostics.rawMetricFinalFailure', {
+      section: rawMetricMatch[1],
+      value: rawMetricMatch[2],
+    })
+  }
+  return message
+}
+
+export function paperStageLogMessage(t: TFunction, entry: PaperStageLogEntry | null | undefined): string {
+  if (!entry) return ''
+  const messageKey = (entry as PaperStageLogEntry & { message_key?: unknown }).message_key
+  if (typeof messageKey === 'string' && messageKey) {
+    return t(messageKey, { defaultValue: paperStageDiagnosticMessage(t, entry.message) })
+  }
+  if (entry.message && /^Stage\s+[A-Za-z0-9_:-]+\s+(?:started|completed)\.$/.test(entry.message)) {
+    return ''
+  }
+  return paperStageDiagnosticMessage(t, entry.message)
 }
 
 export function paperTemplateTitle(t: TFunction, template: TemplateId | string | null | undefined): string {
@@ -42,6 +69,18 @@ export function paperCitationTypeLabel(t: TFunction, type: string): string {
 
 export function paperGuardLabel(t: TFunction, guard: string): string {
   return t(`paperAgent.validation.guards.${guard}`, { defaultValue: fallbackLabel(guard) })
+}
+
+export function paperGuardDescription(t: TFunction, guard: string): string {
+  return t(`paperAgent.validation.guardDescriptions.${guard}`, { defaultValue: '' })
+}
+
+export function paperGuardIssueLabel(t: TFunction, code: string): string {
+  return t(`paperAgent.validation.issueLabels.${code}`, { defaultValue: fallbackLabel(code) })
+}
+
+export function paperGuardIssueDescription(t: TFunction, code: string, fallback: string): string {
+  return t(`paperAgent.validation.issueDescriptions.${code}`, { defaultValue: fallback })
 }
 
 export function paperValidationStatusLabel(t: TFunction, status: string | null | undefined): string {

@@ -4311,7 +4311,17 @@
         "validating": { "label": "Validation", "short": "Validate" },
         "refining": { "label": "Refinement", "short": "Refine" },
         "rendering_exporting": { "label": "PDF export", "short": "PDF" }
+      },
+      "messages": {
+        "sectionMetricAutoRepairAttempted": "Section writing found a metric placeholder issue and is checking locked evidence automatically.",
+        "sectionMetricAutoRepairSucceeded": "The metric placeholder was repaired automatically; section writing is continuing.",
+        "sectionMetricRetryAttempted": "Section writing hit a formatting issue and is retrying with stricter locked-metric instructions.",
+        "sectionMetricRetryFailed": "The automatic retry could not finish the repair; preparing a failure diagnosis.",
+        "sectionMetricRetrySucceeded": "The retry fixed the metric placeholder issue; section writing is continuing."
       }
+    },
+    "diagnostics": {
+      "rawMetricFinalFailure": "Section generation failed: the model repeatedly wrote the experimental value {{value}} directly in {{section}} instead of using a locked metric placeholder. Retry the section stage, or check the metrics in the evidence lock."
     },
     "outline": {
       "loading": "Loading outline...",
@@ -4656,6 +4666,7 @@
       "foundIssuesPlural": "Validation found {{count}} blocking issues",
       "refinementFeedback": "Refinement feedback",
       "validationSummaryPath": "validation summary",
+      "affectedSection": "Affected section: {{section}}",
       "issues": "issues",
       "errors": "errors",
       "warns": "warns",
@@ -4678,6 +4689,36 @@
         "citation": "Citation",
         "claim": "Claim",
         "consistency": "Consistency"
+      },
+      "guardDescriptions": {
+        "metric": "Checks reported metrics against locked evidence and presentation rules.",
+        "identifier": "Checks for private identifiers and unsupported references.",
+        "latex": "Checks manuscript markup before PDF rendering.",
+        "citation": "Checks citation coverage and selected references.",
+        "claim": "Checks that manuscript claims are supported by available evidence.",
+        "consistency": "Checks consistency between sections, evidence, and captions."
+      },
+      "issueLabels": {
+        "claim_evidence_gap": "Evidence needed",
+        "metric_format_review": "Metric wording needs review",
+        "metric_review": "Metric needs review",
+        "identifier_review": "Identifier needs review",
+        "latex_review": "LaTeX needs review",
+        "citation_review": "Citation needs review",
+        "claim_review": "Claim needs review",
+        "consistency_review": "Consistency needs review",
+        "guard_review": "Validation needs review"
+      },
+      "issueDescriptions": {
+        "claim_evidence_gap": "A claim about external validation needs matching evidence before export.",
+        "metric_format_review": "A reported metric needs reader-ready wording before export.",
+        "metric_review": "A reported metric needs review before export.",
+        "identifier_review": "A protected identifier needs review before export.",
+        "latex_review": "A LaTeX formatting issue needs review before export.",
+        "citation_review": "A citation needs review before export.",
+        "claim_review": "A manuscript claim needs evidence review before export.",
+        "consistency_review": "A consistency issue needs review before export.",
+        "guard_review": "A validation issue needs review before export."
       },
       "status": {
         "passed": "Passed",

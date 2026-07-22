@@ -4,7 +4,13 @@ import { AlertCircle, ArrowRight, CheckCircle2, MinusCircle, ShieldCheck, Sparkl
 import { getPaperFileUrl, type GuardIssueSummary, type GuardResultSummary, type PaperRunDetail, type ValidationSummary } from '../../api/papers'
 import { Badge } from '../ui/badge'
 import { Card, CardContent } from '../ui/card'
-import { paperGuardLabel, paperValidationStatusLabel } from '../../lib/paperI18n'
+import {
+  paperGuardDescription,
+  paperGuardIssueDescription,
+  paperGuardIssueLabel,
+  paperGuardLabel,
+  paperValidationStatusLabel,
+} from '../../lib/paperI18n'
 
 interface ValidationTabProps {
   paperId: string
@@ -59,6 +65,27 @@ function isFailingGuard(guard: GuardResultSummary | undefined): boolean {
 
 function collectSampleIssues(guards: GuardResultSummary[]): GuardIssueSummary[] {
   return guards.flatMap((guard) => guard.sample_issues ?? []).slice(0, 6)
+}
+
+function issueLocation(issue: GuardIssueSummary): string | null {
+  const record = issue as GuardIssueSummary & { location?: string | null }
+  return record.location || null
+}
+
+function ValidationIssueCard({ issue, compact = false }: { issue: GuardIssueSummary; compact?: boolean }) {
+  const { t } = useTranslation()
+  const location = issueLocation(issue)
+  return (
+    <div className={`rounded-xl bg-white/70 ${compact ? 'p-2 text-xs leading-5' : 'p-3'}`}>
+      <div className="font-semibold">{paperGuardIssueLabel(t, issue.code)}</div>
+      <div className="mt-0.5">{paperGuardIssueDescription(t, issue.code, issue.message)}</div>
+      {location ? (
+        <div className="mt-1 text-xs opacity-80">
+          {t('paperAgent.validation.affectedSection', { section: location })}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function nextActionText(t: TFunction, run: PaperRunDetail, hasBlockingIssues: boolean, hasRefinement: boolean): string {
@@ -139,13 +166,7 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
             {sampleIssues.length ? (
               <div className="mt-3 grid gap-2">
                 {sampleIssues.map((issue, index) => (
-                  <div key={`${issue.code}-${index}`} className="rounded-xl bg-white/70 p-3">
-                    <div className="font-semibold">{issue.code}</div>
-                    <div className="mt-0.5">{issue.message}</div>
-                    <div className="mt-1 text-xs opacity-80">
-                      {[issue.path, issue.context].filter(Boolean).join(' · ')}
-                    </div>
-                  </div>
+                  <ValidationIssueCard key={`${issue.code}-${index}`} issue={issue} />
                 ))}
               </div>
             ) : null}
@@ -172,7 +193,9 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
                     {statusIcon(status)}
                     {paperGuardLabel(t, name)}
                   </div>
-                  <div className="mt-1 text-xs opacity-80">{guard?.path ?? t('paperAgent.validation.validationSummaryPath')}</div>
+                  <div className="mt-1 text-xs opacity-80">
+                    {paperGuardDescription(t, name) || t('paperAgent.validation.validationSummaryPath')}
+                  </div>
                 </div>
                 <Badge variant={guardFailed ? 'destructive' : status === 'not_run' ? 'outline' : 'secondary'}>{paperValidationStatusLabel(t, status)}</Badge>
               </div>
@@ -184,12 +207,7 @@ export function ValidationTab({ paperId, run, validationSummary }: ValidationTab
               {guard?.sample_issues?.length ? (
                 <div className="mt-3 space-y-2">
                   {guard.sample_issues.slice(0, 3).map((issue, index) => (
-                    <div key={`${issue.code}-${index}`} className="rounded-xl bg-white/70 p-2 text-xs leading-5">
-                      <span className="font-semibold">{issue.code}</span>: {issue.message}
-                      {issue.path || issue.context ? (
-                        <div className="mt-1 opacity-75">{[issue.path, issue.context].filter(Boolean).join(' · ')}</div>
-                      ) : null}
-                    </div>
+                    <ValidationIssueCard key={`${issue.code}-${index}`} issue={issue} compact />
                   ))}
                 </div>
               ) : null}

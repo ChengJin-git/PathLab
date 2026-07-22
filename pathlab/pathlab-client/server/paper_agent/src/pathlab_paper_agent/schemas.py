@@ -251,6 +251,7 @@ class GuardIssueSummary(BaseModel):
     code: str
     message: str
     severity: str = "error"
+    location: Optional[str] = None
     path: Optional[str] = None
     context: Optional[str] = None
 

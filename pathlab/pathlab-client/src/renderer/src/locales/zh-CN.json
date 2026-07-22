@@ -4305,7 +4305,17 @@
         "validating": { "label": "校验", "short": "校验" },
         "refining": { "label": "优化", "short": "优化" },
         "rendering_exporting": { "label": "PDF 导出", "short": "PDF" }
+      },
+      "messages": {
+        "sectionMetricAutoRepairAttempted": "章节生成遇到指标占位符问题，正在对照锁定证据自动修复。",
+        "sectionMetricAutoRepairSucceeded": "指标占位符已自动修复，正在继续生成章节。",
+        "sectionMetricRetryAttempted": "章节生成遇到格式问题，正在使用更严格的锁定指标要求重试。",
+        "sectionMetricRetryFailed": "自动重试未能完成修复，正在生成失败诊断。",
+        "sectionMetricRetrySucceeded": "章节重试已修复指标占位符问题，正在继续生成。"
       }
+    },
+    "diagnostics": {
+      "rawMetricFinalFailure": "章节生成失败：模型在 {{section}} 章节反复直接写入实验数值 {{value}}，未使用锁定指标占位符。请重试章节阶段，或检查证据锁中的指标。"
     },
     "outline": {
       "loading": "正在加载大纲...",
@@ -4650,6 +4660,7 @@
       "foundIssuesPlural": "校验发现 {{count}} 个阻断问题",
       "refinementFeedback": "优化反馈",
       "validationSummaryPath": "校验摘要",
+      "affectedSection": "受影响章节：{{section}}",
       "issues": "问题",
       "errors": "错误",
       "warns": "警告",
@@ -4672,6 +4683,36 @@
         "citation": "引用",
         "claim": "主张",
         "consistency": "一致性"
+      },
+      "guardDescriptions": {
+        "metric": "检查文中的指标是否符合锁定证据和呈现规则。",
+        "identifier": "检查私有标识符和不应出现的引用信息。",
+        "latex": "检查 PDF 渲染前的 LaTeX 标记。",
+        "citation": "检查引用覆盖和已选择参考文献。",
+        "claim": "检查论文主张是否有可用证据支持。",
+        "consistency": "检查章节、证据和图注之间的一致性。"
+      },
+      "issueLabels": {
+        "claim_evidence_gap": "需要补充证据",
+        "metric_format_review": "指标表述需要审阅",
+        "metric_review": "指标需要审阅",
+        "identifier_review": "标识符需要审阅",
+        "latex_review": "LaTeX 需要审阅",
+        "citation_review": "引用需要审阅",
+        "claim_review": "主张需要审阅",
+        "consistency_review": "一致性需要审阅",
+        "guard_review": "校验问题需要审阅"
+      },
+      "issueDescriptions": {
+        "claim_evidence_gap": "有关外部验证的表述需要匹配证据后才能导出。",
+        "metric_format_review": "文中的指标需要改成读者友好的表述后才能导出。",
+        "metric_review": "文中的指标需要审阅后才能导出。",
+        "identifier_review": "疑似受保护标识符需要审阅后才能导出。",
+        "latex_review": "LaTeX 格式问题需要审阅后才能导出。",
+        "citation_review": "引用需要审阅后才能导出。",
+        "claim_review": "论文主张需要证据审阅后才能导出。",
+        "consistency_review": "一致性问题需要审阅后才能导出。",
+        "guard_review": "校验问题需要审阅后才能导出。"
       },
       "status": {
         "passed": "通过",
