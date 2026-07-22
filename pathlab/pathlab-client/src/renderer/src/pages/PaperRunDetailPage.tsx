@@ -2,15 +2,15 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Loader2, PauseCircle, PlayCircle, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { WorkspaceTabs, coerceWorkspaceTab, type WorkspaceTabValue } from '../components/paper/WorkspaceTabs'
 import { DeleteRunButton } from '../components/paper/DeleteRunButton'
-import { getPaperRun, postPaperStageRerun, type PaperRunStage, type PostPaperStageRerunBody } from '../api/papers'
-import { paperStageDiagnosticMessage, paperStatusLabel } from '../lib/paperI18n'
+import { getPaperRun, postPaperPause, postPaperStageRerun, type PaperRunStage, type PostPaperStageRerunBody } from '../api/papers'
+import { paperStageDiagnosticMessage, paperStageLabel, paperStatusLabel } from '../lib/paperI18n'
 
 const ACTIVE_STATUSES = new Set(['pending', 'running'])
 const ACTIVE_RUN_REFETCH_INTERVAL_MS = 500
@@ -52,6 +52,13 @@ export default function PaperRunDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ['paper-file', paperId] })
     },
   })
+  const pauseMutation = useMutation({
+    mutationFn: () => postPaperPause(paperId || ''),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['paper-run', paperId] })
+      await queryClient.invalidateQueries({ queryKey: ['paper-file', paperId] })
+    },
+  })
   const setActiveTab = (tab: WorkspaceTabValue | string) => {
     const next = new URLSearchParams(searchParams)
     next.set('tab', coerceWorkspaceTab(tab))
@@ -65,13 +72,20 @@ export default function PaperRunDetailPage() {
   const run = runQuery.data
   const runErrorMessage = paperStageDiagnosticMessage(t, run?.error_message)
   const mutationError = rerunMutation.error
+  const pauseError = pauseMutation.error
   const rerunningStage = rerunMutation.isPending ? (rerunMutation.variables?.stage ?? null) : null
   const mutationErrorMessage = paperStageDiagnosticMessage(
     t,
     mutationError instanceof Error ? mutationError.message : mutationError ? String(mutationError) : '',
   )
+  const pauseErrorMessage = paperStageDiagnosticMessage(
+    t,
+    pauseError instanceof Error ? pauseError.message : pauseError ? String(pauseError) : '',
+  )
   const hasUserSectionEdits = (run?.stage_log ?? []).some((entry) => entry.stage === 'section_writing' && entry.status === 'user_edited')
   const hasUserCitationEdits = (run?.stage_log ?? []).some((entry) => entry.stage === 'literature_review' && ['user_added', 'user_removed'].includes(entry.status))
+  const isActiveRun = run ? ACTIVE_STATUSES.has(run.status) : false
+  const isPausedRun = run?.status === 'paused'
 
   const rerunBodyForStage = (stage: PaperRunStage): PostPaperStageRerunBody | null => {
     const stageValue = String(stage)
@@ -101,6 +115,17 @@ export default function PaperRunDetailPage() {
     rerunMutation.mutate({ stage, body })
   }
 
+  const handlePauseRun = () => {
+    if (!paperId || pauseMutation.isPending || !isActiveRun) return
+    if (!window.confirm(t('paperAgent.pause.confirm'))) return
+    pauseMutation.mutate()
+  }
+
+  const handleResumeCurrentStage = () => {
+    if (!run || !isPausedRun) return
+    handleRerunStage(run.current_stage)
+  }
+
   return (
     <div className="w-full px-3 py-4 sm:px-4 lg:px-6 sm:py-6">
       <div className="flex w-full flex-col gap-5">
@@ -121,6 +146,12 @@ export default function PaperRunDetailPage() {
               <RefreshCw className="h-4 w-4" />
               {t('paperAgent.common.refresh')}
             </Button>
+            {run && isActiveRun ? (
+              <Button variant="outline" size="sm" onClick={handlePauseRun} disabled={pauseMutation.isPending} className="h-10 gap-2 px-3.5 text-sm shadow-sm">
+                {pauseMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PauseCircle className="h-4 w-4" />}
+                {pauseMutation.isPending ? t('paperAgent.pause.requesting') : t('paperAgent.pause.action')}
+              </Button>
+            ) : null}
             {paperId ? <DeleteRunButton paperId={paperId} onDeleted={() => navigate('/papers')} className="h-10 px-3.5 text-sm shadow-sm" /> : null}
           </div>
         </PageHeader>
@@ -154,9 +185,37 @@ export default function PaperRunDetailPage() {
                 </CardContent>
               </Card>
             ) : null}
+            {isPausedRun ? (
+              <Card className="overflow-hidden rounded-2xl border-amber-100 bg-white shadow-sm ring-1 ring-amber-100/70">
+                <CardContent className="flex flex-col gap-3 p-0 sm:flex-row sm:items-stretch sm:justify-between">
+                  <div className="flex min-w-0 flex-1 items-start gap-3 px-4 py-4 text-sm">
+                    <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600">
+                      <PauseCircle className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0 pt-0.5">
+                      <div className="font-semibold text-slate-950">{t('paperAgent.pause.pausedTitle')}</div>
+                      <div className="mt-1 max-w-5xl break-words text-sm leading-5 text-amber-700">
+                        {t('paperAgent.pause.pausedDescription', { stage: paperStageLabel(t, run.current_stage) })}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center px-4 pb-4 sm:pb-0">
+                    <Button size="sm" onClick={handleResumeCurrentStage} disabled={rerunMutation.isPending} className="h-10 gap-2 px-4 text-sm shadow-sm">
+                      {rerunMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+                      {t('paperAgent.pause.resumeCurrentStage')}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
             {mutationError ? (
               <div className="rounded-xl border border-red-100 bg-white px-3 py-2 text-sm text-red-700 shadow-sm">
                 {mutationErrorMessage}
+              </div>
+            ) : null}
+            {pauseError ? (
+              <div className="rounded-xl border border-red-100 bg-white px-3 py-2 text-sm text-red-700 shadow-sm">
+                {pauseErrorMessage}
               </div>
             ) : null}
             <WorkspaceTabs

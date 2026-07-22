@@ -4145,6 +4145,7 @@
       "pending": "等待中",
       "running": "运行中",
       "awaiting_outline_approval": "等待大纲确认",
+      "paused": "已暂停",
       "completed": "已完成",
       "failed": "失败",
       "cancelled": "已取消"
@@ -4326,6 +4327,14 @@
       "confirmSections": "此重新运行可能覆盖已编辑的论文章节。当前章节会在运行前生成快照。",
       "confirmCitations": "此重新运行可能覆盖用户编辑过的引用和参考文献文件。",
       "confirmDownstream": "所选阶段会加载此前成功历史重新运行，并刷新下游阶段以保持一致。"
+    },
+    "pause": {
+      "action": "暂停",
+      "requesting": "正在暂停...",
+      "confirm": "确认暂停此论文运行？流水线会在安全边界停止，丢弃当前阶段本次产生的临时输出；继续时会重新运行同一阶段。",
+      "pausedTitle": "论文流水线已暂停",
+      "pausedDescription": "已暂停在 {{stage}}。该阶段的临时输出已丢弃；继续时会重新运行此阶段。",
+      "resumeCurrentStage": "重新运行当前阶段"
     },
     "outline": {
       "loading": "正在加载大纲...",

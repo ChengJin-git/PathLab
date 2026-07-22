@@ -4151,6 +4151,7 @@
       "pending": "Pending",
       "running": "Running",
       "awaiting_outline_approval": "Awaiting outline approval",
+      "paused": "Paused",
       "completed": "Completed",
       "failed": "Failed",
       "cancelled": "Cancelled"
@@ -4332,6 +4333,14 @@
       "confirmSections": "This rerun may overwrite edited manuscript sections. Current sections are snapshotted before rerun.",
       "confirmCitations": "This rerun may overwrite user-edited citations and bibliography files.",
       "confirmDownstream": "The selected stage will rerun with prior successful history loaded, then downstream stages will refresh for consistency."
+    },
+    "pause": {
+      "action": "Pause",
+      "requesting": "Pausing...",
+      "confirm": "Pause this paper run? The pipeline stops at a safe boundary, discards temporary outputs from the current stage, and reruns that same stage when you continue.",
+      "pausedTitle": "Paper pipeline paused",
+      "pausedDescription": "Paused at {{stage}}. Temporary outputs from this stage were discarded; continuing will rerun this stage.",
+      "resumeCurrentStage": "Rerun current stage"
     },
     "outline": {
       "loading": "Loading outline...",

@@ -127,6 +127,8 @@ export interface PostPaperStageRerunResponse {
   message?: string
 }
 
+export type PostPaperPauseResponse = components['schemas']['PaperPauseResponse']
+
 type BackendErrorDetail = {
   code?: string
   message?: string
@@ -230,6 +232,16 @@ export function postPaperRetry(
         body: JSON.stringify(body ?? {}),
       },
       'Retry paper run',
+    ),
+  )
+}
+
+export function postPaperPause(paperId: string): Promise<PostPaperPauseResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PostPaperPauseResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/pause`,
+      { method: 'POST' },
+      'Pause paper run',
     ),
   )
 }

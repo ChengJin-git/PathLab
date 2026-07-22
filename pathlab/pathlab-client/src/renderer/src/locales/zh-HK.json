@@ -4149,6 +4149,7 @@
       "pending": "等待中",
       "running": "運行中",
       "awaiting_outline_approval": "等待大綱確認",
+      "paused": "已暫停",
       "completed": "已完成",
       "failed": "失敗",
       "cancelled": "已取消"
@@ -4330,6 +4331,14 @@
       "confirmSections": "此重新運行可能覆蓋已編輯的論文章節。當前章節會在運行前建立快照。",
       "confirmCitations": "此重新運行可能覆蓋用戶編輯過的引用和參考文獻文件。",
       "confirmDownstream": "所選階段會載入之前成功歷史重新運行，並刷新下游階段以保持一致。"
+    },
+    "pause": {
+      "action": "暫停",
+      "requesting": "正在暫停...",
+      "confirm": "確認暫停此論文運行？流水線會在安全邊界停止，丟棄目前階段本次產生的臨時輸出；繼續時會重新運行同一階段。",
+      "pausedTitle": "論文流水線已暫停",
+      "pausedDescription": "已暫停在 {{stage}}。該階段的臨時輸出已丟棄；繼續時會重新運行此階段。",
+      "resumeCurrentStage": "重新運行目前階段"
     },
     "outline": {
       "loading": "正在載入大綱...",
