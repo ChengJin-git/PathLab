@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import sys
 import types
@@ -179,6 +180,40 @@ async def test_run_paper_generation_uses_subprocess_helper(tmp_path, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_run_paper_generation_mirrors_paused_manifest_to_db(tmp_path, monkeypatch):
+    events: list[tuple] = []
+    _FakeRepo.events = events
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        manifest_path = tmp_path / "paper_generation" / "paper_full_paused" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "paper_id": "paper_full_paused",
+                    "status": "paused",
+                    "current_stage": "plotting",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return _FakeProcess()
+
+    monkeypatch.setattr(task_worker.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with _fake_backend(events, tmp_path):
+        await task_worker.run_paper_generation("paper_full_paused")
+
+    assert events == [
+        ("mark_started", "paper_full_paused"),
+        ("update_stage", "paper_full_paused", "created", "running"),
+        ("commit",),
+        ("update", "paper_full_paused", "paused", "plotting", None, None),
+        ("commit",),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_run_paper_generation_records_subprocess_failure(tmp_path, monkeypatch):
     events: list[tuple] = []
     _FakeRepo.events = events
@@ -283,6 +318,40 @@ async def test_split_jobs_use_subprocess_and_update_success_status(
 
 
 @pytest.mark.asyncio
+async def test_split_job_mirrors_paused_manifest_before_success_status(tmp_path, monkeypatch):
+    events: list[tuple] = []
+    _FakeRepo.events = events
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        manifest_path = tmp_path / "paper_generation" / "paper_split_paused" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "paper_id": "paper_split_paused",
+                    "status": "paused",
+                    "current_stage": "outlining",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return _FakeProcess()
+
+    monkeypatch.setattr(task_worker.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with _fake_backend(events, tmp_path):
+        await task_worker.run_until_outline("paper_split_paused")
+
+    assert events == [
+        ("mark_started", "paper_split_paused"),
+        ("update_stage", "paper_split_paused", "collecting", "running"),
+        ("commit",),
+        ("update", "paper_split_paused", "paused", "outlining", None, None),
+        ("commit",),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_rerun_from_stage_passes_stage_to_subprocess(tmp_path, monkeypatch):
     events: list[tuple] = []
     _FakeRepo.events = events
@@ -308,6 +377,40 @@ async def test_rerun_from_stage_passes_stage_to_subprocess(tmp_path, monkeypatch
     assert "run-from-stage" in cmd
     assert "--stage" in cmd
     assert "section_writing" in cmd
+
+
+@pytest.mark.asyncio
+async def test_rerun_from_stage_mirrors_paused_manifest_to_db(tmp_path, monkeypatch):
+    events: list[tuple] = []
+    _FakeRepo.events = events
+
+    async def fake_create_subprocess_exec(*cmd, **kwargs):
+        manifest_path = tmp_path / "paper_generation" / "paper_paused" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "paper_id": "paper_paused",
+                    "status": "paused",
+                    "current_stage": "section_writing",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return _FakeProcess()
+
+    monkeypatch.setattr(task_worker.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with _fake_backend(events, tmp_path):
+        await task_worker.rerun_from_stage("paper_paused", stage="section_writing")
+
+    assert events == [
+        ("mark_started", "paper_paused"),
+        ("update_stage", "paper_paused", "section_writing", "running"),
+        ("commit",),
+        ("update", "paper_paused", "paused", "section_writing", None, None),
+        ("commit",),
+    ]
 
 
 @pytest.mark.asyncio

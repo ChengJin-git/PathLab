@@ -164,6 +164,39 @@ def _write_subprocess_log(
     os.replace(tmp, log_path)
 
 
+def _paused_manifest_stage(uploads_dir: Path, paper_id: str) -> str | None:
+    manifest_path = uploads_dir / "paper_generation" / paper_id / "manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("status") != "paused":
+        return None
+    stage = payload.get("current_stage")
+    return str(stage) if stage else None
+
+
+async def _mirror_paused_manifest_if_needed(
+    db,
+    repository,
+    *,
+    uploads_dir: Path,
+    paper_id: str,
+) -> bool:
+    paused_stage = _paused_manifest_stage(uploads_dir, paper_id)
+    if paused_stage is None:
+        return False
+    await repository.update(
+        db,
+        paper_id,
+        status="paused",
+        current_stage=paused_stage,
+        error_message=None,
+        finished_at=None,
+    )
+    return True
+
+
 async def _run_pipeline_job(
     paper_id: str,
     kwargs: dict[str, Any],
@@ -195,7 +228,14 @@ async def _run_pipeline_job(
         raise
 
     async with safe_session() as db:
-        if success_status == "completed":
+        if await _mirror_paused_manifest_if_needed(
+            db,
+            PaperGenerationRunRepository,
+            uploads_dir=uploads_dir,
+            paper_id=paper_id,
+        ):
+            pass
+        elif success_status == "completed":
             await PaperGenerationRunRepository.mark_completed(db, paper_id)
         else:
             await PaperGenerationRunRepository.update(
@@ -245,7 +285,13 @@ async def run_paper_generation(paper_id: str, **kwargs: Any) -> None:
         raise
 
     async with safe_session() as db:
-        await PaperGenerationRunRepository.mark_completed(db, paper_id)
+        if not await _mirror_paused_manifest_if_needed(
+            db,
+            PaperGenerationRunRepository,
+            uploads_dir=uploads_dir,
+            paper_id=paper_id,
+        ):
+            await PaperGenerationRunRepository.mark_completed(db, paper_id)
         await db.commit()
 
 
