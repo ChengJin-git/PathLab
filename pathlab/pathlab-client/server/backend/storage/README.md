@@ -45,10 +45,11 @@
 
 - `uploads/annotations/`：Preprocessing 为数据集写出 `*_coco.json` 缓存时创建
 - `uploads/pdf_cache/`：聊天 / PDF 相关逻辑按需使用
+- `uploads/paper_generation/`：Paper Agent 为每篇论文写入 evidence、drafts、figures、tables、validation、final PDF 和 exports
 
 另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同。
 
-这已经超出“只存切片文件”的阶段，当前实现同时管理模型、训练结果、日志、缓存和用户上传衍生物。
+这已经超出“只存切片文件”的阶段，当前实现同时管理模型、训练结果、日志、缓存、论文产物和用户上传衍生物。
 
 ## 统计与清理现状
 
@@ -80,7 +81,7 @@
 
 并将它们与数据库中已有的 WSI、任务、模型记录对照，以发现多余文件或失配记录。
 
-因此要注意：`metadata`、`progress`、`avatars`、`annotations`、`pdf_cache`、`extractor_checkpoints` 虽然是当前运行时会使用的目录，但并不是都被纳入同一套统计 / 孤立扫描逻辑。
+因此要注意：`metadata`、`progress`、`avatars`、`annotations`、`pdf_cache`、`paper_generation`、`extractor_checkpoints` 虽然是当前运行时会使用的目录，但并不是都被纳入同一套统计 / 孤立扫描逻辑。Paper Agent 论文产物主要由 `/papers` 删除逻辑和训练任务 complete 删除模式清理。
 
 ## Gateway 暴露方式
 
@@ -124,6 +125,7 @@
 
 - Gateway：提供统计、扫描、清理、配置更新等接口
 - Database：提供 WSI、训练任务、模型等实体用于一致性校验
+- Paper Agent：在 `uploads/paper_generation/{paper_id}/` 写入论文生成产物，并通过 `paper_generation_runs` 与数据库状态关联
 - Frontend：设置页中的存储管理视图会消费这些接口
 
 ## 相关文档
@@ -131,3 +133,4 @@
 - [Backend README](../README.md)
 - [Database README](../database/README.md)
 - [Gateway README](../../gateway/README.md)
+- [Paper Agent README](../../paper_agent/README.md)

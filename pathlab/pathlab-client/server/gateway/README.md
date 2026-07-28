@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
+Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务和 Paper Agent 论文生成运行时的协作。
 
 ## 当前应用行为
 
@@ -51,6 +51,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 15. `gpu`
 16. `annotation`
 17. `training_options`
+18. `paper_generation`
 
 这些 router 覆盖了当前主要公开能力：
 
@@ -61,6 +62,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 - AI 对话、会话历史、网页检索、PDF 缓存 / 向量检索与反馈
 - 存储统计、扫描、清理与配置
 - GPU 信息、热图、标注、系统设置
+- 论文生成任务创建、列表、详情、章节编辑、引用管理、PDF 渲染与文件下载
 
 ## 路由目录现状
 
@@ -80,6 +82,22 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 - WSI 权限辅助：`wsi_grants.py`
 
 这些文件通常通过导入被组合到顶层 router，而不是单独挂载；当前聊天 / PDF / 训练推荐相关能力都在 Gateway 路由层内部聚合。
+
+`server/gateway/paper_generation/` 是一个例外：它不是论文生成实现目录，而是 `/papers` API 的兼容桥接层。真正的 Paper Agent 实现在 `server/paper_agent/`，Gateway 只负责把 router 挂载进当前 FastAPI 应用，并沿用现有认证、数据库和前端 API 路径。
+
+## Paper Generation 路由
+
+Paper Generation 的公开前缀是 `/papers`。主要能力包括：
+
+- 创建论文任务并绑定来源实验任务
+- 查询论文任务列表、详情、状态、阶段和产物
+- 确认或更新大纲
+- 查看和保存章节正文
+- 手动添加 / 删除 DOI、arXiv URL、BibTeX 引用
+- 队列化局部重生成、渲染 PDF 和导出文件
+- 下载 PDF 或完整 ZIP 包
+
+Gateway 层不直接执行论文生成。创建、重生成、渲染和导出等长流程会通过 Redis 任务描述符交给 TaskWorker；TaskWorker 再调用 `server/paper_agent/` 下的实现。论文运行状态存放在 `paper_generation_runs` 表，重产物位于 `uploads/paper_generation/{paper_id}/`。
 
 ## 认证现状
 
@@ -141,6 +159,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 | `bootstrap_builtin_training_knowledge.py` | 内置训练推荐知识源预热逻辑 |
 | `app_setup.py` | 顶层 router 注册与静态资源挂载 |
 | `startup.py` | Gateway 生命周期启动 / 关闭编排 |
+| `paper_generation/` | `/papers` API 兼容桥接层，实际实现位于 `../paper_agent/` |
 | `chat/` | 上下文缓存、权限与训练推荐辅助逻辑 |
 | `knowledge/` | 内置知识源与 training RAG 运行时目录 |
 | `prompts/` | Gateway 侧 LLM prompt 模板 |
@@ -149,6 +168,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 
 - Preprocessing：提供 WSI 信息、图像、缩略图、DZI、瓦片等底层接口
 - AI：提供训练、推理等内部能力
+- Paper Agent：通过 `gateway/paper_generation/` 暴露 `/papers`，由 TaskWorker 执行论文生成、引用、校验和 PDF 渲染
 - Database / Storage：通过 `backend/` 共享模块提供 ORM、仓储、文件系统能力
 
 ## 阅读建议
@@ -161,5 +181,6 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 
 - [Server README](../README.md)
 - [Backend README](../backend/README.md)
+- [Paper Agent README](../paper_agent/README.md)
 - [Database README](../backend/database/README.md)
 - [Storage README](../backend/storage/README.md)
