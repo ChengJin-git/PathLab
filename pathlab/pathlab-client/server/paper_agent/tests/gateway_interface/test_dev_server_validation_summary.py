@@ -66,6 +66,13 @@ def test_dev_server_get_paper_includes_validation_summary(tmp_path) -> None:
                     "message": "Rounded value detected.",
                     "severity": "warning",
                 },
+                {
+                    "code": "internal_detector_rule",
+                    "message": "Internal detector details should not reach the API.",
+                    "severity": "error",
+                    "path": "drafts/private/raw_metric_context.json",
+                    "context": "raw internal context",
+                },
             ],
         },
     )
@@ -94,10 +101,22 @@ def test_dev_server_get_paper_includes_validation_summary(tmp_path) -> None:
     assert summary["refinement"]["final_status"] == "accepted"
     by_guard = {item["guard"]: item for item in summary["m10_guards"]}
     assert by_guard["metric_guard"]["status"] == "fail"
-    assert by_guard["metric_guard"]["issue_count"] == 2
-    assert by_guard["metric_guard"]["error_count"] == 1
+    assert by_guard["metric_guard"]["issue_count"] == 3
+    assert by_guard["metric_guard"]["error_count"] == 2
     assert by_guard["metric_guard"]["warning_count"] == 1
-    assert by_guard["metric_guard"]["sample_issues"][0]["code"] == "raw_metric"
+    assert by_guard["metric_guard"].get("path") is None
+    issue = by_guard["metric_guard"]["sample_issues"][0]
+    assert issue["code"] == "metric_format_review"
+    assert issue["message"] == "A reported metric needs reader-ready wording instead of raw locked values."
+    assert issue["location"] == "Results"
+    assert issue.get("path") is None
+    assert issue.get("context") is None
+    fallback_issue = by_guard["metric_guard"]["sample_issues"][2]
+    assert fallback_issue["code"] == "metric_review"
+    assert fallback_issue["message"] == "A reported metric needs review before export."
+    assert fallback_issue.get("location") is None
+    assert fallback_issue.get("path") is None
+    assert fallback_issue.get("context") is None
     assert by_guard["citation_guard"]["status"] == "pass"
 
 
@@ -201,6 +220,58 @@ def test_dev_server_post_render_export_queues_background(tmp_path, monkeypatch) 
     manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
     assert manifest["status"] == "running"
     assert manifest["current_stage"] == "rendering"
+
+
+def test_dev_server_post_stage_rerun_queues_background(tmp_path, monkeypatch) -> None:
+    from pathlab_paper_agent import dev_server
+
+    called: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        dev_server,
+        "_run_from_stage_for_dev",
+        lambda paper_id, stage, uploads_dir: called.append((paper_id, stage, str(uploads_dir))),
+    )
+    client = TestClient(dev_server.create_app(uploads_dir=tmp_path, auto_run=False))
+    paths = _make_run("paper_dev_rerun_stage")
+
+    response = client.post(
+        "/papers/paper_dev_rerun_stage/stages/section_writing:rerun",
+        json={"continue_downstream": True, "include_previous_successful_output": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "running"
+    assert response.json()["current_stage"] == "section_writing"
+    assert called == [("paper_dev_rerun_stage", "section_writing", str(tmp_path))]
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest["stage_log"][-1]["status"] == "rerun_queued"
+
+
+def test_dev_server_post_retry_uses_latest_failed_stage(tmp_path, monkeypatch) -> None:
+    from pathlab_paper_agent import dev_server
+
+    called: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        dev_server,
+        "_run_from_stage_for_dev",
+        lambda paper_id, stage, uploads_dir: called.append((paper_id, stage, str(uploads_dir))),
+    )
+    client = TestClient(dev_server.create_app(uploads_dir=tmp_path, auto_run=False))
+    paths = _make_run("paper_dev_retry")
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    manifest["status"] = PaperRunStatus.failed.value
+    manifest["current_stage"] = PaperRunStage.literature_review.value
+    manifest["error_message"] = "intro/RW draft response did not contain a JSON object"
+    manifest["stage_log"].append(
+        {"stage": PaperRunStage.literature_review.value, "status": "failed", "ts": "2026-01-01T00:00:00Z"}
+    )
+    paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    response = client.post("/papers/paper_dev_retry/retry", json={})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["current_stage"] == "literature_review"
+    assert called == [("paper_dev_retry", "literature_review", str(tmp_path))]
 
 
 def sections_hash(text: str) -> str:

@@ -62,6 +62,7 @@ class CreatePaperRequest(BaseModel):
 class PaperRunStatus(str, Enum):
     pending = "pending"
     running = "running"
+    paused = "paused"
     awaiting_outline_approval = "awaiting_outline_approval"
     completed = "completed"
     failed = "failed"
@@ -193,6 +194,25 @@ class OutlineApprovalRequest(BaseModel):
     approve: bool
 
 
+class PaperStageRerunRequest(BaseModel):
+    """POST /papers/{paper_id}/stages/{stage}:rerun body."""
+
+    continue_downstream: bool = True
+    include_previous_successful_output: bool = True
+    confirm_overwrite_sections: bool = False
+    confirm_overwrite_citations: bool = False
+    confirm_regenerate_outline: bool = False
+
+
+class PaperPauseResponse(BaseModel):
+    """POST /papers/{paper_id}/pause response."""
+
+    paper_id: str
+    status: PaperRunStatus
+    current_stage: PaperRunStage
+    message: str
+
+
 class FigureManifestItem(BaseModel):
     """Frontend-facing schema for one figure entry in `figures/manifest.json`."""
 
@@ -230,6 +250,7 @@ class PaperStageLogEntry(BaseModel):
     finished_at: Optional[datetime] = None
     duration_ms: Optional[int] = None
     message: Optional[str] = None
+    error_code: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -239,6 +260,7 @@ class GuardIssueSummary(BaseModel):
     code: str
     message: str
     severity: str = "error"
+    location: Optional[str] = None
     path: Optional[str] = None
     context: Optional[str] = None
 
@@ -274,6 +296,48 @@ class ValidationSummary(BaseModel):
     refinement: Optional[RefinementSummary] = None
     hybrid_score: Optional[float] = None
     warnings_md_path: Optional[str] = None
+
+
+class ArtifactReadinessIssue(BaseModel):
+    """Backend-facing artifact readiness issue for diagnostics and failures."""
+
+    code: str
+    message: str
+    severity: Literal["error", "warning"] = "error"
+    stage: Optional[PaperRunStage] = None
+    path: Optional[str] = None
+
+
+class StageDiagnostic(BaseModel):
+    """Compact latest state for a stage in diagnostics responses."""
+
+    stage: str
+    status: str
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    message: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class PaperRunDiagnostics(BaseModel):
+    """Operational inspection payload for a paper run."""
+
+    paper_id: str
+    status: Optional[PaperRunStatus] = None
+    current_stage: Optional[PaperRunStage] = None
+    title: Optional[str] = None
+    selected_templates: list[TemplateId] = Field(default_factory=list)
+    source_task_ids: list[str] = Field(default_factory=list)
+    latest_error: Optional[dict[str, Any]] = None
+    artifact_issues: list[ArtifactReadinessIssue] = Field(default_factory=list)
+    stage_diagnostics: list[StageDiagnostic] = Field(default_factory=list)
+    stage_log_count: int = 0
+    artifact_count: int = 0
+    pipeline_log_path: Optional[str] = None
+    missing_artifact_count: int = 0
+    stale_artifact_count: int = 0
 
 
 class CitationReference(BaseModel):
@@ -379,11 +443,15 @@ class AddCitationResponse(BaseModel):
 class CitationDeleteResponse(BaseModel):
     deleted: bool
     key: str
+    removed_from_sections: list[str] = Field(default_factory=list)
+    downstream_stale: bool = False
+    stale_artifacts: list[str] = Field(default_factory=list)
 
 
 class PaperRunDetail(PaperRunSummary):
     """Detailed run view returned by GET /papers/{id}."""
 
+    source_tasks: list[SourceTaskRef] = Field(default_factory=list)
     artifacts: list[PaperRunArtifact] = Field(default_factory=list)
     stage_log: list[PaperStageLogEntry] = Field(default_factory=list)
     validation_summary: ValidationSummary = Field(default_factory=ValidationSummary)
@@ -569,6 +637,7 @@ class PaperManifest(BaseModel):
     status: PaperRunStatus
     current_stage: PaperRunStage
     stage_log: list[dict[str, Any]] = Field(default_factory=list)
+    stage_attempts: list[dict[str, Any]] = Field(default_factory=list)
     artifact_index: dict[str, Any] = Field(default_factory=dict)
     regenerate_jobs: list[dict[str, Any]] = Field(default_factory=list)
     error_message: Optional[str] = None

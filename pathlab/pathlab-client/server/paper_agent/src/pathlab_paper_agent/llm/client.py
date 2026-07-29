@@ -17,6 +17,7 @@ _ENV_OVERRIDE = {
     "model": "PAPER_GEN_LLM_MODEL",
 }
 _ENV_REASONING_EFFORT = "PAPER_GEN_LLM_REASONING_EFFORT"
+_ENV_STREAM = "PAPER_GEN_LLM_STREAM"
 _ENV_TIMEOUT_S = "PAPER_GEN_LLM_TIMEOUT_S"
 _ENV_MAX_COMPLETION_TOKENS = "PAPER_GEN_LLM_MAX_COMPLETION_TOKENS"
 # httpx errors that are likely transient (network blip, temporary timeout). One
@@ -89,6 +90,7 @@ class LLMConfig:
     model: str
     provider: str
     reasoning_effort: str | None = _DEFAULT_REASONING_EFFORT
+    stream: bool | None = None
     timeout_s: float = _DEFAULT_TIMEOUT_S
     max_completion_tokens: int | None = _DEFAULT_MAX_COMPLETION_TOKENS
 
@@ -116,6 +118,7 @@ class LLMConfig:
                 model=str(override["model"]),
                 provider="env_override",
                 reasoning_effort=_reasoning_effort_from_env(_ENV_REASONING_EFFORT),
+                stream=_stream_from_env(_ENV_STREAM),
                 timeout_s=_timeout_from_env(_ENV_TIMEOUT_S),
                 max_completion_tokens=_max_completion_tokens_from_env(
                     _ENV_MAX_COMPLETION_TOKENS
@@ -128,6 +131,7 @@ class LLMConfig:
             model=os.environ.get("PAPER_GEN_VLLM_MODEL", _DEFAULT_VLLM_MODEL),
             provider="vllm_internal",
             reasoning_effort=_reasoning_effort_from_env("PAPER_GEN_VLLM_REASONING_EFFORT"),
+            stream=_stream_from_env("PAPER_GEN_VLLM_STREAM"),
             timeout_s=_timeout_from_env("PAPER_GEN_VLLM_TIMEOUT_S"),
             max_completion_tokens=_max_completion_tokens_from_env(
                 "PAPER_GEN_VLLM_MAX_COMPLETION_TOKENS"
@@ -150,6 +154,7 @@ class LLMConfig:
             model=os.environ.get("PAPER_GEN_OPENROUTER_MODEL", _DEFAULT_OPENROUTER_MODEL),
             provider="openrouter",
             reasoning_effort=_reasoning_effort_from_env("PAPER_GEN_OPENROUTER_REASONING_EFFORT"),
+            stream=_stream_from_env("PAPER_GEN_OPENROUTER_STREAM"),
             timeout_s=_timeout_from_env("PAPER_GEN_OPENROUTER_TIMEOUT_S"),
             max_completion_tokens=_max_completion_tokens_from_env(
                 "PAPER_GEN_OPENROUTER_MAX_COMPLETION_TOKENS"
@@ -158,6 +163,8 @@ class LLMConfig:
 
     @property
     def requires_streaming(self) -> bool:
+        if self.stream is not None:
+            return self.stream
         return _requires_streaming_model(self.model)
 
     @property
@@ -197,6 +204,32 @@ def _reasoning_effort_from_env(env_name: str) -> str | None:
     if cleaned in {"", "none", "off", "false", "0"}:
         return None
     return cleaned
+
+
+def _stream_from_env(env_name: str) -> bool | None:
+    value = os.environ.get(env_name)
+    if value is None:
+        value = os.environ.get(_ENV_STREAM)
+    if value is None:
+        return None
+    cleaned = value.strip().lower()
+    if cleaned in {"", "auto", "default"}:
+        return None
+    if cleaned in {"1", "true", "yes", "on", "stream", "streaming"}:
+        return True
+    if cleaned in {
+        "0",
+        "false",
+        "no",
+        "off",
+        "none",
+        "disable",
+        "disabled",
+        "non-stream",
+        "nonstream",
+    }:
+        return False
+    raise LLMConfigurationError(f"{env_name} must be true, false, auto, or empty")
 
 
 def _timeout_from_env(env_name: str) -> float:

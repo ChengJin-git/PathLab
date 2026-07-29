@@ -45,3 +45,19 @@ async def run_after_outline(paper_id: str, **kwargs: Any) -> None:
     from pathlab_paper_agent.integrations.task_worker import run_after_outline as _run
 
     await _run(paper_id, **kwargs)
+
+
+async def run_render_export(paper_id: str, **kwargs: Any) -> None:
+    """Re-render final paper outputs and exports."""
+    _ensure_paper_agent_src_on_path()
+    from pathlab_paper_agent.integrations.task_worker import run_render_export as _run
+
+    await _run(paper_id, **kwargs)
+
+
+async def rerun_from_stage(paper_id: str, **kwargs: Any) -> None:
+    """Rerun from one executable paper-generation stage."""
+    _ensure_paper_agent_src_on_path()
+    from pathlab_paper_agent.integrations.task_worker import rerun_from_stage as _run
+
+    await _run(paper_id, **kwargs)

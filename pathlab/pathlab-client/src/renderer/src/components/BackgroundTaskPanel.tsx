@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom'
 import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus } from '../contexts/BackgroundTaskContext'
 import { cn } from '../lib/utils'
 import { Tooltip } from './ui/tooltip'
+import { paperStageLabel, paperStatusLabel } from '../lib/paperI18n'
 import {
   TRAINING_STATUS_LABELS,
   VALIDATION_STATUS_LABELS,
@@ -58,14 +59,19 @@ const StatusIcon: React.FC<{ status: TaskStatus; className?: string }> = ({ stat
 const TaskItemRow: React.FC<{ item: TaskItem }> = ({ item }) => {
   const { t } = useTranslation()
   return (
-    <div className="flex items-center gap-2 py-1 text-xs">
-      <StatusIcon status={item.status} className="flex-shrink-0" />
-      <span className="flex-1 truncate text-gray-600" title={item.name}>{item.name}</span>
-      {item.status === 'running' && (
-        <span className="text-gray-400">{item.progress}%</span>
-      )}
+    <div className="py-1 text-xs">
+      <div className="flex items-center gap-2">
+        <StatusIcon status={item.status} className="flex-shrink-0" />
+        <span className="flex-1 truncate text-gray-600" title={item.name}>{item.name}</span>
+        {item.status === 'running' && (
+          <span className="text-gray-400">{item.progress}%</span>
+        )}
+      </div>
       {item.error && (
-        <span className="text-red-500 truncate max-w-[100px]" title={item.error}>{t('backgroundTask.error')}</span>
+        <div className="ml-6 mt-1 rounded-lg border border-red-100 bg-red-50 px-2 py-1 text-[11px] leading-4 text-red-700" title={item.error}>
+          <span className="font-semibold">{t('backgroundTask.error')}：</span>
+          <span className="break-words">{item.error}</span>
+        </div>
       )}
     </div>
   )
@@ -133,12 +139,17 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       return t('backgroundTask.typeLabels.deleteExternal')
     case 'extraction':
       return t('backgroundTask.typeLabels.extraction')
+    case 'paper_generation':
+      return task.paperStatus
+        ? paperStatusLabel(t, task.paperStatus)
+        : t('backgroundTask.typeLabels.paperGeneration')
     default:
       return t('backgroundTask.typeLabels.task')
   }
 }
 
-function getNavigableTaskId(task: BackgroundTask): string | null {
+function getTaskNavigation(task: BackgroundTask): string | null {
+  if (task.type === 'paper_generation' && task.paperId) return `/papers/${encodeURIComponent(task.paperId)}`
   if (!task.isServerTask) return null
   if (task.type === 'training') return task.id.replace(/^training_/, '')
   if (task.type === 'external_validation') return task.id.replace(/^extval_/, '')
@@ -165,9 +176,17 @@ const TaskCard: React.FC<{
     const isExternalValidationTask = task.type === 'external_validation'
     const isBatchInferenceTask = task.type === 'batch_inference'
     const isAnalysisTask = task.type === 'analysis'
+    const isPaperGenerationTask = task.type === 'paper_generation'
     const isActiveTask = task.status === 'running' || task.status === 'pending'
+    const canCancelTask = isActiveTask && !isPaperGenerationTask
 
     const typeLabel = getTypeLabel(task, t)
+    const displayTitle = isPaperGenerationTask
+      ? t('backgroundTask.taskTitles.paperGeneration', { name: task.paperTitle || task.title || task.paperId })
+      : task.title
+    const paperStageText = isPaperGenerationTask && task.paperStage
+      ? t('backgroundTask.taskTitles.paperGenerationStage', { stage: paperStageLabel(t, task.paperStage) })
+      : null
 
     const getProgressBarColor = () => {
       if (task.type === 'training' && task.serverTaskStatus) {
@@ -241,11 +260,16 @@ const TaskCard: React.FC<{
                   </div>
                 ) : (
                   <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
-                    {task.title}
+                    {displayTitle}
                     {task.taskCategory && (
                       <span className="text-xs font-normal text-gray-400 ml-1">
                         ({t(`backgroundTask.taskCategory.${task.taskCategory}`, { defaultValue: task.taskCategory })})
                       </span>
+                    )}
+                    {paperStageText && (
+                      <div className="mt-1 text-xs font-medium text-gray-500">
+                        {paperStageText}
+                      </div>
                     )}
                   </div>
                 )}
@@ -258,8 +282,8 @@ const TaskCard: React.FC<{
                 </span>
                 <span className="text-sm font-medium text-gray-700 truncate flex-1 min-w-0 leading-none">
                   {task.taskCategory
-                    ? `${task.title} (${t(`backgroundTask.taskCategory.${task.taskCategory}`, { defaultValue: task.taskCategory })})`
-                    : task.title}
+                    ? `${displayTitle} (${t(`backgroundTask.taskCategory.${task.taskCategory}`, { defaultValue: task.taskCategory })})`
+                    : displayTitle}
                 </span>
                 <div className="flex items-center gap-2 flex-shrink-0 leading-none">
                   {task.successCount > 0 && (
@@ -308,7 +332,7 @@ const TaskCard: React.FC<{
                 </button>
               </Tooltip>
             )}
-            {isActiveTask && !showCancelConfirm && (
+            {canCancelTask && !showCancelConfirm && (
               <Tooltip content={t('backgroundTask.cancel')}>
                 <button
                   onClick={async (e) => {
@@ -400,7 +424,7 @@ const TaskCard: React.FC<{
                 />
               </div>
             )}
-            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask || isExternalValidationTask || isBatchInferenceTask || isAnalysisTask) && isServerTask) && task.type !== 'extraction' && (
+            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask || isExternalValidationTask || isBatchInferenceTask || isAnalysisTask) && isServerTask) && task.type !== 'extraction' && task.type !== 'paper_generation' && (
               <div className="max-h-40 overflow-y-auto mt-1">
                 {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
               </div>
@@ -529,7 +553,7 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
           ) : (
             <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50/50">
               {tasks.map(task => {
-                const navigableId = getNavigableTaskId(task)
+                const navigationTarget = getTaskNavigation(task)
                 return (
                   <TaskCard
                     key={task.id}
@@ -537,8 +561,8 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
                     onCancel={() => cancelTask(task.id)}
                     onCancelServer={() => cancelServerTask(task)}
                     onRemove={() => removeTask(task)}
-                    onNavigate={navigableId ? () => {
-                      navigate(`/task/${navigableId}`)
+                    onNavigate={navigationTarget ? () => {
+                      navigate(navigationTarget.startsWith('/') ? navigationTarget : `/task/${navigationTarget}`)
                       if (isOpen) togglePanel()
                     } : undefined}
                   />

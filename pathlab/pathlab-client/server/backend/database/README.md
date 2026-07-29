@@ -14,7 +14,7 @@
 
 ## 当前 ORM 表现状
 
-当前代码里可直接看到 **21 个 ORM 表**：
+当前代码里可直接看到 **22 个 ORM 表**：
 
 ### 业务表（`models.py`）
 
@@ -38,10 +38,11 @@
 18. `dataset_stats`
 19. `dataset_grants`
 20. `permission_audit_logs`
+21. `paper_generation_runs`（Paper Agent 论文生成任务记录；重产物在 `uploads/paper_generation/{paper_id}/`）
 
 ### 认证表（`backend/auth/models.py`）
 
-21. `users`
+22. `users`
 
 `users` 当前除 FastAPI-Users 的基础字段外，还直接扩展了这些与业务强相关的字段：
 
@@ -86,6 +87,7 @@
 - 当前 README 不再把 `accesstoken` 记作项目里明确可见的独立 ORM 模型
 - 认证更贴近"JWT + users + nonce 控制"的实现方式
 - 当前权限体系已统一到 `dataset_grants` / `permission_audit_logs`，旧表 `dataset_permissions` 与 `annotation_collaborators` 不再作为 ORM 模型存在
+- Paper Agent 新增 `paper_generation_runs`，数据库只保存论文任务轻量状态、来源任务和配置；PDF、LaTeX、引用、校验报告等重产物保存在文件系统
 
 ## Repository 现状
 
@@ -109,10 +111,11 @@
 - `OrphanedRecordsRepository`
 - `SegmentationAnnotationRepository`（同时导出 `VersionConflictError`）
 - `AnnotationAuditLogRepository`
+- `PaperGenerationRunRepository`
 
 此外，`repositories/base.py` 还提供共享的 `BaseRepository`、以及供旧代码兼容导入的 `DatasetRepository` / `WSIRepository` 别名；`repositories/utils.py` 提供 `paginate_query` 与 `apply_user_filter` 辅助函数。
 
-这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注及协作审计等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。
+这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注、协作审计及论文生成记录等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。
 
 ## 初始化与使用方式
 
@@ -125,9 +128,11 @@
 - 如果关心认证表与用户字段：看 `../auth/`
 - 如果关心文件系统与数据库的一致性：看 `../storage/README.md`
 - 如果关心业务 API 如何写入这些表：看 `../../gateway/README.md`
+- 如果关心论文生成任务如何使用 `paper_generation_runs`：看 `../../paper_agent/README.md`
 
 ## 相关文档
 
 - [Backend README](../README.md)
 - [Gateway README](../../gateway/README.md)
+- [Paper Agent README](../../paper_agent/README.md)
 - [Storage README](../storage/README.md)

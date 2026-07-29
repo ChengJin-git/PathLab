@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight, FileText } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
 import { isSegFmEncoder, isSegmentationTask } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
@@ -52,6 +52,10 @@ function isTaskCancellable(task: Task): boolean {
     : TRAINING_CANCELLABLE_STATUSES
 
   return (cancellableStatuses as readonly string[]).includes(task.status)
+}
+
+function isPaperSourceTask(task: Pick<Task, 'status' | 'task_type'>): boolean {
+  return task.status === 'completed' && task.task_type !== 'batch_inference'
 }
 
 export default function TaskListPage() {
@@ -158,6 +162,16 @@ export default function TaskListPage() {
     } finally {
       setCancellingTaskId(null)
     }
+  }
+
+  const handleNewPaperTask = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigate(`/papers/new?task_id=${encodeURIComponent(task.task_id)}`, {
+      state: {
+        sourceTaskId: task.task_id,
+        sourceTaskName: task.task_name,
+      },
+    })
   }
 
   useEffect(() => {
@@ -616,7 +630,7 @@ export default function TaskListPage() {
                         {getStatusBadge(task.status, task.task_type, isSyntheticTask, isExternalValidation)}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">
+                    {!isExternalValidation && <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">
                       <span className="font-mono truncate hover:text-gray-600 transition-colors max-w-[120px] sm:max-w-none" title={task.task_id}>
                         {task.task_id}
                       </span>
@@ -641,7 +655,7 @@ export default function TaskListPage() {
                           </div>
                         )}
                       </div>
-                    </div>
+                    </div>}
                     {isAdmin && task.username && (
                       <div className="flex items-center gap-1 text-[10px] sm:text-xs text-gray-400">
                         <User className="w-3 h-3 text-gray-300 flex-shrink-0" />
@@ -827,6 +841,18 @@ export default function TaskListPage() {
                       </Tooltip>
                     )}
 
+                    {!isSyntheticTask && isPaperSourceTask(task) && (
+                      <Tooltip content={t('taskList.newPaper')}>
+                        <button
+                          type="button"
+                          onClick={(e) => handleNewPaperTask(task, e)}
+                          className="p-2 text-gray-400 hover:text-sky-700 hover:bg-sky-50 rounded-full transition-colors"
+                        >
+                          <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        </button>
+                      </Tooltip>
+                    )}
+
                     {!isSyntheticTask && (
                       <Tooltip content={t('taskList.deleteTask')}>
                         <button
@@ -967,9 +993,10 @@ export default function TaskListPage() {
                   taskStorageInfo.training_dir.exists && 'trainingDataQuick',
                   taskStorageInfo.ai_results.exists && 'aiResultsQuick',
                   taskStorageInfo.training_logs.exists && 'logsQuick',
-                  taskStorageInfo.analysis_logs.exists && 'analysisLogsQuick',
-                  deleteMode === 'complete' && taskStorageInfo.models.some(model => model.exists) && 'modelsQuick',
-                ].filter(Boolean) as string[]
+	                  taskStorageInfo.analysis_logs.exists && 'analysisLogsQuick',
+	                  deleteMode === 'complete' && taskStorageInfo.models.some(model => model.exists) && 'modelsQuick',
+	                  deleteMode === 'complete' && 'papersQuick',
+	                ].filter(Boolean) as string[]
 
                 return (
                   <div className="bg-sky-50/70 border border-sky-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
@@ -986,12 +1013,18 @@ export default function TaskListPage() {
                               <span>{t(`taskList.deleteModal.${itemKey}`)}</span>
                             </li>
                           ))}
-                          {deleteMode === 'standard' && taskStorageInfo.models.some(model => model.exists) && (
-                            <li className="flex items-center gap-2 text-emerald-700">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                              <span>{t('taskList.deleteModal.modelsKeptQuick')}</span>
-                            </li>
-                          )}
+	                          {deleteMode === 'standard' && taskStorageInfo.models.some(model => model.exists) && (
+	                            <li className="flex items-center gap-2 text-emerald-700">
+	                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+	                              <span>{t('taskList.deleteModal.modelsKeptQuick')}</span>
+	                            </li>
+	                          )}
+	                          {deleteMode === 'standard' && (
+	                            <li className="flex items-center gap-2 text-emerald-700">
+	                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+	                              <span>{t('taskList.deleteModal.papersKeptQuick')}</span>
+	                            </li>
+	                          )}
                         </ul>
                       </div>
                     </div>

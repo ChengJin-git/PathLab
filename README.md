@@ -4,7 +4,7 @@
 
 发布日期：2026 年 3 月 27 日
 
-PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。当前主应用位于 `pathlab/pathlab-client/`，由 **Electron 主进程 / preload、React 渲染层、Python FastAPI sidecar** 共同组成。
+PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。当前主应用位于 `pathlab/pathlab-client/`，由 **Electron 主进程 / preload、React 渲染层、Python FastAPI sidecar、TaskWorker 与 Paper Agent 论文生成运行时** 共同组成。
 
 ## 当前仓库重点
 
@@ -15,6 +15,7 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 - 前端单元测试位于 `pathlab/pathlab-client/test/`，当前使用 Vitest（`test` / `test:run` / `test:coverage`）；后端单元测试位于 `pathlab/pathlab-client/server/tests/`，当前使用 pytest
 - 固定端口部署、Nginx 与 systemd 模板位于 `pathlab/pathlab-client/deploy/`
 - `server/backend/` 当前按 `ai / annotation / auth / common / database / preprocessing / storage` 分层组织共享后端代码
+- `server/paper_agent/` 是生成论文功能的独立 `uv` 项目，负责 `/papers` 背后的论文大纲、章节、引用、校验、PDF 渲染与导出流程
 
 ## 运行形态
 
@@ -29,6 +30,7 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 - 用户认证、JWT 会话控制、管理员用户管理
 - WSI 上传、列表、详情、缩略图 / DZI / 瓦片阅片
 - 训练任务、推理任务（含无标签数据集批量推理与独立 WSI 推理）、结果查看、热图、分析与分割标注相关能力
+- 实验任务生成论文：从训练 / 分析记录生成论文大纲、章节、图表、引用、校验报告、PDF 预览与下载文件
 - AI 对话、会话持久化、PDF 缓存与语义检索辅助阅读
 - 存储统计、目录扫描、迁移、孤立文件 / 孤立记录清理
 - 浏览器模式 PWA 与 Electron 桌面模式双运行方式
@@ -46,6 +48,7 @@ pathlab/
     ├── server/
     │   ├── main.py          # Python sidecar 统一入口，拉起 HTTP 服务和 TaskWorker
     │   ├── gateway/         # 对外 API 网关
+    │   ├── paper_agent/     # 生成论文运行时、模板、校验器与测试
     │   └── backend/         # AI / annotation / auth / common / database / preprocessing / storage
     ├── test/                # 前端单元测试（Vitest）
     ├── server/tests/        # 后端单元测试（pytest）
@@ -57,6 +60,7 @@ pathlab/
 
 - [PathLab Client](pathlab/pathlab-client/README.md)
 - [Python Backend](pathlab/pathlab-client/server/README.md)
+- [Paper Agent](pathlab/pathlab-client/server/paper_agent/README.md)
 - [Permission Baseline](pathlab/pathlab-client/server/permissions/README.md)
 - [Gateway](pathlab/pathlab-client/server/gateway/README.md)
 - [Backend Services](pathlab/pathlab-client/server/backend/README.md)

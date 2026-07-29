@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useDraftState } from '../lib/useDraftState'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } from 'lucide-react'
+import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
-import { Card, CardContent } from '../components/ui/card'
+import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Select } from '../components/ui/select'
 import { downloadBlobFile, fetchAllResults } from '../api'
@@ -53,6 +53,8 @@ export default function ReportGeneratorPage() {
     format: 'csv'
   })
   const [generating, setGenerating] = useState(false)
+  const [resultsPage, setResultsPage] = useState(1)
+  const [resultsPageSize, setResultsPageSize] = useState(10)
 
   const { data: fetchedResults, isLoading: loading } = useQuery({
     queryKey: ['all-results'],
@@ -77,6 +79,10 @@ export default function ReportGeneratorPage() {
   })
 
   const results: WSIResult[] = fetchedResults ?? []
+  const filteredResults = useMemo(
+    () => config.filterLabel === 'all' ? results : results.filter(r => r.label === config.filterLabel),
+    [config.filterLabel, results]
+  )
 
   const calculateStats = (data: WSIResult[]): Stats => {
     const analyzed = data.filter(r => r.pred !== null)
@@ -110,6 +116,22 @@ export default function ReportGeneratorPage() {
   }
 
   const stats: Stats | null = results.length > 0 ? calculateStats(results) : null
+  const previewStats: Stats | null = filteredResults.length > 0 ? calculateStats(filteredResults) : null
+  const totalResultPages = Math.max(1, Math.ceil(filteredResults.length / resultsPageSize) || 1)
+  const pageStart = filteredResults.length === 0 ? 0 : (resultsPage - 1) * resultsPageSize + 1
+  const pageEnd = Math.min(resultsPage * resultsPageSize, filteredResults.length)
+  const paginatedResults = filteredResults.slice(
+    (resultsPage - 1) * resultsPageSize,
+    resultsPage * resultsPageSize
+  )
+
+  useEffect(() => {
+    setResultsPage(1)
+  }, [config.filterLabel, resultsPageSize])
+
+  useEffect(() => {
+    setResultsPage(page => Math.min(page, totalResultPages))
+  }, [totalResultPages])
 
   const generateCSV = () => {
     const filteredData = config.filterLabel === 'all' 
@@ -308,162 +330,275 @@ export default function ReportGeneratorPage() {
         </Button>
       </PageHeader>
 
-      {/* Configuration Panel */}
-      <Card className="p-6 mb-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-          <Settings className="w-5 h-5 mr-2" />
-          {t('reportPage.reportConfiguration')}
-        </h2>
+      <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+        <div className="space-y-6">
+          {/* Configuration Panel */}
+          <Card className="p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
+              <Settings className="w-5 h-5 mr-2" />
+              {t('reportPage.reportConfiguration')}
+            </h2>
 
-        <div className="space-y-4">
-          {/* Title */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t('reportPage.reportTitle')}
-            </label>
-            <input
-              type="text"
-              value={config.title}
-              onChange={(e) => setConfig({ ...config, title: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            />
-          </div>
+            <div className="space-y-4">
+              {/* Title */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {t('reportPage.reportTitle')}
+                </label>
+                <input
+                  type="text"
+                  value={config.title}
+                  onChange={(e) => setConfig({ ...config, title: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                />
+              </div>
 
-          {/* Format */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t('reportPage.exportFormat')}
-            </label>
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                onClick={() => setConfig({ ...config, format: 'csv' })}
-                className={`px-4 py-3 rounded-lg border-2 transition-all ${
-                  config.format === 'csv'
-                    ? 'border-green-500 bg-green-50 text-green-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <FileSpreadsheet className="w-6 h-6 mx-auto mb-1" />
-                <span className="text-sm font-medium">CSV</span>
-              </button>
-              <button
-                onClick={() => setConfig({ ...config, format: 'json' })}
-                className={`px-4 py-3 rounded-lg border-2 transition-all ${
-                  config.format === 'json'
-                    ? 'border-green-500 bg-green-50 text-green-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <FileDown className="w-6 h-6 mx-auto mb-1" />
-                <span className="text-sm font-medium">JSON</span>
-              </button>
-              <button
-                onClick={() => setConfig({ ...config, format: 'markdown' })}
-                className={`px-4 py-3 rounded-lg border-2 transition-all ${
-                  config.format === 'markdown'
-                    ? 'border-green-500 bg-green-50 text-green-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <FileText className="w-6 h-6 mx-auto mb-1" />
-                <span className="text-sm font-medium">Markdown</span>
-              </button>
+              {/* Format */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {t('reportPage.exportFormat')}
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    onClick={() => setConfig({ ...config, format: 'csv' })}
+                    className={`px-4 py-3 rounded-lg border-2 transition-all ${
+                      config.format === 'csv'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <FileSpreadsheet className="w-6 h-6 mx-auto mb-1" />
+                    <span className="text-sm font-medium">CSV</span>
+                  </button>
+                  <button
+                    onClick={() => setConfig({ ...config, format: 'json' })}
+                    className={`px-4 py-3 rounded-lg border-2 transition-all ${
+                      config.format === 'json'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <FileDown className="w-6 h-6 mx-auto mb-1" />
+                    <span className="text-sm font-medium">JSON</span>
+                  </button>
+                  <button
+                    onClick={() => setConfig({ ...config, format: 'markdown' })}
+                    className={`px-4 py-3 rounded-lg border-2 transition-all ${
+                      config.format === 'markdown'
+                        ? 'border-green-500 bg-green-50 text-green-700'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <FileText className="w-6 h-6 mx-auto mb-1" />
+                    <span className="text-sm font-medium">Markdown</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {t('reportPage.filterByLabel')}
+                </label>
+                <Select
+                  value={config.filterLabel}
+                  onChange={(v) => setConfig({ ...config, filterLabel: v })}
+                  options={[
+                    { value: 'all', label: t('reportPage.allLabels') },
+                    ...uniqueLabels.map(label => ({ value: label, label })),
+                  ]}
+                />
+              </div>
+
+              {/* Include Options */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {t('reportPage.includeInReport')}
+                </label>
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={config.includeMetadata}
+                      onChange={(e) => setConfig({ ...config, includeMetadata: e.target.checked })}
+                      className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                    />
+                    <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeMetadata')}</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={config.includeStats}
+                      onChange={(e) => setConfig({ ...config, includeStats: e.target.checked })}
+                      className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                    />
+                    <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeSummaryStats')}</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={config.includeResults}
+                      onChange={(e) => setConfig({ ...config, includeResults: e.target.checked })}
+                      className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                    />
+                    <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeDetailedResults')}</span>
+                  </label>
+                </div>
+              </div>
             </div>
-          </div>
+          </Card>
 
-           {/* Filter */}
-           <div>
-             <label className="block text-sm font-medium text-gray-700 mb-2">
-               {t('reportPage.filterByLabel')}
-             </label>
-             <Select
-               value={config.filterLabel}
-               onChange={(v) => setConfig({ ...config, filterLabel: v })}
-               options={[
-                 { value: 'all', label: t('reportPage.allLabels') },
-                 ...uniqueLabels.map(label => ({ value: label, label })),
-               ]}
-             />
-           </div>
-
-          {/* Include Options */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t('reportPage.includeInReport')}
-            </label>
-            <div className="space-y-2">
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={config.includeMetadata}
-                  onChange={(e) => setConfig({ ...config, includeMetadata: e.target.checked })}
-                  className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeMetadata')}</span>
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={config.includeStats}
-                  onChange={(e) => setConfig({ ...config, includeStats: e.target.checked })}
-                  className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeSummaryStats')}</span>
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={config.includeResults}
-                  onChange={(e) => setConfig({ ...config, includeResults: e.target.checked })}
-                  className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
-                />
-                <span className="ml-2 text-sm text-gray-700">{t('reportPage.includeDetailedResults')}</span>
-              </label>
-            </div>
-          </div>
+          {/* Generate Button */}
+          <Button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="w-full px-8 py-6 text-lg gap-3 bg-green-600 hover:bg-green-700"
+          >
+            {generating ? (
+              <>
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                {t('reportPage.generating')}
+              </>
+            ) : (
+              <>
+                <Download className="w-5 h-5" />
+                {t('reportPage.generateAndDownload')}
+              </>
+            )}
+          </Button>
         </div>
-      </Card>
 
-      {/* Preview */}
-      {stats && (
-        <Card className="p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">{t('reportPage.preview')}</h2>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-1">{t('reportPage.totalSlides')}</p>
-              <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
-            </div>
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-1">{t('reportPage.analyzed')}</p>
-              <p className="text-2xl font-bold text-green-600">{stats.analyzed}</p>
-            </div>
-            <div className="text-center p-4 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-1">{t('reportPage.accuracy')}</p>
-              <p className="text-2xl font-bold text-blue-600">{stats.accuracy.toFixed(1)}%</p>
-            </div>
+        <Card className="min-w-0 overflow-hidden">
+          <div className="border-b border-gray-200 px-6 py-4">
+            <h2 className="text-xl font-semibold text-gray-900">{t('reportPage.workspace')}</h2>
+            <p className="mt-1 text-sm text-gray-500">{t('reportPage.resultsPreview')}</p>
+          </div>
+
+          <div className="max-h-[calc(100vh-220px)] min-h-[520px] overflow-y-auto px-6 py-5">
+            {previewStats ? (
+              <div className="space-y-6">
+                <section>
+                  <h3 className="text-base font-semibold text-gray-900 mb-3">{t('reportPage.preview')}</h3>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600 mb-1">{t('reportPage.totalSlides')}</p>
+                      <p className="text-2xl font-bold text-gray-900">{previewStats.total}</p>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600 mb-1">{t('reportPage.analyzed')}</p>
+                      <p className="text-2xl font-bold text-green-600">{previewStats.analyzed}</p>
+                    </div>
+                    <div className="text-center p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600 mb-1">{t('reportPage.accuracy')}</p>
+                      <p className="text-2xl font-bold text-blue-600">{previewStats.accuracy.toFixed(1)}%</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section>
+                  <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <h3 className="text-base font-semibold text-gray-900">{t('reportPage.analysisResults')}</h3>
+                    <span className="text-sm text-gray-500">
+                      {t('reportPage.showingResults', {
+                        start: pageStart,
+                        end: pageEnd,
+                        total: filteredResults.length,
+                      })}
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-600">{t('reportPage.colFilename')}</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-600">{t('reportPage.colCaseId')}</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-600">{t('reportPage.colTrueLabel')}</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-600">{t('reportPage.colPrediction')}</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-600">{t('reportPage.colConfidence')}</th>
+                          <th className="px-4 py-3 text-left font-semibold text-gray-600">{t('reportPage.colCorrect')}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {paginatedResults.map((result) => (
+                          <tr key={result.wsi_id}>
+                            <td className="max-w-[220px] truncate px-4 py-3 text-gray-900" title={result.original_filename}>
+                              {result.original_filename}
+                            </td>
+                            <td className="px-4 py-3 text-gray-600">{result.case_id || t('reportPage.na')}</td>
+                            <td className="px-4 py-3 text-gray-600">{result.label || t('reportPage.na')}</td>
+                            <td className="px-4 py-3 text-gray-600">{result.pred || t('reportPage.na')}</td>
+                            <td className="px-4 py-3 text-gray-600">
+                              {result.confidence !== undefined
+                                ? `${(result.confidence * 100).toFixed(1)}%`
+                                : t('reportPage.na')}
+                            </td>
+                            <td className="px-4 py-3 text-gray-600">
+                              {result.is_correct === undefined
+                                ? t('reportPage.pending')
+                                : result.is_correct
+                                  ? t('reportPage.yes')
+                                  : t('reportPage.no')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-3 border-t border-gray-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <span>{t('reportPage.itemsPerPage')}</span>
+                      <Select
+                        value={String(resultsPageSize)}
+                        onChange={(value) => setResultsPageSize(Number(value))}
+                        options={['10', '25', '50'].map(value => ({ value, label: value }))}
+                        className="w-20"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 sm:justify-end">
+                      <span className="text-sm text-gray-500">
+                        {t('reportPage.pageInfo', {
+                          current: Math.min(resultsPage, totalResultPages),
+                          total: totalResultPages,
+                        })}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setResultsPage(page => Math.max(1, page - 1))}
+                          disabled={resultsPage <= 1}
+                          className="gap-1"
+                        >
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                          {t('reportPage.previousPage')}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setResultsPage(page => Math.min(totalResultPages, page + 1))}
+                          disabled={resultsPage >= totalResultPages}
+                          className="gap-1"
+                        >
+                          {t('reportPage.nextPage')}
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            ) : (
+              <div className="flex min-h-[440px] items-center justify-center rounded-lg border border-dashed border-gray-200 text-center">
+                <p className="text-sm text-gray-500">{t('reportPage.noResults')}</p>
+              </div>
+            )}
           </div>
         </Card>
-      )}
-
-      {/* Generate Button */}
-      <div className="flex justify-center">
-        <Button
-          onClick={handleGenerate}
-          disabled={generating}
-          className="px-8 py-6 text-lg gap-3 bg-green-600 hover:bg-green-700"
-        >
-          {generating ? (
-            <>
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-              {t('reportPage.generating')}
-            </>
-          ) : (
-            <>
-              <Download className="w-5 h-5" />
-              {t('reportPage.generateAndDownload')}
-            </>
-          )}
-        </Button>
       </div>
     </div>
   )

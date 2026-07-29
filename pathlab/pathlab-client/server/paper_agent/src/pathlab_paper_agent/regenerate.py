@@ -358,7 +358,14 @@ def regenerate_section(
             section_name=target_section_slug,
             status=status,
         )
-        error_code = exc.code if isinstance(exc, SelectionLocatorError) else "regenerate_failed"
+        if isinstance(exc, SelectionLocatorError):
+            error_code = exc.code
+        elif isinstance(exc, RegenerateRejectedError) and "claim_guard" in error_message:
+            error_code = "claim_guard_rejected"
+        elif isinstance(exc, RegenerateRejectedError):
+            error_code = "validation_rejected"
+        else:
+            error_code = "regenerate_failed"
         _upsert_regen_job(
             manifest,
             regen_id=run_id,

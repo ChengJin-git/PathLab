@@ -15,9 +15,31 @@ from pathlab_paper_agent.agents.section_writing_agent import (
 )
 
 from ..process_logging import register_private_log_artifact, write_stage_process_log
-from .common import load_config, register_artifact, write_text
+from .common import load_config, register_artifact, write_json, write_text
 
 _PROCESS_LOG_REL_PATH = "logs/section_writing_log.private.json"
+_PUBLIC_PROGRESS_BY_EVENT = {
+    "auto_metric_repair_attempted": (
+        "paperAgent.pipeline.messages.sectionMetricAutoRepairAttempted",
+        "Section writing found a metric placeholder issue and is checking locked evidence automatically.",
+    ),
+    "auto_metric_repair_succeeded": (
+        "paperAgent.pipeline.messages.sectionMetricAutoRepairSucceeded",
+        "Section writing repaired the metric placeholder and is continuing.",
+    ),
+    "llm_contract_repair_attempted": (
+        "paperAgent.pipeline.messages.sectionMetricRetryAttempted",
+        "Section writing hit a formatting issue and is retrying with stricter locked-metric instructions.",
+    ),
+    "llm_contract_repair_failed": (
+        "paperAgent.pipeline.messages.sectionMetricRetryFailed",
+        "Section writing could not repair the metric placeholder automatically and is preparing a diagnosis.",
+    ),
+    "llm_contract_repair_succeeded": (
+        "paperAgent.pipeline.messages.sectionMetricRetrySucceeded",
+        "Section writing retry fixed the metric placeholder issue and is continuing.",
+    ),
+}
 
 
 def run(
@@ -36,6 +58,7 @@ def run(
 
     def sink(event: dict[str, Any]) -> None:
         events.append(event)
+        _publish_user_facing_progress(paths, manifest, event)
         if callable(previous_sink):
             previous_sink(event)
 
@@ -82,3 +105,26 @@ def _register_artifacts(manifest: PaperManifest, result: SectionWritingResult) -
             label=f"Section: {section.replace('_', ' ').title()}",
             content_type="text/x-tex",
         )
+
+
+def _publish_user_facing_progress(paths: PaperRunPaths, manifest: PaperManifest, event: dict[str, Any]) -> None:
+    progress = _PUBLIC_PROGRESS_BY_EVENT.get(str(event.get("event") or ""))
+    if progress is None:
+        return
+    message_key, message = progress
+    now = datetime.now(UTC)
+    manifest.stage_log.append(
+        {
+            "stage": "section_writing",
+            "status": "running",
+            "ts": now.isoformat(),
+            "started_at": now.isoformat(),
+            "finished_at": None,
+            "duration_ms": None,
+            "message": message,
+            "message_key": message_key,
+            "progress_event": event.get("event"),
+        }
+    )
+    manifest.updated_at = now
+    write_json(paths.manifest, manifest.model_dump(mode="json"))

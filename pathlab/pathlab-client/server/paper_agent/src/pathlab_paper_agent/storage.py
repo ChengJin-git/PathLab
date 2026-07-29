@@ -75,6 +75,9 @@ class PaperRunPaths:
     @property
     def config(self) -> Path: return self.root / "config.json"
 
+    @property
+    def pause_request(self) -> Path: return self.root / ".pause_requested"
+
     # --- inputs ---
     @property
     def inputs_dir(self) -> Path: return self.root / "inputs"
@@ -129,6 +132,9 @@ class PaperRunPaths:
 
     @property
     def outline_json(self) -> Path: return self.drafts_dir / "outline.json"
+
+    @property
+    def outline_markdown(self) -> Path: return self.drafts_dir / "大纲.md"
 
     @property
     def intro_rw_draft_dir(self) -> Path: return self.drafts_dir / "intro_rw_draft"

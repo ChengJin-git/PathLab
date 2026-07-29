@@ -1,10 +1,12 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { BookOpen, Download, FileCode2, Loader2, Maximize2, MousePointer2, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { BookOpen, ChevronDown, Download, FileArchive, FileText, Loader2, Maximize2, MousePointer2, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
   downloadPaperExport,
+  downloadPaperFile,
   getPaperFileBlob,
   getPaperFileUrl,
   getPaperSections,
@@ -18,7 +20,8 @@ import { expandPdfSelectionToSourceSentences } from '../../lib/sentenceBoundary'
 import { Button } from '../ui/button'
 import { Card, CardContent } from '../ui/card'
 import { RegenerateSelectionPanel, type SelectionInfo } from './RegenerateSelectionPanel'
-import { SECTION_ORDER, labelForSection, sectionBodyView } from './SectionsTab'
+import { labelForSection, sectionBodyView } from './SectionsTab'
+import { paperStageLabel, paperTaskRoleLabel, paperTemplateTitle } from '../../lib/paperI18n'
 
 const PdfViewer = lazy(() => import('./PdfViewer').then((module) => ({ default: module.PdfViewer })))
 
@@ -41,10 +44,19 @@ function artifactUnavailable(error: unknown): boolean {
   return error.status === 403 && detail.includes('Artifact is not registered public')
 }
 
+function sanitizeDownloadNamePart(value: string | null | undefined, fallback: string): string {
+  const cleaned = (value || '')
+    .normalize('NFKC')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned || fallback
+}
+
 export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded }: PdfPreviewTabProps) {
+  const { t } = useTranslation()
   const [, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
-  const [sourceSection, setSourceSection] = useState<string>('abstract')
   const [selectionMessage, setSelectionMessage] = useState<{
     tone: 'info' | 'warning' | 'success'
     text: string
@@ -54,7 +66,24 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
     selection: SelectionInfo
   } | null>(null)
   const [pdfScale, setPdfScale] = useState<number>(1)
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
+  const [awaitingRenderExport, setAwaitingRenderExport] = useState(false)
+  const [renderExportRequestedAt, setRenderExportRequestedAt] = useState<number | null>(null)
+  const downloadMenuRef = useRef<HTMLDivElement | null>(null)
   const template = run.selected_templates[0] ?? 'miccai'
+  const primarySourceTask = run.source_tasks?.[0]
+  const sourceTaskId = primarySourceTask?.task_id ?? run.source_task_ids[0] ?? paperId
+  const sourceTaskLabel = primarySourceTask?.label
+  const sourceRole = primarySourceTask?.role ?? 'main'
+  const paperTitlePart = sanitizeDownloadNamePart(run.title, paperId)
+  const sourceRolePart = sanitizeDownloadNamePart(paperTaskRoleLabel(t, sourceRole), sourceRole)
+  const sourceTaskIdPart = sanitizeDownloadNamePart(sourceTaskId, 'source-task')
+  const sourceTaskLabelPart = sanitizeDownloadNamePart(sourceTaskLabel, '')
+  const sourceTaskPart =
+    sourceTaskLabelPart && sourceTaskLabelPart !== sourceTaskIdPart
+      ? `${sourceTaskIdPart}-${sourceTaskLabelPart}`
+      : sourceTaskIdPart
+  const paperDownloadBaseName = `${paperTitlePart}（${sourceRolePart}）-${sourceTaskPart}`
   const pdfPath = `final/${template}/main.pdf`
   const bundlePath = `exports/${template}_bundle.zip`
   const pdfArtifact = (run.artifacts ?? []).find((artifact) => artifact.path === pdfPath)
@@ -69,64 +98,101 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       ['ready', 'generated', 'completed'].includes(pdfArtifact.status),
   )
   const pdfUrl = cacheBustedUrl(getPaperFileUrl(paperId, pdfPath), pdfRefreshKey)
-
-  const sectionsCacheQuery = useQuery({
-    queryKey: ['paper-sections', paperId],
-    queryFn: () => getPaperSections(paperId),
-    enabled: false,
-    initialData: () => queryClient.getQueryData<PaperSectionListResponse>(['paper-sections', paperId]),
-  })
-
-  const generatedSectionNames = useMemo(
-    () => new Set((sectionsCacheQuery.data?.sections ?? []).map((section) => section.section_name)),
-    [sectionsCacheQuery.data?.sections],
-  )
-  const firstGeneratedSection = useMemo(
-    () => SECTION_ORDER.find((section) => generatedSectionNames.has(section)) ?? 'abstract',
-    [generatedSectionNames],
-  )
-  const sectionOptions = useMemo(
-    () =>
-      SECTION_ORDER.map((section) => ({
-        value: section,
-        label: labelForSection(section),
-        generated: generatedSectionNames.has(section),
-      })),
-    [generatedSectionNames],
-  )
+  const renderExportStageActive =
+    run.status === 'running' &&
+    (run.current_stage === 'rendering' || run.current_stage === 'exporting')
 
   const pdfQuery = useQuery({
     queryKey: ['paper-file', paperId, pdfPath, 'exists', pdfRefreshKey],
-    queryFn: () => getPaperFileBlob(paperId, pdfPath),
+    queryFn: () => getPaperFileBlob(paperId, pdfPath, { cache: 'no-store' }),
     enabled: isPdfPublished,
     retry: false,
   })
 
-  const downloadMutation = useMutation({
-    mutationFn: () => downloadPaperExport(paperId, template),
+  const downloadPdfMutation = useMutation({
+    mutationFn: () => downloadPaperFile(paperId, pdfPath, `${paperDownloadBaseName}.pdf`),
+    onSuccess: () => setDownloadMenuOpen(false),
+  })
+  const downloadBundleMutation = useMutation({
+    mutationFn: () => downloadPaperExport(paperId, template, `${paperDownloadBaseName}.zip`),
+    onSuccess: () => setDownloadMenuOpen(false),
   })
   const renderExportMutation = useMutation({
     mutationFn: () => postPaperRenderExport(paperId),
     onSuccess: async () => {
+      setAwaitingRenderExport(true)
+      setRenderExportRequestedAt(Date.now())
       await queryClient.invalidateQueries({ queryKey: ['paper-run', paperId] })
-      await queryClient.invalidateQueries({ queryKey: ['paper-file', paperId] })
-      onPdfRefreshNeeded()
     },
   })
-
-  const isMissing = !isPdfPublished || artifactUnavailable(pdfQuery.error)
+  const renderExportInFlight = renderExportMutation.isPending || awaitingRenderExport
 
   useEffect(() => {
-    setSourceSection((current) =>
-      generatedSectionNames.size > 0 && !generatedSectionNames.has(current) ? firstGeneratedSection : current,
-    )
-  }, [firstGeneratedSection, generatedSectionNames])
+    if (!awaitingRenderExport) return
+    if (renderExportMutation.isPending || renderExportStageActive) return
+    if (run.status !== 'completed' && run.status !== 'failed' && run.status !== 'cancelled') return
 
-  const handleEditInSource = () => {
+    const elapsedMs = renderExportRequestedAt ? Date.now() - renderExportRequestedAt : 0
+    if (elapsedMs < 1200 && run.status === 'completed') {
+      const timer = window.setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ['paper-run', paperId] })
+      }, 1200 - elapsedMs)
+      return () => window.clearTimeout(timer)
+    }
+
+    setAwaitingRenderExport(false)
+    setRenderExportRequestedAt(null)
+    if (run.status !== 'completed' || pdfArtifactStale) return
+
+    void queryClient.invalidateQueries({ queryKey: ['paper-file', paperId, pdfPath] })
+    onPdfRefreshNeeded()
+  }, [
+    awaitingRenderExport,
+    renderExportMutation.isPending,
+    renderExportStageActive,
+    renderExportRequestedAt,
+    run.status,
+    pdfArtifactStale,
+    queryClient,
+    paperId,
+    pdfPath,
+    onPdfRefreshNeeded,
+  ])
+
+  const isMissing = !isPdfPublished || artifactUnavailable(pdfQuery.error)
+  const isDownloading = downloadPdfMutation.isPending || downloadBundleMutation.isPending
+  const downloadError = downloadPdfMutation.error ?? downloadBundleMutation.error
+  const downloadErrorPath = downloadPdfMutation.error ? pdfPath : bundlePath
+
+  useEffect(() => {
+    if (!downloadMenuOpen) return
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target
+      if (target instanceof Node && downloadMenuRef.current?.contains(target)) return
+      setDownloadMenuOpen(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDownloadMenuOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [downloadMenuOpen])
+
+  const handleReturnToSections = () => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       next.set('tab', 'sections')
-      next.set('section', sourceSection)
+      if (pdfSelection?.sectionName) {
+        next.set('section', pdfSelection.sectionName)
+      } else {
+        next.delete('section')
+      }
       return next
     })
   }
@@ -134,7 +200,8 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
   const handlePdfSelection = async (text: string) => {
     const normalized = normalizeForMatch(text)
     if (normalized.length < 20) {
-      setSelectionMessage({ tone: 'warning', text: 'Select at least ~20 characters in the PDF.' })
+      setPdfSelection(null)
+      setSelectionMessage({ tone: 'warning', text: t('paperAgent.pdf.selectShort') })
       return
     }
 
@@ -148,21 +215,22 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       const match = pdfMatchSection(text, sections)
 
       if (!match) {
+        setPdfSelection(null)
         setSelectionMessage({
           tone: 'warning',
-          text: "Couldn't match this selection to a source section. Use Edit in source to pick manually.",
+          text: t('paperAgent.pdf.matchFailed'),
         })
         return
       }
       if (match.ambiguous) {
+        setPdfSelection(null)
         setSelectionMessage({
           tone: 'warning',
-          text: 'Selection matches multiple sections; try a longer span.',
+          text: t('paperAgent.pdf.matchAmbiguous'),
         })
         return
       }
 
-      setSourceSection(match.section_name)
       // Expand the PDF selection to whole source sentences. If the user only
       // grabbed half a sentence, walk into the matched section's LaTeX source
       // and round outwards to sentence boundaries there. Strip the section /
@@ -177,13 +245,17 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       const snappedText = expansion?.text ?? text
       const expanded = expansion?.expanded ?? false
       const expansionNote = expanded
-        ? ' Selection expanded to whole sentences.'
+        ? t('paperAgent.pdf.expanded')
         : expansion === null
-          ? " Couldn't align selection with source sentences; sending raw text."
+          ? t('paperAgent.pdf.rawSelection')
           : ''
       setSelectionMessage({
         tone: 'success',
-        text: `Matched ${labelForSection(match.section_name)} (${Math.round(match.confidence * 100)}%).${expansionNote}`,
+        text: t('paperAgent.pdf.matched', {
+          section: labelForSection(match.section_name, t),
+          confidence: Math.round(match.confidence * 100),
+          note: expansionNote,
+        }),
       })
       setPdfSelection({
         sectionName: match.section_name,
@@ -195,6 +267,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
         },
       })
     } catch (error) {
+      setPdfSelection(null)
       setSelectionMessage({
         tone: 'warning',
         text: error instanceof Error ? error.message : String(error),
@@ -205,7 +278,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
   if (pdfQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-slate-500">
-        <Loader2 className="h-4 w-4 animate-spin" /> Checking PDF...
+        <Loader2 className="h-4 w-4 animate-spin" /> {t('paperAgent.pdf.checking')}
       </div>
     )
   }
@@ -215,9 +288,9 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
       <Card className="border-dashed border-slate-200 bg-slate-50/70">
         <CardContent className="py-12 text-center">
           <BookOpen className="mx-auto h-9 w-9 text-slate-300" />
-          <div className="mt-3 font-semibold text-slate-800">Compile pending</div>
+          <div className="mt-3 font-semibold text-slate-800">{t('paperAgent.pdf.compilePending')}</div>
           <p className="mt-1 text-sm text-slate-500">
-            {pdfPath} is not available yet. Rendering/exporting will publish the PDF.
+            {t('paperAgent.pdf.missingDescription', { path: pdfPath })}
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
             <Button
@@ -225,14 +298,18 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
               size="sm"
               className="gap-2"
               onClick={() => renderExportMutation.mutate()}
-              disabled={pipelineBlocksRender || renderExportMutation.isPending}
+              disabled={pipelineBlocksRender || renderExportInFlight}
             >
-              {renderExportMutation.isPending ? (
+              {renderExportInFlight ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {pipelineBlocksRender ? `Pipeline ${run.current_stage}` : 'Render PDF/export'}
+              {renderExportInFlight
+                ? t('paperAgent.pdf.renderQueued')
+                : pipelineBlocksRender
+                  ? t('paperAgent.pdf.pipelineBlocked', { stage: paperStageLabel(t, run.current_stage) })
+                  : t('paperAgent.pdf.renderExport')}
             </Button>
           </div>
           {renderExportMutation.error ? (
@@ -259,60 +336,82 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">PDF preview</h2>
+          <h2 className="text-xl font-semibold tracking-[-0.03em] text-slate-950">{t('paperAgent.pdf.title')}</h2>
           <p className="text-sm text-slate-500">
-            Template: {template}. Source: {pdfPath}
+            {t('paperAgent.pdf.sourceLine', { template: paperTemplateTitle(t, template), path: pdfPath })}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
-            <span>Edit in source:</span>
-            <select
-              value={sourceSection}
-              onChange={(event) => setSourceSection(event.target.value)}
-              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm transition focus:border-sky-300 focus:outline-none focus:ring-4 focus:ring-sky-500/20"
-              aria-label="Section to edit in source"
+          <Button variant="secondary" size="sm" className="gap-2" onClick={handleReturnToSections}>
+            <FileText className="h-4 w-4" />
+            {t('paperAgent.pdf.returnToSections')}
+          </Button>
+          <div ref={downloadMenuRef} className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => setDownloadMenuOpen((open) => !open)}
+              disabled={isDownloading}
+              aria-haspopup="menu"
+              aria-expanded={downloadMenuOpen}
             >
-              {sectionOptions.map((section) => (
-                <option key={section.value} value={section.value}>
-                  {section.label}
-                  {section.generated ? '' : ' (not generated)'}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button variant="secondary" size="sm" className="gap-2" onClick={handleEditInSource}>
-            <FileCode2 className="h-4 w-4" />
-            Edit in source
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={() => downloadMutation.mutate()}
-            disabled={downloadMutation.isPending}
-          >
-            {downloadMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4" />
-            )}
-            Download bundle
-          </Button>
+              {isDownloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {t('paperAgent.pdf.download')}
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+            {downloadMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 z-30 mt-2 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => downloadPdfMutation.mutate()}
+                  disabled={isDownloading}
+                >
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-sky-600" />
+                  <span>
+                    <span className="block font-semibold text-slate-900">{t('paperAgent.pdf.downloadPdf')}</span>
+                    <span className="block text-xs text-slate-500">{t('paperAgent.pdf.downloadPdfDescription')}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => downloadBundleMutation.mutate()}
+                  disabled={isDownloading}
+                >
+                  <FileArchive className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
+                  <span>
+                    <span className="block font-semibold text-slate-900">{t('paperAgent.pdf.downloadBundle')}</span>
+                    <span className="block text-xs text-slate-500">{t('paperAgent.pdf.downloadBundleDescription')}</span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
-      {downloadMutation.error ? (
+      {downloadError ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          {downloadMutation.error instanceof Error ? downloadMutation.error.message : String(downloadMutation.error)} (
-          {bundlePath})
+          {downloadError instanceof Error ? downloadError.message : String(downloadError)} (
+          {downloadErrorPath})
         </div>
       ) : null}
       {pdfArtifactStale ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <div>
-            <div className="font-semibold">PDF/export may be stale.</div>
+            <div className="font-semibold">{t('paperAgent.pdf.staleTitle')}</div>
             <div className="mt-0.5 text-amber-800">
-              Section source changed after the last render. Re-render before using the PDF as final.
+              {t('paperAgent.pdf.staleDescription')}
             </div>
           </div>
           <Button
@@ -320,14 +419,18 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             size="sm"
             className="gap-2 bg-amber-900 text-white hover:bg-amber-950"
             onClick={() => renderExportMutation.mutate()}
-            disabled={pipelineBlocksRender || renderExportMutation.isPending}
+            disabled={pipelineBlocksRender || renderExportInFlight}
           >
-            {renderExportMutation.isPending ? (
+            {renderExportInFlight ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-            {pipelineBlocksRender ? `Pipeline ${run.current_stage}` : 'Re-render PDF/export'}
+            {renderExportInFlight
+              ? t('paperAgent.pdf.renderQueued')
+              : pipelineBlocksRender
+                ? t('paperAgent.pdf.pipelineBlocked', { stage: paperStageLabel(t, run.current_stage) })
+                : t('paperAgent.pdf.rerenderExport')}
           </Button>
         </div>
       ) : null}
@@ -351,7 +454,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
         <MousePointer2 className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
           {selectionMessage?.text ??
-            'Select text directly in the PDF to regenerate it. If matching is uncertain, use Edit in source as the manual fallback.'}
+            t('paperAgent.pdf.selectionHint')}
         </div>
       </div>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -360,7 +463,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Zoom out"
+              aria-label={t('paperAgent.pdf.zoomOut')}
               className="h-7 w-7"
               onClick={() => setPdfScale((s) => Math.max(0.5, +(s - 0.1).toFixed(2)))}
               disabled={pdfScale <= 0.5}
@@ -370,7 +473,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <button
               type="button"
               className="min-w-[3.25rem] rounded-md px-2 py-1 text-xs font-semibold tabular-nums text-slate-700 hover:bg-slate-100"
-              title="Reset zoom to 100%"
+              title={t('paperAgent.pdf.resetZoom')}
               onClick={() => setPdfScale(1)}
             >
               {Math.round(pdfScale * 100)}%
@@ -378,7 +481,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Zoom in"
+              aria-label={t('paperAgent.pdf.zoomIn')}
               className="h-7 w-7"
               onClick={() => setPdfScale((s) => Math.min(2.5, +(s + 0.1).toFixed(2)))}
               disabled={pdfScale >= 2.5}
@@ -388,9 +491,9 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Fit to width"
+              aria-label={t('paperAgent.pdf.fitWidth')}
               className="h-7 w-7"
-              title="Fit to width (1.5×)"
+              title={t('paperAgent.pdf.fitWidthTitle')}
               onClick={() => setPdfScale(1.5)}
             >
               <Maximize2 className="h-4 w-4" />
@@ -400,7 +503,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
             fallback={
               <div className="flex h-[72vh] items-center justify-center bg-white text-sm text-slate-500">
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Loading PDF text layer...
+                {t('paperAgent.pdf.loadingTextLayer')}
               </div>
             }
           >
@@ -410,7 +513,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
         <div className="xl:sticky xl:top-4 xl:self-start">
           <RegenerateSelectionPanel
             paperId={paperId}
-            sectionName={pdfSelection?.sectionName ?? sourceSection}
+            sectionName={pdfSelection?.sectionName ?? null}
             templateId={template}
             selection={pdfSelection?.selection ?? null}
             onPdfRefreshNeeded={onPdfRefreshNeeded}

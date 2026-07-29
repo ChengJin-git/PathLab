@@ -68,9 +68,14 @@ function normalizeUnicodeAndWhitespace(text: string): string {
     .toLowerCase()
 }
 
+function mergeWrappedHyphenation(text: string): string {
+  return text.replace(/([A-Za-z])-\s+([A-Za-z])/g, '$1$2')
+}
+
 export function normalizeForMatch(text: string): string {
   let normalized = text
   normalized = stripLatexComments(normalized)
+  normalized = mergeWrappedHyphenation(normalized)
   normalized = replaceMath(normalized)
   normalized = replaceCommandWithToken(normalized, ['cite', 'parencite', 'citep', 'citet'], '[CITE]')
   normalized = replaceCommandWithToken(normalized, ['ref', 'autoref', 'cref', 'Cref'], '[REF]')
@@ -80,6 +85,10 @@ export function normalizeForMatch(text: string): string {
   normalized = normalized.replace(/[{}]/g, ' ')
   normalized = normalized.replace(/\\[a-zA-Z]+\*?(?:\[[^\]]*\])?/g, ' ')
   return normalizeUnicodeAndWhitespace(normalized)
+}
+
+function compactForMatch(text: string): string {
+  return text.replace(/[^a-z0-9]+/g, '')
 }
 
 function longestCommonSubstringLength(needle: string, haystack: string): number {
@@ -116,10 +125,17 @@ export function pdfMatchSection(
   // bounded needle so matching remains responsive while preserving enough text
   // for robust section-level disambiguation.
   const needle = normalizedSelection.slice(0, MAX_SELECTED_CHARS)
+  const compactNeedle = compactForMatch(needle)
   const ranked = sections
     .map((section) => {
       const haystack = normalizeForMatch(section.text)
-      const confidence = longestCommonSubstringLength(needle, haystack) / needle.length
+      const spacedConfidence = longestCommonSubstringLength(needle, haystack) / needle.length
+      const compactHaystack = compactForMatch(haystack)
+      const compactConfidence =
+        compactNeedle.length >= MIN_SELECTION_CHARS
+          ? longestCommonSubstringLength(compactNeedle, compactHaystack) / compactNeedle.length
+          : 0
+      const confidence = Math.max(spacedConfidence, compactConfidence)
       return { section_name: section.section_name, confidence }
     })
     .sort((left, right) => right.confidence - left.confidence)

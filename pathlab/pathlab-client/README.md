@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar（Gateway / Preprocessing / AI / TaskWorker），以及固定端口部署所需的运维脚本。
+`pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar（Gateway / Preprocessing / AI / TaskWorker）、Paper Agent 论文生成运行时，以及固定端口部署所需的运维脚本。
 
 ## 当前入口文件
 
@@ -12,6 +12,7 @@
 - `src/preload/index.ts`：向渲染层暴露后端端口发现能力
 - `src/renderer/vite.config.ts`：独立 Web 构建入口
 - `server/main.py`：Python sidecar 统一入口
+- `server/paper_agent/pyproject.toml`：Paper Agent 独立 `uv` 项目入口
 - `scripts/build-python.sh`：Python sidecar 打包脚本（PyInstaller onedir 模式）
 - `scripts/prepare-redis.sh`：嵌入式 Redis 二进制准备脚本
 - `server/main.spec`：PyInstaller spec（onedir 模式，含完整依赖配置）
@@ -25,6 +26,7 @@ pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
 ├── logs/                   # 固定端口脚本输出日志
 ├── server/                 # Python sidecar
+│   ├── paper_agent/         # 生成论文运行时、模板、校验器与测试
 │   ├── tests/              # 后端单元测试（pytest，路由 / 权限 / 任务 / 存储 / AI 回归）
 │   │   ├── conftest.py     # fixtures（auth mock、app factory、load_dotenv）
 │   │   ├── helpers.py      # 测试工具函数
@@ -91,12 +93,14 @@ pathlab-client/
 - Preprocessing 负责 WSI 信息、图像、缩略图、DZI、瓦片与部分热图辅助逻辑
 - AI 服务负责训练、推理与模型相关内部能力
 - TaskWorker 负责消费 Redis 任务描述符、持有 GPU 队列、执行长任务并发布运行时快照
+- Paper Agent 负责 `/papers` 论文生成流程，包含来源任务采集、大纲、章节、图表、引用、校验、PDF 渲染与导出
 - PostgreSQL + Redis + `uploads/` 共同组成运行时状态层
 
 ## 当前已确认的实现事实
 
 - Gateway 顶层 router 由 `server/gateway/app_setup.py` 统一注册；`server/gateway/routes/` 下的部分模块作为分析 / 聊天 / 存储 / 训练辅助模块被复用，不一定单独挂载
-- 数据库当前可见 ORM 表为 21 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`
+- `/papers` 由 `server/gateway/paper_generation/` 桥接到 `server/paper_agent/`，Paper Agent 实现本身不放在 Gateway routes 目录
+- 数据库当前可见 ORM 表为 22 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`，论文生成记录表为 `paper_generation_runs`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
 - `server/backend/` 当前已收敛为 `ai / annotation / auth / common / database / preprocessing / storage` 七组共享模块
 
@@ -131,12 +135,22 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 
 后端测试覆盖配置、认证、权限闭包、任务 taxonomy、Gateway 装配、存储迁移 / 扫描、结果读取、分析、GPU 队列与 AI 模型路径。当前测试文件以 `server/tests/test_*.py` 为准；预训练模型测试单独运行，避免默认 CI 拉取大模型。详细说明见 [server/README.md](server/README.md)。
 
+### Paper Agent 测试
+
+Paper Agent 是独立 `uv` 项目，测试从自身目录运行：
+
+```bash
+cd server/paper_agent
+uv run pytest
+```
+
 ## 推荐阅读顺序
 
 1. [server/README.md](server/README.md)
 2. [server/permissions/README.md](server/permissions/README.md)
 3. [server/gateway/README.md](server/gateway/README.md)
-4. [server/backend/database/README.md](server/backend/database/README.md)
-5. [src/renderer/README.md](src/renderer/README.md)
-6. [deploy/README.md](deploy/README.md)
-7. [test/README.md](test/README.md)
+4. [server/paper_agent/README.md](server/paper_agent/README.md)
+5. [server/backend/database/README.md](server/backend/database/README.md)
+6. [src/renderer/README.md](src/renderer/README.md)
+7. [deploy/README.md](deploy/README.md)
+8. [test/README.md](test/README.md)

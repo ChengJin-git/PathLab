@@ -1,40 +1,48 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react'
 import { deletePaperRun } from '../../api/papers'
+import { cn } from '../../lib/utils'
 import { Button } from '../ui/button'
 import { ModalShell } from '../ui/modal-shell'
 
 interface DeleteRunButtonProps {
   paperId: string
   onDeleted: () => void
+  className?: string
 }
 
-export function DeleteRunButton({ paperId, onDeleted }: DeleteRunButtonProps) {
+export function DeleteRunButton({ paperId, onDeleted, className }: DeleteRunButtonProps) {
+  const { t } = useTranslation()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const qc = useQueryClient()
   const deleteMutation = useMutation({
     mutationFn: () => deletePaperRun(paperId),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['paper-runs'] })
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['paper-runs'] }),
+        qc.invalidateQueries({ queryKey: ['related-paper-runs'] }),
+        qc.invalidateQueries({ queryKey: ['paper-source-task-limits'] }),
+      ])
       onDeleted()
     },
   })
 
   return (
     <>
-      <Button variant="destructive" size="sm" className="gap-2" onClick={() => setConfirmOpen(true)}>
+      <Button variant="destructive" size="sm" className={cn('gap-2', className)} onClick={() => setConfirmOpen(true)}>
         <Trash2 className="h-4 w-4" />
-        Delete
+        {t('paperAgent.common.delete')}
       </Button>
-      <ModalShell isOpen={confirmOpen} onClose={() => setConfirmOpen(false)} title="Delete paper run">
+      <ModalShell isOpen={confirmOpen} onClose={() => setConfirmOpen(false)} title={t('paperAgent.delete.title')}>
         <div className="space-y-4 p-5">
           <div className="flex items-start gap-2 text-sm text-red-800">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              <h3 className="text-base font-semibold text-slate-950">Delete this paper run?</h3>
+              <h3 className="text-base font-semibold text-slate-950">{t('paperAgent.delete.heading')}</h3>
               <p className="mt-1 text-sm leading-6 text-slate-500">
-                This action cannot be undone from the frontend. Run ID: {paperId}
+                {t('paperAgent.delete.description')}
               </p>
             </div>
           </div>
@@ -45,11 +53,11 @@ export function DeleteRunButton({ paperId, onDeleted }: DeleteRunButtonProps) {
           ) : null}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setConfirmOpen(false)}>
-              Keep run
+              {t('paperAgent.delete.keep')}
             </Button>
             <Button variant="destructive" className="gap-2" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>
               {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-              Delete
+              {t('paperAgent.common.delete')}
             </Button>
           </div>
         </div>

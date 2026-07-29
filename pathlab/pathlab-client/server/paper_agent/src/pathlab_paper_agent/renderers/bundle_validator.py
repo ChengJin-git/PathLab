@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from .latex_compiler import docker_available
+from .latex_compiler import docker_image_available, host_latexmk_available
 
 _STALE_COMPILE_OUTPUTS = (
     "main.aux",
@@ -52,21 +52,23 @@ def validate_bundle(
             downloadable=False,
             summary=f"Bundle is missing: {bundle_path}",
         )
-    if not docker_available():
-        return BundleValidationResult(
-            status="skipped",
-            returncode=None,
-            downloadable=False,
-            summary="Docker is not available; bundle latexmk dry-run was skipped.",
-        )
-
     with TemporaryDirectory(prefix="pathlab_bundle_validate_") as tmp:
         extract_dir = Path(tmp) / "bundle"
         extract_dir.mkdir(parents=True, exist_ok=True)
         try:
             _safe_extract(bundle_path, extract_dir)
             _remove_stale_compile_outputs(extract_dir)
-            proc = _run_latexmk(extract_dir, image=image, timeout_seconds=timeout_seconds)
+            if docker_image_available(image):
+                proc = _run_latexmk_in_docker(extract_dir, image=image, timeout_seconds=timeout_seconds)
+            elif host_latexmk_available():
+                proc = _run_latexmk_on_host(extract_dir, timeout_seconds=timeout_seconds)
+            else:
+                return BundleValidationResult(
+                    status="skipped",
+                    returncode=None,
+                    downloadable=False,
+                    summary="No LaTeX compiler is available; bundle latexmk dry-run was skipped.",
+                )
         except (OSError, ValueError, zipfile.BadZipFile) as exc:
             return BundleValidationResult(
                 status="failed",
@@ -98,7 +100,7 @@ def validate_bundle(
         )
 
 
-def _run_latexmk(
+def _run_latexmk_in_docker(
     extract_dir: Path,
     *,
     image: str,
@@ -122,6 +124,23 @@ def _run_latexmk(
     ]
     return subprocess.run(
         cmd,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=timeout_seconds,
+    )
+
+
+def _run_latexmk_on_host(
+    extract_dir: Path,
+    *,
+    timeout_seconds: int,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["latexmk", "-pdf", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+        cwd=extract_dir,
         check=False,
         text=True,
         encoding="utf-8",

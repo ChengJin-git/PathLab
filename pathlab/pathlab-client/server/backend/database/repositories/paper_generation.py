@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import Text, cast, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import PaperGenerationRun, utc_now
@@ -38,6 +38,7 @@ class PaperGenerationRunRepository(BaseRepository[PaperGenerationRun]):
         *,
         limit: int = 50,
         offset: int = 0,
+        source_task_id: Optional[str] = None,
     ) -> tuple[list[PaperGenerationRun], int]:
         """List paper runs visible to `user_id`.
 
@@ -49,6 +50,14 @@ class PaperGenerationRunRepository(BaseRepository[PaperGenerationRun]):
         if user_id is not None:
             base_query = base_query.where(PaperGenerationRun.user_id == user_id)
             count_query = count_query.where(PaperGenerationRun.user_id == user_id)
+
+        if source_task_id:
+            task_filter = cast(PaperGenerationRun.source_task_ids, Text).contains(
+                f'"{source_task_id}"',
+                autoescape=True,
+            )
+            base_query = base_query.where(task_filter)
+            count_query = count_query.where(task_filter)
 
         base_query = (
             base_query.order_by(PaperGenerationRun.created_at.desc())

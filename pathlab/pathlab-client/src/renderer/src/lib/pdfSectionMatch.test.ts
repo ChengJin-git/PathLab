@@ -73,6 +73,30 @@ describe('pdfSectionMatch', () => {
     expect(match?.ambiguous).toBe(false)
   })
 
+  it('matches PDF extraction with missing spaces and line-break hyphenation', () => {
+    const match = pdfMatchSection(
+      `Thispapermakesthreecautiouscontributions.First,itreportsaPHI-scrubbed
+colorectal pathology patch-classification experiment with explicit dataset, split,
+label, and validation artifacts. Second, it evaluates a constrained ResNet-50
+feature-extraction pipeline with a linear classification component for the locked
+benign and tumor classes. Third, it enforces evidence-bounded reporting: quan-
+titative results are rendered only through approved metric placeholders and ta-
+bles, and the absence of external validation is stated explicitly.`,
+      [
+        {
+          section_name: 'introduction',
+          text: `This paper makes three cautious contributions. First, it reports a PHI-scrubbed colorectal pathology patch-classification experiment with explicit dataset, split, label, and validation artifacts. Second, it evaluates a constrained ResNet-50 feature-extraction pipeline with a linear classification component for the locked benign and tumor classes. Third, it enforces evidence-bounded reporting: quantitative results are rendered only through approved metric placeholders and tables, and the absence of external validation is stated explicitly.`,
+        },
+        {
+          section_name: 'methods',
+          text: 'The model and training protocol are described here.',
+        },
+      ],
+    )
+    expect(match?.section_name).toBe('introduction')
+    expect(match?.confidence).toBeGreaterThan(0.9)
+  })
+
   it('rejects very short selections', () => {
     expect(pdfMatchSection('short text', sections)).toBeNull()
   })

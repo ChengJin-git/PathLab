@@ -5,9 +5,10 @@
 import type { TrainingTaskDetail } from '../../api/training'
 import type { UploadSplitsResponse } from '../../api/wsi'
 import type { TaskType as CanonicalTrainingTaskType } from '../../constants/training'
+import type { PaperRunStage, PaperRunStatus } from '../../api/papers'
 
 // Task types - includes server-side training tasks and storage tasks
-export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'batch_inference' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'metadata_upload' | 'extraction'
+export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'batch_inference' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'metadata_upload' | 'extraction' | 'paper_generation'
 export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 
 // Storage task type from backend
@@ -45,6 +46,11 @@ export interface BackgroundTask {
   isServerTask?: boolean
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
   taskName?: string  // Task name for training tasks
+  // For Paper Agent tasks
+  paperId?: string
+  paperTitle?: string | null
+  paperStatus?: PaperRunStatus
+  paperStage?: PaperRunStage
   datasetName?: string  // Dataset name for delete_dataset / batch_import storage tasks
   dataLevel?: 'wsi' | 'patch' // For progress calculation
   // For analysis tasks
@@ -119,6 +125,7 @@ export interface BackgroundTaskContextType {
   addDeleteTrainingTask: (taskIds: string[], mode: 'standard' | 'complete') => Promise<string>
 
   addExtractionTask: (taskId: string, datasetName: string) => string
+  addPaperGenerationTask: (paperId: string, paperTitle?: string | null) => string
   addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
   addMetadataUploadTask: (config: MetadataUploadTaskConfig) => string
   cancelTask: (taskId: string) => void

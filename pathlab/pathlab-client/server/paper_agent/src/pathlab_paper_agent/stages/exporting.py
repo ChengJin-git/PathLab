@@ -8,8 +8,7 @@ from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 from ..renderers.bundle_validator import BundleValidationResult, validate_bundle
 from ..renderers.latex_compiler import (
     CompileResult,
-    compile_with_docker,
-    docker_available,
+    compile_latex,
     write_compile_summary,
 )
 from ..renderers.zip_exporter import BundleExportResult, export_bundle
@@ -20,16 +19,8 @@ _M12A_WARNING_HEADER = "## M12a Export Hardening"
 
 def _compile_final_pdf(paths: PaperRunPaths, template_id: str) -> CompileResult:
     final_dir = paths.final_for_template(template_id)
-    if not docker_available():
-        summary = write_compile_summary(
-            final_dir,
-            status="skipped",
-            returncode=None,
-            stderr="Docker is not available; final PDF compile was skipped.",
-        )
-        return CompileResult("skipped", None, None, summary)
     try:
-        return compile_with_docker(paths.root, template_id)
+        return compile_latex(paths.root, template_id)
     except Exception as exc:  # pragma: no cover - exercised by Docker/runtime failures.
         summary = write_compile_summary(
             final_dir,

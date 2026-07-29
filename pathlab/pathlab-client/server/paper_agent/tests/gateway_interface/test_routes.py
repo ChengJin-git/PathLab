@@ -8,8 +8,20 @@ import json
 import pytest
 
 from backend.database.repositories.paper_generation import PaperGenerationRunRepository
-from pathlab_paper_agent.schemas import PaperRunStage, PaperRunStatus
+from pathlab_paper_agent.schemas import PaperPauseResponse, PaperRunStage, PaperRunStatus
 from pathlab_paper_agent.storage import PaperRunPaths
+
+
+def test_paper_generation_router_imports_with_pause_route() -> None:
+    from gateway.paper_generation.routes import router as paper_router
+
+    pause_routes = [
+        route
+        for route in paper_router.routes
+        if getattr(route, "path", None) == "/papers/{paper_id}/pause"
+    ]
+    assert len(pause_routes) == 1
+    assert getattr(pause_routes[0], "response_model", None) is PaperPauseResponse
 
 
 def _valid_outline() -> dict:
@@ -372,6 +384,13 @@ def test_get_paper_returns_validation_summary_from_reports(client) -> None:
                         "message": "Rounded value detected.",
                         "severity": "warning",
                     },
+                    {
+                        "code": "internal_detector_rule",
+                        "message": "Internal detector details should not reach the API.",
+                        "severity": "error",
+                        "path": "drafts/private/raw_metric_context.json",
+                        "context": "raw internal context",
+                    },
                 ],
                 "metadata": {},
             }
@@ -420,10 +439,22 @@ def test_get_paper_returns_validation_summary_from_reports(client) -> None:
     assert summary["refinement"]["accepted_iterations"] == [1]
     by_guard = {item["guard"]: item for item in summary["m10_guards"]}
     assert by_guard["metric_guard"]["status"] == "fail"
-    assert by_guard["metric_guard"]["issue_count"] == 2
-    assert by_guard["metric_guard"]["error_count"] == 1
+    assert by_guard["metric_guard"]["issue_count"] == 3
+    assert by_guard["metric_guard"]["error_count"] == 2
     assert by_guard["metric_guard"]["warning_count"] == 1
-    assert by_guard["metric_guard"]["sample_issues"][0]["code"] == "raw_metric"
+    assert by_guard["metric_guard"].get("path") is None
+    issue = by_guard["metric_guard"]["sample_issues"][0]
+    assert issue["code"] == "metric_format_review"
+    assert issue["message"] == "A reported metric needs reader-ready wording instead of raw locked values."
+    assert issue["location"] == "Results"
+    assert issue.get("path") is None
+    assert issue.get("context") is None
+    fallback_issue = by_guard["metric_guard"]["sample_issues"][2]
+    assert fallback_issue["code"] == "metric_review"
+    assert fallback_issue["message"] == "A reported metric needs review before export."
+    assert fallback_issue.get("location") is None
+    assert fallback_issue.get("path") is None
+    assert fallback_issue.get("context") is None
     assert by_guard["citation_guard"]["status"] == "pass"
 
 
@@ -627,6 +658,95 @@ def test_post_regenerate_section_official_route_returns_summary(
         "regenerated_sections": ["results"],
         "refinement_log_summary": {"final_status": "accepted"},
     }
+
+
+@pytest.mark.asyncio
+async def test_post_stage_rerun_sets_running_and_enqueues_stage(client, db_session, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+
+    create = client.post(
+        "/papers",
+        json={"title": "Rerun stage", "source_tasks": [{"task_id": "tsk_x"}], "selected_templates": ["miccai"]},
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    _register_public_section(paths, "results", "\\section{Results}\nEdited.\n")
+    await PaperGenerationRunRepository.update(
+        db_session,
+        paper_id,
+        status=PaperRunStatus.completed.value,
+        current_stage=PaperRunStage.completed.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db_session.commit()
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    manifest["status"] = PaperRunStatus.completed.value
+    manifest["current_stage"] = PaperRunStage.completed.value
+    paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    enqueued: list[tuple[str, str]] = []
+
+    async def _capture_enqueue(paper_id_arg: str, stage: PaperRunStage):
+        enqueued.append((paper_id_arg, stage.value))
+        return {"paper_id": paper_id_arg, "stage": stage.value}
+
+    monkeypatch.setattr(api_routes, "_enqueue_paper_stage_rerun", _capture_enqueue)
+
+    response = client.post(
+        f"/papers/{paper_id}/stages/section_writing:rerun",
+        json={"continue_downstream": True, "include_previous_successful_output": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "running"
+    assert response.json()["current_stage"] == "section_writing"
+    assert enqueued == [(paper_id, "section_writing")]
+    detail = client.get(f"/papers/{paper_id}").json()
+    assert detail["status"] == "running"
+    assert detail["current_stage"] == "section_writing"
+    assert detail["stage_log"][-1]["status"] == "rerun_queued"
+
+
+@pytest.mark.asyncio
+async def test_post_retry_uses_latest_failed_stage(client, db_session, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+
+    create = client.post(
+        "/papers",
+        json={"title": "Retry failed", "source_tasks": [{"task_id": "tsk_x"}], "selected_templates": ["miccai"]},
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    await PaperGenerationRunRepository.update(
+        db_session,
+        paper_id,
+        status=PaperRunStatus.failed.value,
+        current_stage=PaperRunStage.rendering.value,
+        error_message="render failed",
+        finished_at=None,
+    )
+    await db_session.commit()
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    manifest["status"] = PaperRunStatus.failed.value
+    manifest["current_stage"] = PaperRunStage.rendering.value
+    manifest["error_message"] = "render failed"
+    manifest["stage_log"].append({"stage": "rendering", "status": "failed", "ts": "2026-01-01T00:00:00Z"})
+    paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    enqueued: list[tuple[str, str]] = []
+
+    async def _capture_enqueue(paper_id_arg: str, stage: PaperRunStage):
+        enqueued.append((paper_id_arg, stage.value))
+        return {"paper_id": paper_id_arg, "stage": stage.value}
+
+    monkeypatch.setattr(api_routes, "_enqueue_paper_stage_rerun", _capture_enqueue)
+
+    response = client.post(f"/papers/{paper_id}/retry", json={})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["current_stage"] == "rendering"
+    assert enqueued == [(paper_id, "rendering")]
 
 
 def test_post_regenerate_async_returns_202_and_manifest_job(client, monkeypatch) -> None:
@@ -840,6 +960,32 @@ def test_get_files_blocks_unregistered_allowlisted_file(client) -> None:
     )
 
     assert response.status_code == 403
+
+
+def test_get_paper_diagnostics_reports_missing_registered_artifact(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    manifest["status"] = PaperRunStatus.running.value
+    manifest["current_stage"] = PaperRunStage.collecting.value
+    manifest["stage_log"].append({"stage": "collecting", "status": "completed", "ts": "2026-01-01T00:00:00Z"})
+    manifest["artifact_index"]["inputs/source_tasks.json"] = {"status": "ready", "visibility": "private_backend_only", "downloadable": False}
+    paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+    response = client.get(f"/papers/{paper_id}/diagnostics")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["paper_id"] == paper_id
+    assert payload["missing_artifact_count"] >= 1
+    assert any(issue["code"] == "missing_artifact" for issue in payload["artifact_issues"])
 
 
 def test_get_files_blocks_private_manifest_entry_under_allowed_prefix(client) -> None:

@@ -39,7 +39,7 @@ from pathlab_paper_agent.bootstrap import ensure_server_on_path
 
 ensure_server_on_path()
 
-from backend.auth import current_active_user, User  # noqa: E402
+from backend.auth import current_active_user, get_user_from_header_or_param, User  # noqa: E402
 from backend.database import get_db  # noqa: E402
 from backend.database.repositories import PaperGenerationRunRepository  # noqa: E402
 
@@ -55,12 +55,15 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     OutlineApprovalRequest,
     PaperConfig,
     PaperManifest,
+    PaperPauseResponse,
+    PaperRunDiagnostics,
     PaperRunArtifact,
     PaperRunCreateResponse,
     PaperRunDetail,
     PaperRunListResponse,
     PaperRunStage,
     PaperRunStatus,
+    PaperStageRerunRequest,
     PaperRunSummary,
     PaperSectionRegenerateAcceptedResponse,
     PaperSection,
@@ -72,7 +75,6 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     RegenerateRejectRequest,
     RegenerateRejectResponse,
     RegenerateSectionRequest,
-    GuardIssueSummary,
     GuardResultSummary,
     RefinementSummary,
     ValidationSummary,
@@ -101,9 +103,13 @@ from pathlab_paper_agent.regenerate import (  # noqa: E402
     reject_regenerate,
     regenerate_section,
 )
+from pathlab_paper_agent.guard_summary import build_guard_result_summary  # noqa: E402
 from pathlab_paper_agent.process_logging import append_pipeline_event  # noqa: E402
+from pathlab_paper_agent.diagnostics import inspect_paper_run  # noqa: E402
+from pathlab_paper_agent.outline_markdown import outline_to_markdown  # noqa: E402
 from pathlab_paper_agent.validators.identifier_guard import scan_text  # noqa: E402
 from pathlab_paper_agent.scaffold import initialize_paper_run  # noqa: E402
+from pathlab_paper_agent.pipeline import request_pause  # noqa: E402
 from pathlab_paper_agent.storage import (  # noqa: E402
     PaperRunPaths,
     is_path_allowed_for_download,
@@ -136,11 +142,45 @@ _VALIDATION_GUARD_REPORT_PATHS = {
 _VALIDATION_WARNINGS_PATH = "validation/warnings.md"
 _REFINEMENT_LOG_PATH = "validation/refinement_log.json"
 _MAX_SAMPLE_ISSUES = 3
+_MAX_PAPERS_PER_SOURCE_TASK = 20
 _RUN_UNTIL_OUTLINE_HANDLER = "paper_generation.run_until_outline"
 _RUN_AFTER_OUTLINE_HANDLER = "paper_generation.run_after_outline"
 _RENDER_EXPORT_HANDLER = "paper_generation.render_export"
+_RERUN_FROM_STAGE_HANDLER = "paper_generation.rerun_from_stage"
 _SECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,80}$")
 _SECTION_EDIT_STALE_PREFIXES = ("final/", "exports/", "validation/")
+_EXECUTABLE_RERUN_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+    PaperRunStage.section_writing,
+    PaperRunStage.validating,
+    PaperRunStage.refining,
+    PaperRunStage.rendering,
+    PaperRunStage.exporting,
+}
+_OUTLINE_RERUN_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+}
+_SECTION_OVERWRITE_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+    PaperRunStage.section_writing,
+}
+_CITATION_OVERWRITE_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +201,7 @@ def _row_to_summary(row, manifest: Optional[PaperManifest] = None) -> PaperRunSu
     )
     use_manifest_state = manifest is not None and not (
         row_status
-        in {PaperRunStatus.completed, PaperRunStatus.failed, PaperRunStatus.cancelled}
+        in {PaperRunStatus.completed, PaperRunStatus.failed, PaperRunStatus.cancelled, PaperRunStatus.paused}
         and manifest.status == PaperRunStatus.running
     ) and not (
         row_status == PaperRunStatus.running and manifest_is_initial
@@ -212,6 +252,22 @@ def _load_manifest(paths: PaperRunPaths) -> Optional[PaperManifest]:
         return None
 
 
+def _load_config(paths: PaperRunPaths) -> Optional[PaperConfig]:
+    if not paths.config.exists():
+        return None
+    try:
+        return PaperConfig.model_validate(
+            json.loads(paths.config.read_text(encoding="utf-8"))
+        )
+    except Exception as exc:
+        logger.warning(
+            "paper_generation: failed to parse config for %s: %s",
+            paths.paper_id,
+            exc,
+        )
+        return None
+
+
 def _save_manifest(paths: PaperRunPaths, manifest: PaperManifest) -> None:
     manifest.updated_at = datetime.now(UTC)
     paths.manifest.write_text(
@@ -251,6 +307,19 @@ async def _enqueue_paper_generation_job(paper_id: str, handler: str):
         job_kind="paper_generation",
         handler=handler,
         payload={"paper_id": paper_id},
+    )
+    await enqueue_task_descriptor(descriptor)
+    return descriptor
+
+
+async def _enqueue_paper_stage_rerun(paper_id: str, stage: PaperRunStage):
+    from gateway.task_dispatch import build_task_descriptor, enqueue_task_descriptor
+
+    descriptor = build_task_descriptor(
+        job_id=paper_id,
+        job_kind="paper_generation",
+        handler=_RERUN_FROM_STAGE_HANDLER,
+        payload={"paper_id": paper_id, "stage": stage.value},
     )
     await enqueue_task_descriptor(descriptor)
     return descriptor
@@ -478,6 +547,10 @@ def _error_response(status_code: int, code: str, message: str, **extra: object) 
     return JSONResponse(status_code=status_code, content=payload)
 
 
+def _http_error(status_code: int, code: str, message: str, **extra: object) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message, **extra})
+
+
 def _candidate_metadata_text(candidate: CitationCandidate) -> str:
     return "\n".join([candidate.title, *candidate.authors])
 
@@ -502,6 +575,173 @@ def _append_required_key(paths: PaperRunPaths, key: str) -> None:
     extensions["outline_modified_by_user"] = True
     outline["pathlab_extensions"] = extensions
     _atomic_write_json(paths.outline_json, outline)
+    _atomic_write_text(paths.outline_markdown, outline_to_markdown(outline))
+
+
+def _write_outline_artifacts(paths: PaperRunPaths, manifest: PaperManifest, outline: dict[str, object]) -> None:
+    _atomic_write_json(paths.outline_json, outline)
+    _atomic_write_text(paths.outline_markdown, outline_to_markdown(outline))
+    manifest.artifact_index["drafts/outline.json"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "Outline",
+        "content_type": "application/json",
+    }
+
+
+def _outline_payload_changed(paths: PaperRunPaths, outline: dict[str, object]) -> bool:
+    if not paths.outline_json.is_file():
+        return True
+    try:
+        current = json.loads(paths.outline_json.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return True
+    return json.dumps(current, sort_keys=True, ensure_ascii=False) != json.dumps(outline, sort_keys=True, ensure_ascii=False)
+
+
+def _mark_outline_modified_by_user(outline: dict[str, object]) -> None:
+    extensions = outline.get("pathlab_extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+    extensions["outline_modified_by_user"] = True
+    outline["pathlab_extensions"] = extensions
+
+
+def _append_outline_edit_stage_log(manifest: PaperManifest, *, approved: bool) -> None:
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.outlining.value,
+            "status": "user_edited",
+            "ts": now,
+            "started_at": now,
+            "finished_at": now,
+            "duration_ms": 0,
+            "message": "User edited outline and approved it." if approved else "User edited outline.",
+        }
+    )
+    manifest.artifact_index["drafts/大纲.md"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "大纲",
+        "content_type": "text/markdown",
+    }
+
+
+_CITE_COMMAND_RE = re.compile(r"(\\cite[a-zA-Z*]*(?:\[[^\]]*\])*)\{([^{}]+)\}")
+_BARE_CITATION_KEY_RE = re.compile(r"[A-Z][A-Za-z0-9:-]*\d{4}_[A-Za-z0-9_:-]+")
+
+
+def _cleanup_citation_spacing(text: str) -> str:
+    text = re.sub(r"[（(]\s*[）)]", "", text)
+    text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)
+    text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", text)
+    return text
+
+
+def _remove_citation_key_from_text(text: str, key: str) -> str:
+    changed = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        prefix = match.group(1)
+        raw_keys = [part.strip() for part in match.group(2).split(",") if part.strip()]
+        if key not in raw_keys:
+            return match.group(0)
+        changed = True
+        remaining = [part for part in raw_keys if part != key]
+        return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
+
+    next_text = _CITE_COMMAND_RE.sub(repl, text)
+    if key in next_text:
+        changed = True
+        next_text = next_text.replace(key, "")
+    if not changed:
+        return text
+    return _cleanup_citation_spacing(next_text)
+
+
+def _prune_unselected_citation_keys_from_text(text: str, selected_keys: set[str]) -> str:
+    changed = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        prefix = match.group(1)
+        raw_keys = [part.strip() for part in match.group(2).split(",") if part.strip()]
+        if not raw_keys:
+            return match.group(0)
+        remaining = [part for part in raw_keys if part in selected_keys]
+        if len(remaining) == len(raw_keys):
+            return match.group(0)
+        changed = True
+        return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
+
+    next_text = _CITE_COMMAND_RE.sub(repl, text)
+
+    def bare_repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        key = match.group(0)
+        if key in selected_keys:
+            return key
+        changed = True
+        return ""
+
+    next_text = _BARE_CITATION_KEY_RE.sub(bare_repl, next_text)
+    if not changed:
+        return text
+    return _cleanup_citation_spacing(next_text)
+
+
+def _remove_citation_key_from_sections(paths: PaperRunPaths, key: str) -> list[str]:
+    if not paths.sections_dir.is_dir():
+        return []
+    changed_sections: list[str] = []
+    for path in sorted(paths.sections_dir.glob("*.tex")):
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8")
+        updated = _remove_citation_key_from_text(current, key)
+        if updated == current:
+            continue
+        _atomic_write_text(path, updated)
+        changed_sections.append(path.relative_to(paths.root).as_posix())
+    return changed_sections
+
+
+def _sync_section_citations_to_selected_refs(
+    paths: PaperRunPaths,
+    selected_refs: list[CitationReferenceModel] | None = None,
+) -> list[str]:
+    if not (paths.citations_dir / "selected_refs.json").exists() or not paths.sections_dir.is_dir():
+        return []
+    refs = selected_refs if selected_refs is not None else _load_selected_refs(paths)
+    selected_keys = {ref.key for ref in refs}
+    changed_sections: list[str] = []
+    for path in sorted(paths.sections_dir.glob("*.tex")):
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8")
+        updated = _prune_unselected_citation_keys_from_text(current, selected_keys)
+        if updated == current:
+            continue
+        _atomic_write_text(path, updated)
+        changed_sections.append(path.relative_to(paths.root).as_posix())
+    return changed_sections
+
+
+def _mark_citation_section_sync_stale(paths: PaperRunPaths, changed_sections: list[str]) -> list[str]:
+    if not changed_sections:
+        return []
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        return []
+    for rel_path in changed_sections:
+        _register_edited_section(manifest, Path(rel_path).stem, rel_path)
+    stale_artifacts = _mark_downstream_artifacts_stale(manifest)
+    _save_manifest(paths, manifest)
+    return stale_artifacts
 
 
 def _append_citation_stage_log(paths: PaperRunPaths, *, status: str, message: str) -> None:
@@ -523,34 +763,100 @@ def _append_citation_stage_log(paths: PaperRunPaths, *, status: str, message: st
     _save_manifest(paths, manifest)
 
 
+def _coerce_rerun_stage(stage: str, manifest: PaperManifest | None = None) -> PaperRunStage:
+    if stage == PaperRunStage.failed.value and manifest is not None:
+        resolved = _latest_failed_stage(manifest)
+        if resolved is not None:
+            return resolved
+    if stage == PaperRunStage.created.value:
+        return PaperRunStage.collecting
+    try:
+        stage_enum = PaperRunStage(stage)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"unknown paper stage {stage!r}") from exc
+    if stage_enum not in _EXECUTABLE_RERUN_STAGES:
+        raise HTTPException(status_code=422, detail=f"stage {stage_enum.value} cannot be rerun")
+    return stage_enum
+
+
+def _latest_failed_stage(manifest: PaperManifest) -> PaperRunStage | None:
+    for entry in reversed(manifest.stage_log):
+        if str(entry.get("status")) != "failed":
+            continue
+        try:
+            stage = PaperRunStage(str(entry.get("stage")))
+        except ValueError:
+            continue
+        if stage in _EXECUTABLE_RERUN_STAGES:
+            return stage
+    return manifest.current_stage if manifest.current_stage in _EXECUTABLE_RERUN_STAGES else None
+
+
+def _has_user_section_edits(manifest: PaperManifest) -> bool:
+    return any(
+        entry.get("stage") == PaperRunStage.section_writing.value
+        and str(entry.get("status")) == "user_edited"
+        for entry in manifest.stage_log
+    )
+
+
+def _has_user_citation_edits(manifest: PaperManifest) -> bool:
+    return any(
+        entry.get("stage") == PaperRunStage.literature_review.value
+        and str(entry.get("status")) in {"user_added", "user_removed"}
+        for entry in manifest.stage_log
+    )
+
+
+def _validate_rerun_request(stage: PaperRunStage, manifest: PaperManifest, body: PaperStageRerunRequest) -> JSONResponse | None:
+    if not body.continue_downstream:
+        return _error_response(422, "downstream_required", "Paper stage reruns must continue through downstream stages.")
+    if not body.include_previous_successful_output:
+        return _error_response(422, "history_required", "Paper stage reruns always load previous successful upstream history.")
+    if stage in _OUTLINE_RERUN_STAGES and not body.confirm_regenerate_outline:
+        return _error_response(409, "confirm_regenerate_outline", "Rerunning this stage regenerates the outline.")
+    if stage in _SECTION_OVERWRITE_STAGES and _has_user_section_edits(manifest) and not body.confirm_overwrite_sections:
+        return _error_response(409, "confirm_overwrite_sections", "Rerunning this stage may overwrite edited manuscript sections.")
+    if stage in _CITATION_OVERWRITE_STAGES and _has_user_citation_edits(manifest) and not body.confirm_overwrite_citations:
+        return _error_response(409, "confirm_overwrite_citations", "Rerunning this stage may overwrite user-edited citations.")
+    return None
+
+
+def _append_rerun_queued(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    *,
+    stage: PaperRunStage,
+    message: str,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": stage.value,
+            "status": "rerun_queued",
+            "ts": now,
+            "started_at": now,
+            "finished_at": None,
+            "duration_ms": None,
+            "message": message,
+        }
+    )
+    append_pipeline_event(
+        paths,
+        manifest,
+        "rerun_queued",
+        stage=stage.value,
+        status="queued",
+        started_at=now,
+        message=message,
+    )
+
+
 def _guard_result_summary(paths: PaperRunPaths, guard: str, rel_path: str) -> GuardResultSummary | None:
     report = _load_json_file(paths.root / rel_path)
     if not report:
         return None
-    raw_issues = report.get("issues") if isinstance(report.get("issues"), list) else []
-    issues = [issue for issue in raw_issues if isinstance(issue, dict)]
-    error_count = sum(1 for issue in issues if str(issue.get("severity") or "error") == "error")
-    warning_count = sum(1 for issue in issues if str(issue.get("severity") or "") == "warning")
-    sample_issues: list[GuardIssueSummary] = []
-    for issue in issues[:_MAX_SAMPLE_ISSUES]:
-        sample_issues.append(
-            GuardIssueSummary(
-                code=str(issue.get("code") or "unknown"),
-                message=str(issue.get("message") or ""),
-                severity=str(issue.get("severity") or "error"),
-                path=issue.get("path") if isinstance(issue.get("path"), str) else None,
-                context=issue.get("context") if isinstance(issue.get("context"), str) else None,
-            )
-        )
-    return GuardResultSummary(
-        guard=str(report.get("guard") or guard),
-        status=str(report.get("status") or ("fail" if error_count else "pass")),
-        issue_count=len(issues),
-        error_count=error_count,
-        warning_count=warning_count,
-        path=rel_path,
-        sample_issues=sample_issues,
-    )
+    return build_guard_result_summary(report, guard, max_sample_issues=_MAX_SAMPLE_ISSUES)
 
 
 def _score_total(score: object) -> float | None:
@@ -770,6 +1076,31 @@ async def create_paper_run(
             detail="selected_templates must contain exactly one target template.",
         )
 
+    user_filter = None if _is_admin(user) else str(user.id)
+    for source_task in body.source_tasks:
+        _, source_task_paper_count = await PaperGenerationRunRepository.list_for_user(
+            db,
+            user_filter,
+            limit=1,
+            offset=0,
+            source_task_id=source_task.task_id,
+        )
+        if source_task_paper_count >= _MAX_PAPERS_PER_SOURCE_TASK:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "PAPER_LIMIT_EXCEEDED",
+                    "message": (
+                        f"Source task {source_task.task_id} already has "
+                        f"{source_task_paper_count} paper runs. Delete some papers "
+                        "before creating more."
+                    ),
+                    "source_task_id": source_task.task_id,
+                    "current_count": source_task_paper_count,
+                    "limit": _MAX_PAPERS_PER_SOURCE_TASK,
+                },
+            )
+
     paper_id = _new_paper_id()
     config = PaperConfig(
         paper_id=paper_id,
@@ -849,10 +1180,11 @@ async def list_paper_runs(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    source_task_id: Optional[str] = Query(None, min_length=1),
 ) -> PaperRunListResponse:
     user_filter = None if _is_admin(user) else str(user.id)
     rows, total = await PaperGenerationRunRepository.list_for_user(
-        db, user_filter, limit=limit, offset=offset
+        db, user_filter, limit=limit, offset=offset, source_task_id=source_task_id
     )
     items = []
     for row in rows:
@@ -884,13 +1216,26 @@ async def get_paper_run(
     row = await _load_or_404(db, paper_id, user)
     paths = PaperRunPaths.for_paper(paper_id)
     manifest = _load_manifest(paths)
+    config = _load_config(paths)
     summary = _row_to_summary(row, manifest)
     return PaperRunDetail(
         **summary.model_dump(),
+        source_tasks=config.source_tasks if config is not None else [],
         artifacts=_public_artifacts(manifest),
         stage_log=manifest.stage_log if manifest is not None else [],
         validation_summary=_validation_summary(paths),
     )
+
+
+@router.get("/{paper_id}/diagnostics", response_model=PaperRunDiagnostics)
+async def get_paper_run_diagnostics(
+    paper_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> PaperRunDiagnostics:
+    await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    return inspect_paper_run(paths, _load_manifest(paths))
 
 
 # ---------------------------------------------------------------------------
@@ -919,11 +1264,13 @@ async def update_paper_outline(
             detail=f"manifest.json not found for paper {paper_id}",
         )
 
-    paths.outline_json.parent.mkdir(parents=True, exist_ok=True)
-    paths.outline_json.write_text(
-        json.dumps(body.outline.model_dump(mode="json"), indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    outline_payload = body.outline.model_dump(mode="json")
+    outline_changed = _outline_payload_changed(paths, outline_payload)
+    if outline_changed:
+        _mark_outline_modified_by_user(outline_payload)
+    _write_outline_artifacts(paths, manifest, outline_payload)
+    if outline_changed:
+        _append_outline_edit_stage_log(manifest, approved=body.approve)
 
     if not body.approve:
         manifest.status = PaperRunStatus.awaiting_outline_approval
@@ -1030,6 +1377,41 @@ async def update_paper_outline(
     }
 
 
+@router.post("/{paper_id}/pause", response_model=PaperPauseResponse)
+async def pause_paper_run(
+    paper_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> PaperPauseResponse | JSONResponse:
+    row = await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+
+    active_statuses = {PaperRunStatus.pending.value, PaperRunStatus.running.value}
+    active_manifest_statuses = {PaperRunStatus.pending, PaperRunStatus.running}
+    if row.status not in active_statuses and manifest.status not in active_manifest_statuses:
+        return _error_response(409, "not_active", f"paper run cannot be paused while status is {row.status}")
+
+    manifest = request_pause(paper_id)
+    await PaperGenerationRunRepository.update(
+        db,
+        paper_id,
+        status=PaperRunStatus.paused.value,
+        current_stage=manifest.current_stage.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db.commit()
+    return PaperPauseResponse(
+        paper_id=paper_id,
+        status=PaperRunStatus.paused,
+        current_stage=manifest.current_stage,
+        message="Pause requested; the pipeline will stop at the next stage boundary.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # POST /papers/{paper_id}/render-export — rerender edited section source
 # ---------------------------------------------------------------------------
@@ -1068,6 +1450,13 @@ async def rerender_paper_export(
         )
     if not paths.sections_dir.is_dir() or not any(paths.sections_dir.glob("*.tex")):
         raise HTTPException(status_code=409, detail="section source has not been generated yet")
+
+    changed_sections = _sync_section_citations_to_selected_refs(paths)
+    _mark_citation_section_sync_stale(paths, changed_sections)
+    if changed_sections:
+        manifest = _load_manifest(paths)
+        if manifest is None:
+            raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
 
     now = datetime.now(UTC)
     manifest.status = PaperRunStatus.running
@@ -1163,6 +1552,155 @@ async def rerender_paper_export(
 
 
 # ---------------------------------------------------------------------------
+# POST /papers/{paper_id}/retry and /stages/{stage}:rerun
+# ---------------------------------------------------------------------------
+
+async def _queue_stage_rerun(
+    *,
+    paper_id: str,
+    stage: PaperRunStage,
+    row,
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    db: AsyncSession,
+    body: PaperStageRerunRequest,
+) -> dict[str, object] | JSONResponse:
+    if row.status in {PaperRunStatus.pending.value, PaperRunStatus.running.value}:
+        return _error_response(409, "run_active", f"stage rerun cannot start while run status is {row.status}")
+    if row.status == PaperRunStatus.awaiting_outline_approval.value and stage not in _OUTLINE_RERUN_STAGES:
+        return _error_response(409, "outline_approval_required", "Approve the outline before rerunning post-outline stages.")
+    validation_error = _validate_rerun_request(stage, manifest, body)
+    if validation_error is not None:
+        return validation_error
+
+    previous_state = {
+        "status": manifest.status,
+        "current_stage": manifest.current_stage,
+        "error_message": manifest.error_message,
+        "finished_at": manifest.finished_at,
+        "stage_log_len": len(manifest.stage_log),
+    }
+    manifest.status = PaperRunStatus.running
+    manifest.current_stage = stage
+    manifest.error_message = None
+    manifest.finished_at = None
+    _append_rerun_queued(
+        paths,
+        manifest,
+        stage=stage,
+        message=f"Rerun from {stage.value} queued with successful upstream history.",
+    )
+    _save_manifest(paths, manifest)
+    await PaperGenerationRunRepository.update(
+        db,
+        paper_id,
+        status=PaperRunStatus.running.value,
+        current_stage=stage.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db.commit()
+
+    try:
+        await _enqueue_paper_stage_rerun(paper_id, stage)
+    except Exception as exc:
+        logger.exception("paper_generation: failed to enqueue rerun for %s from %s", paper_id, stage.value)
+        manifest.status = previous_state["status"]
+        manifest.current_stage = previous_state["current_stage"]
+        manifest.error_message = f"stage rerun enqueue failed: {exc}"
+        manifest.finished_at = previous_state["finished_at"]
+        del manifest.stage_log[int(previous_state["stage_log_len"]):]
+        failed_at = datetime.now(UTC)
+        manifest.stage_log.append(
+            {
+                "stage": stage.value,
+                "status": "failed",
+                "ts": failed_at.isoformat(),
+                "started_at": failed_at.isoformat(),
+                "finished_at": failed_at.isoformat(),
+                "duration_ms": 0,
+                "message": manifest.error_message,
+                "error_message": str(exc),
+            }
+        )
+        _save_manifest(paths, manifest)
+        await PaperGenerationRunRepository.update(
+            db,
+            paper_id,
+            status=previous_state["status"].value,
+            current_stage=previous_state["current_stage"].value,
+            error_message=manifest.error_message,
+            finished_at=previous_state["finished_at"],
+        )
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue paper stage rerun: {exc}") from exc
+
+    return {
+        "paper_id": paper_id,
+        "status": PaperRunStatus.running.value,
+        "current_stage": stage.value,
+        "message": f"Rerun from {stage.value} queued.",
+    }
+
+
+@router.post("/{paper_id}/retry", response_model=None)
+async def retry_failed_paper_stage(
+    paper_id: str,
+    body: PaperStageRerunRequest | None = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    row = await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+    if row.status != PaperRunStatus.failed.value and manifest.status != PaperRunStatus.failed:
+        return _error_response(409, "not_failed", "Only failed paper runs can use retry. Choose a stage rerun instead.")
+    stage = _latest_failed_stage(manifest)
+    if stage is None:
+        return _error_response(409, "failed_stage_unknown", "Could not determine which stage failed.")
+    return await _queue_stage_rerun(
+        paper_id=paper_id,
+        stage=stage,
+        row=row,
+        paths=paths,
+        manifest=manifest,
+        db=db,
+        body=body or PaperStageRerunRequest(
+            confirm_overwrite_sections=True,
+            confirm_overwrite_citations=True,
+            confirm_regenerate_outline=True,
+        ),
+    )
+
+
+@router.post("/{paper_id}/stages/{stage}:rerun", response_model=None)
+async def rerun_paper_stage(
+    paper_id: str,
+    stage: str,
+    body: PaperStageRerunRequest | None = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object] | JSONResponse:
+    row = await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(status_code=500, detail=f"manifest.json not found for paper {paper_id}")
+    stage_enum = _coerce_rerun_stage(stage, manifest)
+    return await _queue_stage_rerun(
+        paper_id=paper_id,
+        stage=stage_enum,
+        row=row,
+        paths=paths,
+        manifest=manifest,
+        db=db,
+        body=body or PaperStageRerunRequest(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # GET /papers/{paper_id}/sections — editable public section text
 # ---------------------------------------------------------------------------
 
@@ -1174,6 +1712,8 @@ async def get_paper_sections(
 ) -> PaperSectionListResponse:
     await _load_or_404(db, paper_id, user)
     paths = PaperRunPaths.for_paper(paper_id)
+    changed_sections = _sync_section_citations_to_selected_refs(paths)
+    _mark_citation_section_sync_stale(paths, changed_sections)
     manifest = _load_manifest(paths)
     return PaperSectionListResponse(sections=_public_sections(paths, manifest))
 
@@ -1232,6 +1772,8 @@ async def get_paper_citations(
     await _load_or_404(db, paper_id, user)
     paths = PaperRunPaths.for_paper(paper_id)
     selected_refs = _load_selected_refs(paths)
+    changed_sections = _sync_section_citations_to_selected_refs(paths, selected_refs)
+    _mark_citation_section_sync_stale(paths, changed_sections)
     outline = _load_json_file(paths.outline_json)
     return CitationsView(
         paper_id=paper_id,
@@ -1326,19 +1868,33 @@ async def delete_paper_citation(
     ref = next((item for item in selected_refs if item.key == key), None)
     if ref is None:
         return _error_response(404, "not_found", f"Citation {key} not found.")
-    if ref.added_by != "user":
-        return _error_response(403, "not_user_added", "Only user-added citations can be deleted.")
     if key in _collect_required_keys(_load_json_file(paths.outline_json)):
         return _error_response(409, "still_required", f"Citation {key} is still required by the outline.")
 
     remaining = [item for item in selected_refs if item.key != key]
     _write_selected_refs(paths, remaining)
+    changed_sections = sorted(
+        {
+            *_remove_citation_key_from_sections(paths, key),
+            *_sync_section_citations_to_selected_refs(paths, remaining),
+        }
+    )
+    stale_artifacts = _mark_citation_section_sync_stale(paths, changed_sections)
     _append_citation_stage_log(
         paths,
-        status="user_removed",
-        message=f"User removed citation {key}",
+        status="citation_removed",
+        message=(
+            f"Removed citation {key}; removed manuscript cite from "
+            f"{len(changed_sections)} section(s); {len(stale_artifacts)} downstream artifact(s) marked stale."
+        ),
     )
-    return CitationDeleteResponse(deleted=True, key=key)
+    return CitationDeleteResponse(
+        deleted=True,
+        key=key,
+        removed_from_sections=changed_sections,
+        downstream_stale=bool(stale_artifacts),
+        stale_artifacts=stale_artifacts,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1546,7 +2102,7 @@ async def delete_paper_run(
 async def download_paper_file_by_query(
     paper_id: str,
     path: str = Query(...),
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db),
 ):
     return await _download_paper_file_impl(paper_id, path, user, db)
@@ -1556,7 +2112,7 @@ async def download_paper_file_by_query(
 async def download_paper_file(
     paper_id: str,
     path: str,
-    user: User = Depends(current_active_user),
+    user: User = Depends(get_user_from_header_or_param),
     db: AsyncSession = Depends(get_db),
 ):
     return await _download_paper_file_impl(paper_id, path, user, db)
@@ -1602,4 +2158,11 @@ async def _download_paper_file_impl(
     if target.is_dir():
         raise HTTPException(status_code=400, detail="Path is a directory.")
 
-    return FileResponse(target)
+    return FileResponse(
+        target,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )

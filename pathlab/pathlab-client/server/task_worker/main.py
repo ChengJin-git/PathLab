@@ -48,6 +48,78 @@ class TaskWorkerRuntime:
         self._heartbeat = heartbeat
         self._cancel_task = cancel_task
         self._get_cancel_message = get_cancel_message
+        self._background_descriptor_tasks: set[asyncio.Task[None]] = set()
+
+    @staticmethod
+    def _should_dispatch_in_background(descriptor: Any, raw_descriptor: str | None) -> bool:
+        if raw_descriptor is None:
+            return False
+        job_kind = getattr(descriptor, "job_kind", "")
+        handler = getattr(descriptor, "handler", "")
+        return job_kind == "paper_generation" or str(handler).startswith("paper_generation.")
+
+    async def _dispatch_and_finalize_descriptor(
+        self,
+        descriptor: Any,
+        raw_descriptor: str | None,
+        *,
+        job_id: str | None,
+        lock_acquired: bool,
+    ) -> None:
+        try:
+            dispatch_fn = self._dispatch if self._dispatch is not None else dispatch_descriptor
+            await dispatch_fn(descriptor)
+            if raw_descriptor is not None:
+                await ack_task_descriptor(raw_descriptor, descriptor=descriptor)
+        except Exception as exc:
+            if job_id is not None:
+                logger.error(f"Failed to process task descriptor {job_id}: {exc}")
+            else:
+                logger.error(f"Failed to process task descriptor: {exc}")
+            if raw_descriptor is not None and isinstance(job_id, str):
+                try:
+                    await fail_task_descriptor(raw_descriptor, descriptor, exc)
+                except Exception as fail_exc:
+                    logger.error(f"Failed to record descriptor failure {job_id}: {fail_exc}")
+        finally:
+            if lock_acquired:
+                try:
+                    await release_job_lock(str(job_id))
+                except Exception as exc:
+                    logger.warning(f"Failed to release job lock {job_id}: {exc}")
+
+    def _dispatch_descriptor_in_background(
+        self,
+        descriptor: Any,
+        raw_descriptor: str,
+        *,
+        job_id: str,
+    ) -> None:
+        task = asyncio.create_task(
+            self._dispatch_and_finalize_descriptor(
+                descriptor,
+                raw_descriptor,
+                job_id=job_id,
+                lock_acquired=True,
+            )
+        )
+        self._background_descriptor_tasks.add(task)
+        task.add_done_callback(self._background_descriptor_tasks.discard)
+        logger.info(
+            "Launched background descriptor %s (%s). Active background descriptors: %s",
+            job_id,
+            getattr(descriptor, "handler", "unknown"),
+            len(self._background_descriptor_tasks),
+        )
+
+    async def cancel_background_descriptor_tasks(self) -> None:
+        if not self._background_descriptor_tasks:
+            return
+        tasks = list(self._background_descriptor_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_descriptor_tasks.clear()
 
     async def run_once(self) -> None:
         try:
@@ -89,27 +161,24 @@ class TaskWorkerRuntime:
                 return
 
         lock_acquired = raw_descriptor is not None and isinstance(job_id, str)
-        try:
-            dispatch_fn = self._dispatch if self._dispatch is not None else dispatch_descriptor
-            await dispatch_fn(descriptor)
-            if raw_descriptor is not None:
-                await ack_task_descriptor(raw_descriptor, descriptor=descriptor)
-        except Exception as exc:
-            if job_id is not None:
-                logger.error(f"Failed to process task descriptor {job_id}: {exc}")
-            else:
-                logger.error(f"Failed to process task descriptor: {exc}")
-            if raw_descriptor is not None and isinstance(job_id, str):
-                try:
-                    await fail_task_descriptor(raw_descriptor, descriptor, exc)
-                except Exception as fail_exc:
-                    logger.error(f"Failed to record descriptor failure {job_id}: {fail_exc}")
-        finally:
-            if lock_acquired:
-                try:
-                    await release_job_lock(str(job_id))
-                except Exception as exc:
-                    logger.warning(f"Failed to release job lock {job_id}: {exc}")
+        if (
+            lock_acquired
+            and isinstance(raw_descriptor, str)
+            and self._should_dispatch_in_background(descriptor, raw_descriptor)
+        ):
+            self._dispatch_descriptor_in_background(
+                descriptor,
+                raw_descriptor,
+                job_id=str(job_id),
+            )
+            return
+
+        await self._dispatch_and_finalize_descriptor(
+            descriptor,
+            raw_descriptor,
+            job_id=str(job_id) if isinstance(job_id, str) else None,
+            lock_acquired=lock_acquired,
+        )
 
     async def heartbeat_once(self) -> None:
         try:
@@ -276,6 +345,9 @@ async def _startup() -> TaskWorkerRuntime:
 
 async def _shutdown(runtime: TaskWorkerRuntime) -> None:
     runtime._shutdown_event.set()
+
+    logger.info("Cancelling background descriptor tasks...")
+    await runtime.cancel_background_descriptor_tasks()
 
     from gateway.task_queue import shutdown_task_queue
 

@@ -5,6 +5,7 @@ Handles training task creation, monitoring, and deletion
 
 import asyncio
 import json
+import shutil
 import uuid
 from typing import Optional, Any, cast
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -20,6 +21,7 @@ from backend.database.repositories import (
     TrainingLogRepository,
     DataGroupRepository,
     DatasetRepository,
+    PaperGenerationRunRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import (
@@ -52,6 +54,11 @@ from gateway.task_dispatch import (
     publish_task_cancellation,
 )
 from backend.ai.task_taxonomy import normalize_task_type
+from gateway.paper_generation._paper_agent_path import ensure_paper_agent_src_on_path
+
+ensure_paper_agent_src_on_path()
+
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
@@ -97,6 +104,76 @@ async def _cleanup_deleted_training_task_files(
         await clear_progress(task_id)
     except Exception as e:
         logger.warning(f"Failed to clear progress for deleted training task {task_id}: {e}")
+
+
+async def _delete_papers_for_training_task(
+    db: AsyncSession,
+    task_id: str,
+    user_id: str | None,
+) -> dict[str, Any]:
+    """Delete paper runs generated from a training task.
+
+    The DB rows are removed in the caller's transaction. The caller schedules
+    artifact directory cleanup after the transaction commits.
+    """
+    paper_ids: list[str] = []
+    original_total = 0
+    while True:
+        rows, total = await PaperGenerationRunRepository.list_for_user(
+            db,
+            user_id,
+            limit=200,
+            offset=0,
+            source_task_id=task_id,
+        )
+        if not paper_ids:
+            original_total = total
+        if not rows:
+            break
+        batch_ids = [str(row.paper_id) for row in rows]
+        paper_ids.extend(batch_ids)
+        for paper_id in batch_ids:
+            await PaperGenerationRunRepository.delete_by_id(db, paper_id)
+
+        if len(rows) < 200:
+            break
+
+    return {
+        "status": "scheduled" if paper_ids else "completed",
+        "mode": "complete",
+        "task_id": task_id,
+        "deleted": len(paper_ids),
+        "total": original_total,
+        "paper_ids": paper_ids,
+        "summary": (
+            f"Deleted {len(paper_ids)} paper run record(s); artifact cleanup scheduled."
+            if paper_ids
+            else "No generated paper runs found for this task."
+        ),
+    }
+
+
+async def _cleanup_deleted_paper_files(paper_ids: list[str]) -> None:
+    """Best-effort cleanup for paper artifact directories after DB commit."""
+    failed_artifacts: list[tuple[str, str]] = []
+    for paper_id in paper_ids:
+        try:
+            paths = PaperRunPaths.for_paper(paper_id)
+            if paths.root.exists():
+                await asyncio.to_thread(shutil.rmtree, paths.root)
+        except Exception as exc:
+            failed_artifacts.append((paper_id, str(exc)))
+            logger.warning(
+                "training_task_delete: failed to remove paper artifacts for %s: %s",
+                paper_id,
+                exc,
+            )
+
+    if failed_artifacts:
+        logger.warning(
+            "training_task_delete: paper artifact cleanup completed with %d failure(s)",
+            len(failed_artifacts),
+        )
 
 
 async def _has_wsi_training_access(user: User, wsi: Any, db: AsyncSession) -> bool:
@@ -828,8 +905,8 @@ async def delete_training_task(
     Requires pathologist or admin role. Users can only delete their own tasks, admin can delete any.
 
     Deletion modes:
-    - "standard" (default): Delete training directory and logs only. Keep trained models.
-    - "complete": Delete all files including trained models.
+    - "standard" (default): Delete training directory and logs only. Keep trained models and papers.
+    - "complete": Delete all files including trained models and generated papers.
 
     This will:
     1. Get all trained models associated with this task
@@ -866,6 +943,18 @@ async def delete_training_task(
         models = await TrainedModelRepository.get_by_task_id(db, task_id)
         model_ids = [str(model.model_id) for model in models]
 
+        paper_cleanup = {
+            "status": "skipped",
+            "mode": mode,
+            "summary": "Paper runs are kept in standard deletion mode",
+        }
+        if mode == DeletionMode.COMPLETE.value:
+            paper_cleanup = await _delete_papers_for_training_task(
+                db,
+                task_id,
+                None if user.is_admin() else str(user.id),
+            )
+
         # Delete task-scoped AI result records before removing the task record itself.
         await AIResultRepository.delete_by_task_id(db, task_id)
 
@@ -878,6 +967,12 @@ async def delete_training_task(
         asyncio.create_task(
             _cleanup_deleted_training_task_files(task_id, model_ids, mode)
         )
+        if paper_cleanup.get("paper_ids"):
+            asyncio.create_task(
+                _cleanup_deleted_paper_files(
+                    [str(paper_id) for paper_id in paper_cleanup["paper_ids"]]
+                )
+            )
 
         return {
             "message": "Training task deleted successfully",
@@ -887,6 +982,7 @@ async def delete_training_task(
                 "mode": mode,
                 "summary": "Training task file cleanup scheduled",
             },
+            "paper_cleanup": paper_cleanup,
         }
 
     except HTTPException:

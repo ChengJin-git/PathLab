@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`server/backend/` 存放 Gateway 共享的核心后端模块，以及两个内部 FastAPI 服务（Preprocessing / AI）的具体实现。
+`server/backend/` 存放 Gateway 共享的核心后端模块，以及两个内部 FastAPI 服务（Preprocessing / AI）的具体实现。Paper Agent 的主体实现不在 `backend/` 中，而是在同级 `server/paper_agent/`；它通过这里的数据库、配置和存储基础设施接入 PathLab。
 
 ## 当前模块划分
 
@@ -70,6 +70,7 @@ backend/
 - 仓储导出：`database/repositories/__init__.py`
 - 初始化：`database/init_db.py`
 - 当前 ORM 表以 `database/models.py` 与 `auth/models.py` 的 `__tablename__` 声明为准，权限相关模型统一为 `dataset_grants` 与 `permission_audit_logs`
+- Paper Agent 使用 `paper_generation_runs` 保存论文任务轻量状态，仓储层为 `database/repositories/paper_generation.py`
 
 ### Redis / 配置
 
@@ -85,6 +86,18 @@ backend/
 - 统计：`storage/stats_mixin.py`
 - 孤立文件 / 记录检测：`storage/orphan_mixin.py`
 - 迁移：`storage/migration.py`
+- Paper Agent 重产物位于 `uploads/paper_generation/{paper_id}/`，数据库只保存索引和状态字段
+
+## 与 Paper Agent 的关系
+
+`server/paper_agent/` 是生成论文功能的独立 `uv` 项目，负责来源任务采集、大纲、章节、图表、引用、校验、PDF 渲染与导出。`backend/` 只提供它需要复用的共享能力：
+
+- `backend/database/models.py`：定义 `PaperGenerationRun`
+- `backend/database/repositories/paper_generation.py`：提供论文任务列表、状态更新和按来源任务过滤
+- `backend/common/config.py`：提供统一 uploads 根目录和运行时配置
+- `backend/storage/`：参与总体存储统计、迁移和孤立文件治理
+
+Gateway 通过 `server/gateway/paper_generation/` 挂载 `/papers`；TaskWorker 通过 `server/task_worker/jobs/paper_generation.py` 调用 Paper Agent。不要把新的论文生成 agent、模板、校验器或渲染器放到 `backend/` 下，相关实现应继续放在 `server/paper_agent/`。
 
 ## 当前代码状态提示
 
@@ -92,10 +105,12 @@ backend/
 - 旧文档中的单体 API / 单体服务表述已经过时，当前实现明确拆成 Gateway / Preprocessing / AI 三层
 - `backend/common/config.py` 会确保 `avatars`、`coordinates`、`masks`、`features`、`ai_results`、`training`、`models`、`logs`、`wsi_files`、`metadata`、`progress` 等目录存在
 - `backend/annotation/` 当前已成为标注协作与 COCO/summary 辅助逻辑的独立共享模块
+- 论文生成相关业务实现已收敛在 `server/paper_agent/`；`backend/` 仅保留数据库模型 / 仓储 / 配置等共享基础设施
 
 ## 相关文档
 
 - [Server README](../README.md)
 - [Gateway README](../gateway/README.md)
+- [Paper Agent README](../paper_agent/README.md)
 - [Database README](database/README.md)
 - [Storage README](storage/README.md)

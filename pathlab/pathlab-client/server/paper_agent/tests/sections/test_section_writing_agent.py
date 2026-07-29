@@ -410,12 +410,122 @@ async def test_section_agent_rejects_raw_cite_and_raw_metric_numbers(tmp_path) -
 
     raw_metric_payload = _sections_payload()
     raw_metric_payload["sections"]["results"] = (
-        "\\section{Results}\n\\input{locked_blocks/results_block.tex}\nThe model reached 0.9123.\n"
+        "\\section{Results}\n\\input{locked_blocks/results_block.tex}\nThe model reached 0.7777.\n"
     )
     with pytest.raises(SectionMetricContractError, match="raw metric-like"):
         SectionWritingAgent(MockLLM(raw_metric_payload)).generate(
             SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
         )
+
+
+@pytest.mark.asyncio
+async def test_section_agent_deterministically_repairs_unique_raw_metric(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_raw_metric_auto_repair", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    events: list[dict] = []
+    payload = _sections_payload()
+    payload["sections"]["related_work"] = (
+        "\\section{Related Work}\n"
+        "Clinical validation frames deployment claims [CITE:CLINVAL2022].\n"
+        "The locked primary metric was 0.9123.\n"
+    )
+
+    result = SectionWritingAgent(MockLLM(payload), event_sink=events.append).generate(
+        SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
+    )
+
+    assert "{{m:main.metrics.test_accuracy}}" in result.raw_sections["related_work"]
+    assert "0.9123" in result.sections["related_work"]
+    assert any(event["event"] == "auto_metric_repair_attempted" for event in events)
+    assert any(
+        event["event"] == "auto_metric_repair_succeeded"
+        and event["metric_key"] == "main.metrics.test_accuracy"
+        for event in events
+    )
+    assert not any(event["event"] == "llm_contract_repair_attempted" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_section_agent_does_not_auto_repair_ambiguous_raw_metric(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_raw_metric_ambiguous", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    evidence_lock = json.loads(paths.evidence_lock_private.read_text(encoding="utf-8"))
+    evidence_lock["metrics"]["secondary.metrics.test_accuracy"] = {
+        "value": 0.9123,
+        "formatted": "0.9123",
+    }
+    paths.evidence_lock_private.write_text(json.dumps(evidence_lock), encoding="utf-8")
+    events: list[dict] = []
+    payload = _sections_payload()
+    payload["sections"]["results"] = (
+        "\\section{Results}\n"
+        "\\input{locked_blocks/results_block.tex}\n"
+        "\\input{tables/table_2_main_results.tex}\n"
+        "\\begin{figure}[t]\n"
+        "\\centering\n"
+        "\\includegraphics[width=0.95\\linewidth]{figures/fig_main.png}\n"
+        "\\caption{Ready PathLab figure.}\n"
+        "\\label{fig:main}\n"
+        "\\end{figure}\n"
+        "The locked primary metric is 0.9123.\n"
+    )
+
+    with pytest.raises(SectionMetricContractError, match="raw metric-like"):
+        SectionWritingAgent(MockLLM(payload), event_sink=events.append).generate(
+            SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
+        )
+
+    assert any(
+        event["event"] == "auto_metric_repair_attempted"
+        and event["result"] == "ambiguous"
+        and set(event["candidate_metric_keys"]) == {
+            "main.metrics.test_accuracy",
+            "secondary.metrics.test_accuracy",
+        }
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_section_agent_retries_once_after_raw_metric_contract_error(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_raw_metric_repair", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    events: list[dict] = []
+
+    def response(prompt: str) -> dict:
+        payload = _payload_from_prompt(prompt)
+        if "metric_contract_repair" not in payload:
+            raw_metric_payload = _sections_payload()
+            raw_metric_payload["sections"]["results"] = (
+                "\\section{Results}\n"
+                "\\input{locked_blocks/results_block.tex}\n"
+                "\\input{tables/table_2_main_results.tex}\n"
+                "\\begin{figure}[t]\n"
+                "\\centering\n"
+                "\\includegraphics[width=0.95\\linewidth]{figures/fig_main.png}\n"
+                "\\caption{Ready PathLab figure.}\n"
+                "\\label{fig:main}\n"
+                "\\end{figure}\n"
+                "The locked primary metric is 0.7777.\n"
+            )
+            return raw_metric_payload
+
+        repair = payload["metric_contract_repair"]
+        assert repair["section"] == "results"
+        assert repair["raw_value"] == "0.7777"
+        assert repair["allowed_metric_keys"] == ["main.metrics.test_accuracy"]
+        return _sections_payload()
+
+    llm = MockLLM(response)
+    result = SectionWritingAgent(llm, event_sink=events.append).generate(
+        SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
+    )
+
+    assert len(llm.calls) == 2
+    assert "0.9123" in result.sections["results"]
+    assert any(event["event"] == "raw_metric_detected" for event in events)
+    assert any(event["event"] == "llm_contract_repair_attempted" for event in events)
+    assert any(event["event"] == "llm_contract_repair_succeeded" for event in events)
 
 
 @pytest.mark.asyncio
@@ -436,6 +546,36 @@ async def test_sections_stage_writes_final_sections_and_registers_artifacts(tmp_
     assert process_log["status"] == "completed"
     assert any(event["event"] == "llm_request" for event in process_log["events"])
     assert any(event["event"] == "generate_completed" for event in process_log["events"])
+
+
+@pytest.mark.asyncio
+async def test_sections_stage_publishes_user_facing_metric_repair_progress(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_public_repair_progress", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    manifest = PaperManifest.model_validate(json.loads(paths.manifest.read_text(encoding="utf-8")))
+    payload = _sections_payload()
+    payload["sections"]["related_work"] = (
+        "\\section{Related Work}\n"
+        "Clinical validation frames deployment claims [CITE:CLINVAL2022].\n"
+        "The locked primary metric was 0.9123.\n"
+    )
+
+    run_sections(paths, manifest, agent=SectionWritingAgent(MockLLM(payload)))
+
+    public_progress = [
+        entry
+        for entry in manifest.stage_log
+        if entry.get("stage") == "section_writing" and entry.get("message_key")
+    ]
+    assert any(
+        entry["message_key"] == "paperAgent.pipeline.messages.sectionMetricAutoRepairAttempted"
+        for entry in public_progress
+    )
+    assert any(
+        entry["message_key"] == "paperAgent.pipeline.messages.sectionMetricAutoRepairSucceeded"
+        for entry in public_progress
+    )
+    assert all("0.9123" not in str(entry.get("message")) for entry in public_progress)
 
 
 @pytest.mark.asyncio

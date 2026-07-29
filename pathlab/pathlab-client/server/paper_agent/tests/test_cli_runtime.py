@@ -5,7 +5,93 @@ import zipfile
 
 import pytest
 
+from pathlab_paper_agent import cli
 from pathlab_paper_agent.pipeline import complete_run, create_dev_run, run_stage
+
+
+class _CliManifest:
+    paper_id = "paper_cli"
+
+    class current_stage:
+        value = "stage"
+
+    class status:
+        value = "status"
+
+
+@pytest.mark.parametrize(
+    ("command", "attr_name"),
+    [
+        ("run-until-outline", "run_until_outline"),
+        ("run-after-outline", "run_after_outline"),
+        ("render-export", "run_render_export"),
+    ],
+)
+def test_split_job_cli_commands_call_pipeline_functions(command, attr_name, tmp_path, monkeypatch):
+    calls = []
+    config_path = tmp_path / "config.json"
+
+    def fake_pipeline(paper_id, *, uploads_dir=None, config_path=None):
+        calls.append((paper_id, uploads_dir, config_path))
+        return _CliManifest()
+
+    monkeypatch.setattr(cli, attr_name, fake_pipeline)
+
+    rc = cli.main(
+        [
+            command,
+            "--paper-id",
+            "paper_cli",
+            "--uploads-dir",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert rc == 0
+    assert calls == [("paper_cli", str(tmp_path), str(config_path))]
+
+
+def test_run_from_stage_cli_command_calls_pipeline(tmp_path, monkeypatch):
+    calls = []
+    config_path = tmp_path / "config.json"
+
+    def fake_pipeline(paper_id, stage, *, uploads_dir=None, config_path=None):
+        calls.append((paper_id, stage, uploads_dir, config_path))
+        return _CliManifest()
+
+    monkeypatch.setattr(cli, "run_from_stage", fake_pipeline)
+
+    rc = cli.main(
+        [
+            "run-from-stage",
+            "--paper-id",
+            "paper_cli",
+            "--stage",
+            "section_writing",
+            "--uploads-dir",
+            str(tmp_path),
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert rc == 0
+    assert calls == [("paper_cli", "section_writing", str(tmp_path), str(config_path))]
+
+
+@pytest.mark.asyncio
+async def test_inspect_cli_reports_artifact_readiness(tmp_path, capsys):
+    paper_id, paths = await create_dev_run(paper_id="paper_inspect", uploads_dir=tmp_path)
+    run_stage(paper_id, "collecting", uploads_dir=tmp_path)
+
+    rc = cli.main(["inspect", "--paper-id", paper_id, "--uploads-dir", str(tmp_path)])
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "paper_inspect:" in output
+    assert "missing: 0" in output
 
 
 @pytest.mark.asyncio
@@ -79,6 +165,7 @@ async def test_run_stage_records_private_pipeline_failure_log(tmp_path, monkeypa
     assert pipeline_log["events"][-1]["event"] == "stage_failed"
     assert pipeline_log["events"][-1]["stage"] == "collecting"
     assert pipeline_log["events"][-1]["error_type"] == "RuntimeError"
+    assert data["stage_log"][-1]["error_code"] == "internal_error"
 
 
 @pytest.mark.asyncio

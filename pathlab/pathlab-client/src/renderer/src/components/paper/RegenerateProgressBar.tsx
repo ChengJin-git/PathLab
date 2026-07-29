@@ -1,6 +1,8 @@
 import { CheckCircle2, CircleDashed, Loader2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { RegenerateProgress } from '../../api/papers'
 import { cn } from '../../lib/utils'
+import { paperRegenerateStepLabel } from '../../lib/paperI18n'
 
 const STEPS: RegenerateProgress['step'][] = [
   'queued',
@@ -18,6 +20,7 @@ interface RegenerateProgressBarProps {
 }
 
 export function RegenerateProgressBar({ progress, status }: RegenerateProgressBarProps) {
+  const { t } = useTranslation()
   const activeStep = progress?.step ?? 'queued'
   const activeIndex = STEPS.indexOf(activeStep)
   const percent = Math.max(0, Math.min(100, progress?.percent ?? (status === 'completed' ? 100 : 0)))
@@ -26,8 +29,8 @@ export function RegenerateProgressBar({ progress, status }: RegenerateProgressBa
     <div className="space-y-3 rounded-2xl border border-sky-100 bg-sky-50/70 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">Regenerate progress</div>
-          <div className="mt-0.5 text-sm text-slate-700">{progress?.detail ?? 'Waiting for backend progress...'}</div>
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">{t('paperAgent.regenerate.progressTitle')}</div>
+          <div className="mt-0.5 text-sm text-slate-700">{progress?.detail ?? t('paperAgent.regenerate.waitingProgress')}</div>
         </div>
         <div className="rounded-full border border-sky-200 bg-white px-2.5 py-1 text-xs font-semibold text-sky-700">
           {percent}%
@@ -60,7 +63,7 @@ export function RegenerateProgressBar({ progress, status }: RegenerateProgressBa
               ) : (
                 <CircleDashed className="h-3.5 w-3.5" />
               )}
-              <span className="hidden sm:inline">{step}</span>
+              <span className="hidden sm:inline">{paperRegenerateStepLabel(t, step)}</span>
             </div>
           )
         })}

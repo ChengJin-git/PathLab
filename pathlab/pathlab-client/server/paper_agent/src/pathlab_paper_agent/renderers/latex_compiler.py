@@ -39,7 +39,43 @@ class CompileResult:
 
 
 def docker_available() -> bool:
-    return shutil.which("docker") is not None
+    if shutil.which("docker") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def docker_image_available(image: str = "pathlab/paper-latex:latest") -> bool:
+    if not docker_available():
+        return False
+    try:
+        proc = subprocess.run(
+            ["docker", "image", "inspect", image],
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def host_latexmk_available() -> bool:
+    return shutil.which("latexmk") is not None
 
 
 def should_compile_from_env() -> bool:
@@ -95,7 +131,7 @@ def compile_with_docker(
         "run",
         "--rm",
         "-v",
-        f"{(paper_root / "final").resolve()}:/work",
+        f"{(paper_root / 'final').resolve()}:/work",
         image,
         "compile",
         template_id,
@@ -128,6 +164,63 @@ def compile_with_docker(
     )
 
 
+def compile_with_host_latexmk(
+    paper_root: Path,
+    template_id: str,
+    *,
+    timeout_seconds: int = 120,
+) -> CompileResult:
+    """Compile `final/{template_id}/main.tex` with host latexmk as a fallback."""
+    template_dir = paper_root / "final" / template_id
+    remove_stale_compile_outputs(template_dir)
+    proc = subprocess.run(
+        ["latexmk", "-pdf", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+        cwd=template_dir,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=timeout_seconds,
+    )
+    status = "compiled" if proc.returncode == 0 and (template_dir / "main.pdf").exists() else "failed"
+    summary = write_compile_summary(
+        template_dir,
+        status=status,
+        returncode=proc.returncode,
+        stdout="Host latexmk fallback was used.\n" + proc.stdout,
+        stderr=proc.stderr,
+    )
+    pdf_path = (template_dir / "main.pdf") if status == "compiled" else None
+    return CompileResult(status, proc.returncode, pdf_path, summary, proc.stdout, proc.stderr)
+
+
+def compile_latex(
+    paper_root: Path,
+    template_id: str,
+    *,
+    image: str = "pathlab/paper-latex:latest",
+    timeout_seconds: int = 120,
+) -> CompileResult:
+    """Compile LaTeX, preferring the Docker sandbox and falling back to host latexmk."""
+    if docker_image_available(image):
+        return compile_with_docker(paper_root, template_id, image=image, timeout_seconds=timeout_seconds)
+    if host_latexmk_available():
+        return compile_with_host_latexmk(paper_root, template_id, timeout_seconds=timeout_seconds)
+
+    template_dir = paper_root / "final" / template_id
+    summary = write_compile_summary(
+        template_dir,
+        status="skipped",
+        returncode=None,
+        stderr=(
+            f"Docker image {image!r} is not available and host latexmk was not found. "
+            "Build the Docker image or install a TeX distribution."
+        ),
+    )
+    return CompileResult("skipped", None, None, summary)
+
+
 def maybe_compile_with_docker(paper_root: Path, template_id: str) -> CompileResult:
     """Compile only when explicitly enabled by env; otherwise write a skip summary."""
     template_dir = paper_root / "final" / template_id
@@ -139,7 +232,4 @@ def maybe_compile_with_docker(paper_root: Path, template_id: str) -> CompileResu
             stderr="Set PATHLAB_PAPER_AGENT_COMPILE_LATEX=1 to compile with Docker.",
         )
         return CompileResult("skipped", None, None, summary)
-    if not docker_available():
-        summary = write_compile_summary(template_dir, status="skipped", returncode=None, stderr="docker not found")
-        return CompileResult("skipped", None, None, summary)
-    return compile_with_docker(paper_root, template_id)
+    return compile_latex(paper_root, template_id)

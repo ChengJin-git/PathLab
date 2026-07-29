@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { uploadWSIFile, uploadWSIByPath, deleteWSI, fetchDatasets, uploadDatasetSplits } from '../../api/wsi'
 import { deleteTrainingTask } from '../../api/training'
+import { getPaperRun, type PaperRunStage, type PaperRunStatus } from '../../api/papers'
 import { checkUploadSpace, cancelStorageTask, startMigration, getMigrationStatus } from '../../api/storage'
 import { cancelQueueTask } from '../../api/queue'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
@@ -47,6 +48,42 @@ export function useTaskActions(params: TaskActionsParams) {
     trainingTasks, analysisTasks, storageTasks, tasks,
     refreshDiskSpace, metadataUploadResults
   } = params
+
+  const paperStageProgress = useCallback((stage: PaperRunStage | undefined, status: PaperRunStatus | undefined): number => {
+    if (status === 'completed') return 100
+    if (status === 'failed' || status === 'cancelled') return 100
+    if (status === 'awaiting_outline_approval') return 32
+    switch (stage) {
+      case 'created':
+        return 5
+      case 'collecting':
+        return 12
+      case 'building_evidence':
+        return 22
+      case 'outlining':
+        return 32
+      case 'plotting':
+        return 45
+      case 'literature_review':
+        return 58
+      case 'section_writing':
+        return 70
+      case 'validating':
+        return 82
+      case 'refining':
+        return 90
+      case 'rendering':
+        return 95
+      case 'exporting':
+        return 98
+      case 'completed':
+      case 'failed':
+      case 'cancelled':
+        return 100
+      default:
+        return 0
+    }
+  }, [])
 
   // Update a task (local tasks only)
   const updateTask = useCallback((taskId: string, updates: Partial<BackgroundTask>) => {
@@ -87,6 +124,122 @@ export function useTaskActions(params: TaskActionsParams) {
       }
     }))
   }, [setLocalTasks])
+
+  const addPaperGenerationTask = useCallback((paperId: string, paperTitle?: string | null): string => {
+    const taskId = `paper_${paperId}`
+    const displayTitle = paperTitle?.trim() || paperId
+    const task: BackgroundTask = {
+      id: taskId,
+      type: 'paper_generation',
+      title: displayTitle,
+      items: [{
+        id: 'paper_generation_main',
+        name: t('backgroundTask.taskTitles.paperGenerationStage', {
+          stage: t('paperAgent.stage.created'),
+        }),
+        status: 'pending' as TaskStatus,
+        progress: 5,
+      }],
+      status: 'pending',
+      createdAt: new Date(),
+      totalProgress: 5,
+      successCount: 0,
+      failedCount: 0,
+      paperId,
+      paperTitle: paperTitle?.trim() || null,
+      paperStatus: 'pending',
+      paperStage: 'created',
+    }
+
+    setLocalTasks(prev => {
+      const existing = prev.find(current => current.id === taskId)
+      if (existing) return prev
+      return [task, ...prev]
+    })
+
+    const poll = async () => {
+      if (cancelledTasksRef.current.has(taskId)) return false
+
+      try {
+        const run = await getPaperRun(paperId)
+        const progress = paperStageProgress(run.current_stage, run.status)
+        const itemName = run.status === 'awaiting_outline_approval'
+          ? t('backgroundTask.taskTitles.paperAwaitingOutline')
+          : t('backgroundTask.taskTitles.paperGenerationStage', {
+            stage: t(`paperAgent.stage.${run.current_stage}`, { defaultValue: run.current_stage }),
+          })
+        const nextStatus: TaskStatus =
+          run.status === 'completed'
+            ? 'success'
+            : run.status === 'failed'
+              ? 'error'
+              : run.status === 'cancelled'
+                ? 'cancelled'
+                : run.status === 'awaiting_outline_approval'
+                  ? 'pending'
+                  : 'running'
+
+        setLocalTasks(prev => prev.map(current => {
+          if (current.id !== taskId) return current
+          return {
+            ...current,
+            title: run.title || current.title,
+            status: nextStatus,
+            completedAt: nextStatus === 'success' || nextStatus === 'error' || nextStatus === 'cancelled' ? new Date() : current.completedAt,
+            totalProgress: progress,
+            successCount: nextStatus === 'success' ? 1 : 0,
+            failedCount: nextStatus === 'error' ? 1 : 0,
+            paperTitle: run.title || current.paperTitle,
+            paperStatus: run.status,
+            paperStage: run.current_stage,
+            items: current.items.map(item => item.id === 'paper_generation_main'
+              ? {
+                ...item,
+                name: itemName,
+                status: nextStatus,
+                progress,
+                error: nextStatus === 'error' ? (run.error_message || t('backgroundTask.errors.paperGenerationFailed')) : undefined,
+              }
+              : item
+            ),
+          }
+        }))
+
+        return nextStatus === 'running' || nextStatus === 'pending'
+      } catch (err) {
+        setLocalTasks(prev => prev.map(current => {
+          if (current.id !== taskId) return current
+          return {
+            ...current,
+            status: 'error',
+            completedAt: new Date(),
+            failedCount: 1,
+            items: current.items.map(item => item.id === 'paper_generation_main'
+              ? {
+                ...item,
+                status: 'error',
+                progress: 0,
+                error: err instanceof Error ? err.message : String(err),
+              }
+              : item
+            ),
+          }
+        }))
+        return false
+      }
+    }
+
+    void poll().then((shouldContinue) => {
+      if (!shouldContinue) return
+      const intervalId = window.setInterval(() => {
+        void poll().then((keepPolling) => {
+          if (!keepPolling) window.clearInterval(intervalId)
+        })
+      }, 2000)
+    })
+
+    return taskId
+  }, [cancelledTasksRef, paperStageProgress, setLocalTasks, t])
 
   // Add upload task
   const addUploadTask = useCallback(async (files: UploadTaskFile[], options?: UploadTaskOptions): Promise<string> => {
@@ -783,6 +936,7 @@ export function useTaskActions(params: TaskActionsParams) {
     addMigrationTask,
     addDeleteTrainingTask,
     addExtractionTask,
+    addPaperGenerationTask,
     cancelTask,
     clearCompletedTasks,
     removeTask,

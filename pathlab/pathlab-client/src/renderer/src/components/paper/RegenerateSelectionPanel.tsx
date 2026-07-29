@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { AlertTriangle, Loader2, RotateCcw, Sparkles, X } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
@@ -17,6 +19,8 @@ import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { DiffPreview } from './DiffPreview'
 import { RegenerateProgressBar } from './RegenerateProgressBar'
+import { labelForSection } from './SectionsTab'
+import { paperRegenerateStatusLabel } from '../../lib/paperI18n'
 
 export interface SelectionInfo {
   text: string
@@ -28,7 +32,7 @@ export interface SelectionInfo {
 
 interface RegenerateSelectionPanelProps {
   paperId: string
-  sectionName: string
+  sectionName: string | null
   templateId?: TemplateId
   selection: SelectionInfo | null
   onClear: () => void
@@ -37,17 +41,26 @@ interface RegenerateSelectionPanelProps {
 
 const POLLING_STATUSES = new Set<RegenerateJobEntry['status']>(['queued', 'running', 'cancelling'])
 
-const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
-  stale_selection: 'The section was edited by another regen. Refresh and try again.',
-  stale_reject: 'Section moved on. Reject is no longer safe.',
-  selection_not_found: "Couldn't match this selection to the source.",
-  ambiguous_selection: 'This selection matches multiple paragraphs. Try selecting a longer span.',
-  selection_too_short: 'Select at least ~20 characters.',
+const FRIENDLY_ERROR_CODES = new Set([
+  'stale_selection',
+  'stale_reject',
+  'selection_not_found',
+  'ambiguous_selection',
+  'selection_too_short',
+  'claim_guard_rejected',
+  'validation_rejected',
+])
+
+function isClaimGuardMessage(message: string | null | undefined): boolean {
+  return Boolean(message && (
+    message.includes('claim_guard') ||
+    message.includes('validation rejected regenerated candidate')
+  ))
 }
 
 function extractBackendCode(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null
-  if (FRIENDLY_ERROR_MESSAGES[error.code]) return error.code
+  if (FRIENDLY_ERROR_CODES.has(error.code)) return error.code
 
   const rawDetails = (error as ApiError & { details?: unknown }).details
   if (!rawDetails) return null
@@ -65,16 +78,20 @@ function extractBackendCode(error: unknown): string | null {
   }
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, t: TFunction): string {
   const code = extractBackendCode(error)
-  if (code && FRIENDLY_ERROR_MESSAGES[code]) return FRIENDLY_ERROR_MESSAGES[code]
+  if (code && FRIENDLY_ERROR_CODES.has(code)) return t(`paperAgent.regenerate.errors.${code}`)
+  if (error instanceof Error && isClaimGuardMessage(error.message)) {
+    return t('paperAgent.regenerate.errors.claim_guard_rejected')
+  }
   return error instanceof Error ? error.message : String(error)
 }
 
-function jobErrorMessage(job: RegenerateJobEntry): string {
+function jobErrorMessage(job: RegenerateJobEntry, t: TFunction): string {
   const code = job.error_code ?? ''
-  if (FRIENDLY_ERROR_MESSAGES[code]) return FRIENDLY_ERROR_MESSAGES[code]
-  return job.error_message || 'Regenerate failed. Try again with a more precise selection.'
+  if (FRIENDLY_ERROR_CODES.has(code)) return t(`paperAgent.regenerate.errors.${code}`)
+  if (isClaimGuardMessage(job.error_message)) return t('paperAgent.regenerate.errors.claim_guard_rejected')
+  return job.error_message || t('paperAgent.regenerate.fallbackJobError')
 }
 
 function previewSelection(text: string): string {
@@ -89,11 +106,12 @@ export function RegenerateSelectionPanel({
   onClear,
   onPdfRefreshNeeded,
 }: RegenerateSelectionPanelProps) {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [note, setNote] = useState('')
   const [regenId, setRegenId] = useState<string | null>(null)
   const [rejectError, setRejectError] = useState<unknown>(null)
-  const selectionSignature = selection
+  const selectionSignature = selection && sectionName
     ? `${sectionName}:${selection.source ?? 'source'}:${selection.charStart ?? 'pdf'}:${selection.charEnd ?? 'pdf'}:${selection.text.length}:${selection.text.slice(0, 120)}`
     : 'none'
   const isPdfSelection =
@@ -116,11 +134,11 @@ export function RegenerateSelectionPanel({
 
   const startMutation = useMutation({
     mutationFn: async () => {
-      if (!selection) throw new Error('Select source text before regenerating.')
+      if (!selection || !sectionName) throw new Error(t('paperAgent.regenerate.errors.selectFirst'))
       const cached = queryClient.getQueryData<PaperSectionListResponse>(['paper-sections', paperId])
       const sections = cached ?? (await getPaperSections(paperId))
       const section = sections.sections?.find((item) => item.section_name === sectionName)
-      if (!section) throw new Error(`Section source is not available: ${sectionName}`)
+      if (!section) throw new Error(t('paperAgent.regenerate.errors.sectionUnavailable', { section: labelForSection(sectionName, t) }))
 
       // For PDF-sourced selections we don't have precise char offsets; the
       // panel uses negative sentinels (-1) to signal "no hint, let backend
@@ -154,7 +172,7 @@ export function RegenerateSelectionPanel({
 
   const cancelMutation = useMutation({
     mutationFn: () => {
-      if (!regenId) throw new Error('No regenerate job to cancel.')
+      if (!regenId) throw new Error(t('paperAgent.regenerate.errors.noJobCancel'))
       return postRegenerateCancel(paperId, regenId)
     },
     onSuccess: () => {
@@ -164,7 +182,7 @@ export function RegenerateSelectionPanel({
 
   const rejectMutation = useMutation({
     mutationFn: () => {
-      if (!regenId) throw new Error('No regenerate job to reject.')
+      if (!regenId) throw new Error(t('paperAgent.regenerate.errors.noJobReject'))
       return postRegenerateReject(paperId, regenId, 'Rejected from the Paper Agent workspace.', templateId)
     },
     onMutate: () => {
@@ -196,19 +214,20 @@ export function RegenerateSelectionPanel({
   const completedJob = job?.status === 'completed' ? job : null
   const failedJob = job?.status === 'failed' ? job : null
   const terminalState = job && ['rejected', 'cancelled'].includes(job.status) ? job.status : null
-  const canSubmit = Boolean(selection) && !startMutation.isPending && !isSubmittingOrPolling && !completedJob
+  const canSubmit = Boolean(selection && sectionName) && !startMutation.isPending && !isSubmittingOrPolling && !completedJob
+  const sectionLabel = sectionName ? labelForSection(sectionName, t) : t('paperAgent.regenerate.selectedSectionPlaceholder')
 
   const helperCopy = useMemo(() => {
-    if (!selection) return 'Select any text on the left to regenerate just that span.'
+    if (!selection) return t('paperAgent.regenerate.helperNoSelection')
     if (completedJob)
-      return 'Review the backend diff. Accept keeps this candidate; reject restores the before snapshot.'
-    if (failedJob) return jobErrorMessage(failedJob)
-    if (terminalState === 'cancelled') return 'This regenerate job was cancelled and restored to the before snapshot.'
-    if (terminalState === 'rejected') return 'This candidate was rejected and the previous section was restored.'
+      return t('paperAgent.regenerate.helperCompleted')
+    if (failedJob) return jobErrorMessage(failedJob, t)
+    if (terminalState === 'cancelled') return t('paperAgent.regenerate.helperCancelled')
+    if (terminalState === 'rejected') return t('paperAgent.regenerate.helperRejected')
     if (isSubmittingOrPolling)
-      return 'The backend is locating the selection, rewriting, guarding, refining, and recompiling.'
-    return 'Add a short instruction, then regenerate only the selected span.'
-  }, [completedJob, failedJob, isSubmittingOrPolling, selection, terminalState])
+      return t('paperAgent.regenerate.helperRunning')
+    return t('paperAgent.regenerate.helperReady')
+  }, [completedJob, failedJob, isSubmittingOrPolling, selection, t, terminalState])
 
   useEffect(() => {
     setRegenId(null)
@@ -251,14 +270,14 @@ export function RegenerateSelectionPanel({
       <CardHeader className="border-b border-slate-100 pb-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Regenerate</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">{t('paperAgent.regenerate.title')}</div>
             <CardTitle className="flex items-center gap-2 text-lg">
               <Sparkles className="h-4 w-4 text-sky-500" />
-              {sectionName}
+              {sectionLabel}
             </CardTitle>
           </div>
           {selection ? (
-            <Button variant="ghost" size="icon" aria-label="Clear selection" onClick={handleClear}>
+            <Button variant="ghost" size="icon" aria-label={t('paperAgent.regenerate.clearSelection')} onClick={handleClear}>
               <X className="h-4 w-4" />
             </Button>
           ) : null}
@@ -271,14 +290,14 @@ export function RegenerateSelectionPanel({
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {isPdfSelection ? (
                   <Badge variant="outline" className="bg-amber-50 text-amber-700">
-                    from PDF
+                    {t('paperAgent.regenerate.fromPdf')}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="bg-sky-50 text-sky-700">
-                    paragraph {selection.paragraphIndex}
+                    {t('paperAgent.regenerate.paragraph', { index: selection.paragraphIndex })}
                   </Badge>
                 )}
-                <span className="text-slate-400">{selection.text.length} chars</span>
+                <span className="text-slate-400">{t('paperAgent.regenerate.chars', { count: selection.text.length })}</span>
                 {!isPdfSelection ? (
                   <span className="text-slate-300">
                     {selection.charStart}-{selection.charEnd}
@@ -290,7 +309,7 @@ export function RegenerateSelectionPanel({
               </div>
               {isPdfSelection ? (
                 <div className="rounded-xl border border-amber-100 bg-amber-50/80 p-2 text-xs leading-5 text-amber-800">
-                  PDF selection: the backend will resolve the exact paragraph and character span before regenerating.
+                  {t('paperAgent.regenerate.pdfResolve')}
                 </div>
               ) : null}
               <p className="text-xs leading-5 text-slate-500">{helperCopy}</p>
@@ -300,12 +319,12 @@ export function RegenerateSelectionPanel({
               <>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                    Note (optional)
+                    {t('paperAgent.regenerate.noteLabel')}
                   </span>
                   <textarea
                     value={note}
                     onChange={(event) => setNote(event.target.value)}
-                    placeholder="What should change? e.g. shorten, remove an unsupported claim, or clarify the clinical caveat."
+                    placeholder={t('paperAgent.regenerate.notePlaceholder')}
                     rows={4}
                     className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none"
                   />
@@ -317,7 +336,7 @@ export function RegenerateSelectionPanel({
                   ) : (
                     <Sparkles className="h-4 w-4" />
                   )}
-                  {startMutation.isPending ? 'Queueing...' : 'Regenerate selection'}
+                  {startMutation.isPending ? t('paperAgent.regenerate.queueing') : t('paperAgent.regenerate.regenerateSelection')}
                 </Button>
               </>
             ) : null}
@@ -339,7 +358,7 @@ export function RegenerateSelectionPanel({
                 ) : (
                   <X className="h-4 w-4" />
                 )}
-                {job?.status === 'cancelling' ? 'Cancelling...' : 'Cancel regenerate'}
+                {job?.status === 'cancelling' ? t('paperAgent.regenerate.cancelling') : t('paperAgent.regenerate.cancelRegenerate')}
               </Button>
             ) : null}
 
@@ -353,7 +372,7 @@ export function RegenerateSelectionPanel({
                 />
                 <div className="grid gap-2 sm:grid-cols-2">
                   <Button className="gap-2" onClick={handleAccept}>
-                    Accept candidate
+                    {t('paperAgent.regenerate.acceptCandidate')}
                   </Button>
                   <Button
                     variant="outline"
@@ -366,7 +385,7 @@ export function RegenerateSelectionPanel({
                     ) : (
                       <RotateCcw className="h-4 w-4" />
                     )}
-                    Reject and restore
+                    {t('paperAgent.regenerate.rejectRestore')}
                   </Button>
                 </div>
               </div>
@@ -377,19 +396,23 @@ export function RegenerateSelectionPanel({
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                   <div>
-                    <div className="font-semibold">{failedJob ? 'Regenerate failed' : `Job ${terminalState}`}</div>
-                    <div className="text-xs leading-5">{failedJob ? jobErrorMessage(failedJob) : helperCopy}</div>
+                    <div className="font-semibold">
+                      {failedJob
+                        ? t('paperAgent.regenerate.failed')
+                        : t('paperAgent.regenerate.jobStatus', { status: paperRegenerateStatusLabel(t, terminalState) })}
+                    </div>
+                    <div className="text-xs leading-5">{failedJob ? jobErrorMessage(failedJob, t) : helperCopy}</div>
                   </div>
                 </div>
                 <Button variant="outline" size="sm" className="w-full bg-white" onClick={handleRestart}>
-                  Restart with this selection
+                  {t('paperAgent.regenerate.restart')}
                 </Button>
               </div>
             ) : null}
 
             {currentError ? (
               <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-700">
-                {errorMessage(currentError)}
+                {errorMessage(currentError, t)}
               </div>
             ) : null}
           </>
@@ -399,10 +422,9 @@ export function RegenerateSelectionPanel({
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-600">
                 <Sparkles className="h-5 w-5" />
               </div>
-              <p className="text-sm font-semibold text-slate-800">Pick a span to rewrite</p>
+              <p className="text-sm font-semibold text-slate-800">{t('paperAgent.regenerate.emptyTitle')}</p>
               <p className="text-xs leading-5 text-slate-500">
-                Highlight a sentence or paragraph on the left, optionally add a note, and the model rewrites just that
-                span.
+                {t('paperAgent.regenerate.emptyDescription')}
               </p>
             </div>
             <div className="grid gap-2 text-xs leading-5 text-slate-500">
@@ -410,19 +432,19 @@ export function RegenerateSelectionPanel({
                 <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">
                   1
                 </span>
-                <span>Select text in the PDF or LaTeX source.</span>
+                <span>{t('paperAgent.regenerate.step1')}</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">
                   2
                 </span>
-                <span>Add an optional note describing what should change.</span>
+                <span>{t('paperAgent.regenerate.step2')}</span>
               </div>
               <div className="flex items-start gap-2">
                 <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">
                   3
                 </span>
-                <span>Review the diff, then accept or revert. Other paragraphs stay locked.</span>
+                <span>{t('paperAgent.regenerate.step3')}</span>
               </div>
             </div>
           </div>

@@ -62,6 +62,8 @@ export type AddCitationPreview = components['schemas']['AddCitationPreview']
 export type AddCitationResponse = components['schemas']['AddCitationResponse']
 export type CitationDeleteResponse = components['schemas']['CitationDeleteResponse']
 
+export const MAX_PAPERS_PER_SOURCE_TASK = 20
+
 export interface PutPaperSectionBody {
   text: string
   source_hash?: string
@@ -110,6 +112,23 @@ export interface PostPaperRenderExportResponse {
   message?: string
 }
 
+export interface PostPaperStageRerunBody {
+  continue_downstream?: boolean
+  include_previous_successful_output?: boolean
+  confirm_overwrite_sections?: boolean
+  confirm_overwrite_citations?: boolean
+  confirm_regenerate_outline?: boolean
+}
+
+export interface PostPaperStageRerunResponse {
+  paper_id: string
+  status: PaperRunStatus
+  current_stage: PaperRunStage
+  message?: string
+}
+
+export type PostPaperPauseResponse = components['schemas']['PaperPauseResponse']
+
 type BackendErrorDetail = {
   code?: string
   message?: string
@@ -150,18 +169,20 @@ async function preserveBackendErrorCode<T>(operation: () => Promise<T>): Promise
 }
 
 export function createPaperRun(request: CreatePaperRunRequest): Promise<PaperRunCreateResponse> {
-  return apiFetch<PaperRunCreateResponse>(
-    `${API_BASE}/papers`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    },
-    'Create paper run',
+  return preserveBackendErrorCode(() =>
+    apiFetch<PaperRunCreateResponse>(
+      `${API_BASE}/papers`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      },
+      'Create paper run',
+    ),
   )
 }
 
-export function listPaperRuns(params?: { limit?: number; offset?: number }): Promise<PaperRunListResponse> {
+export function listPaperRuns(params?: { limit?: number; offset?: number; source_task_id?: string }): Promise<PaperRunListResponse> {
   const query = buildSearchParams(params)
   const suffix = query.toString() ? `?${query}` : ''
   return apiFetch<PaperRunListResponse>(`${API_BASE}/papers${suffix}`, undefined, 'List paper runs')
@@ -194,6 +215,51 @@ export function postPaperRenderExport(paperId: string): Promise<PostPaperRenderE
       `${API_BASE}/papers/${encodeURIComponent(paperId)}/render-export`,
       { method: 'POST' },
       'Render/export paper',
+    ),
+  )
+}
+
+export function postPaperRetry(
+  paperId: string,
+  body?: PostPaperStageRerunBody,
+): Promise<PostPaperStageRerunResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PostPaperStageRerunResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/retry`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      },
+      'Retry paper run',
+    ),
+  )
+}
+
+export function postPaperPause(paperId: string): Promise<PostPaperPauseResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PostPaperPauseResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/pause`,
+      { method: 'POST' },
+      'Pause paper run',
+    ),
+  )
+}
+
+export function postPaperStageRerun(
+  paperId: string,
+  stage: PaperRunStage | string,
+  body?: PostPaperStageRerunBody,
+): Promise<PostPaperStageRerunResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<PostPaperStageRerunResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/stages/${encodeURIComponent(stage)}:rerun`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      },
+      'Rerun paper stage',
     ),
   )
 }
@@ -329,8 +395,8 @@ export function deletePaperRun(
   }>(`${API_BASE}/papers/${encodeURIComponent(paperId)}`, { method: 'DELETE' }, 'Delete paper run')
 }
 
-export function getPaperFileBlob(paperId: string, path: string): Promise<Blob> {
-  return apiFetchBlob(paperFileEndpoint(paperId, path), undefined, 'Get paper artifact')
+export function getPaperFileBlob(paperId: string, path: string, options?: RequestInit): Promise<Blob> {
+  return apiFetchBlob(paperFileEndpoint(paperId, path), options, 'Get paper artifact')
 }
 
 export async function getPaperFileText(paperId: string, path: string): Promise<string> {
@@ -356,6 +422,14 @@ export function downloadPaperFile(
   return downloadApiFile(paperFileEndpoint(paperId, path), filename, undefined, 'Download paper artifact')
 }
 
-export function downloadPaperExport(paperId: string, template: string = 'miccai'): Promise<DownloadApiFileResult> {
-  return downloadPaperFile(paperId, `exports/${template}_bundle.zip`, `${template}_bundle.zip`)
+export function downloadPaperExport(
+  paperId: string,
+  template: string = 'miccai',
+  fallbackFilename?: string,
+): Promise<DownloadApiFileResult> {
+  return downloadPaperFile(
+    paperId,
+    `exports/${template}_bundle.zip`,
+    fallbackFilename ?? `${template}_bundle.zip`,
+  )
 }

@@ -132,8 +132,7 @@ def _mock_successful_compile(monkeypatch: pytest.MonkeyPatch) -> None:
         summary_path.write_text("compile_summary\n  status=compiled\n", encoding="utf-8")
         return CompileResult("compiled", 0, pdf_path, summary_path, stdout="ok")
 
-    monkeypatch.setattr(exporting_stage, "docker_available", lambda: True)
-    monkeypatch.setattr(exporting_stage, "compile_with_docker", fake_compile)
+    monkeypatch.setattr(exporting_stage, "compile_latex", fake_compile)
 
 
 def _mock_validation(
@@ -272,7 +271,7 @@ def test_bundle_validator_runs_latexmk_inside_extracted_zip(tmp_path, monkeypatc
         (host_dir / "main.pdf").write_bytes(b"%PDF-1.4\n")
         return subprocess.CompletedProcess(cmd, 0, stdout="latexmk ok", stderr="")
 
-    monkeypatch.setattr(bundle_validator, "docker_available", lambda: True)
+    monkeypatch.setattr(bundle_validator, "docker_image_available", lambda image: True)
     monkeypatch.setattr(bundle_validator.subprocess, "run", fake_run)
 
     result = bundle_validator.validate_bundle(bundle)
@@ -280,6 +279,19 @@ def test_bundle_validator_runs_latexmk_inside_extracted_zip(tmp_path, monkeypatc
     assert result.status == "passed"
     assert result.returncode == 0
     assert result.downloadable is True
+
+
+def test_docker_available_requires_running_daemon(monkeypatch) -> None:
+    from pathlab_paper_agent.renderers import latex_compiler
+
+    def fake_run(cmd, **kwargs):
+        assert cmd[:2] == ["docker", "info"]
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="daemon down")
+
+    monkeypatch.setattr(latex_compiler.shutil, "which", lambda name: "/usr/local/bin/docker")
+    monkeypatch.setattr(latex_compiler.subprocess, "run", fake_run)
+
+    assert latex_compiler.docker_available() is False
 
 
 @pytest.mark.asyncio

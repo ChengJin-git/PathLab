@@ -25,15 +25,19 @@ from .citations.models import CitationCandidate, CitationReference as CitationRe
 from .pipeline import (
     create_dev_run,
     load_manifest,
+    latest_failed_stage,
     manifest_artifacts,
     run_after_outline,
+    run_from_stage,
     run_render_export,
     run_stage,
     save_manifest,
     summarize_manifest,
 )
 from .regenerate import MissingSectionDraftError, UnknownSectionError, latest_regenerate_log_summary, regenerate_section
+from .guard_summary import build_guard_result_summary
 from .process_logging import append_pipeline_event
+from .outline_markdown import outline_to_markdown
 from .schemas import (
     AddCitationPreview,
     AddCitationRequest,
@@ -43,9 +47,9 @@ from .schemas import (
     CitationReference as CitationReferenceSchema,
     CitationsView,
     CreatePaperRequest,
-    GuardIssueSummary,
     GuardResultSummary,
     OutlineApprovalRequest,
+    PaperStageRerunRequest,
     PaperRunCreateResponse,
     PaperRunDetail,
     PaperRunListResponse,
@@ -78,6 +82,27 @@ _STAGES_FULL: tuple[PaperRunStage, ...] = (
     PaperRunStage.rendering,
     PaperRunStage.exporting,
 )
+_EXECUTABLE_RERUN_STAGES = set(_STAGES_FULL)
+_OUTLINE_RERUN_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+}
+_SECTION_OVERWRITE_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+    PaperRunStage.section_writing,
+}
+_CITATION_OVERWRITE_STAGES = {
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+}
 _SECTION_ORDER = {
     "abstract": 0,
     "introduction": 1,
@@ -212,6 +237,59 @@ def _collect_required_keys(outline: object) -> list[str]:
             for key in _string_array(section.get("citations")):
                 found.add(key)
     return sorted(found)
+
+
+def _write_outline_artifacts(paths: PaperRunPaths, manifest, outline: dict[str, object]) -> None:
+    paths.outline_json.parent.mkdir(parents=True, exist_ok=True)
+    paths.outline_json.write_text(json.dumps(outline, indent=2, ensure_ascii=False), encoding="utf-8")
+    paths.outline_markdown.write_text(outline_to_markdown(outline), encoding="utf-8")
+    manifest.artifact_index["drafts/outline.json"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "Outline",
+        "content_type": "application/json",
+    }
+
+
+def _outline_payload_changed(paths: PaperRunPaths, outline: dict[str, object]) -> bool:
+    if not paths.outline_json.is_file():
+        return True
+    try:
+        current = json.loads(paths.outline_json.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return True
+    return json.dumps(current, sort_keys=True, ensure_ascii=False) != json.dumps(outline, sort_keys=True, ensure_ascii=False)
+
+
+def _mark_outline_modified_by_user(outline: dict[str, object]) -> None:
+    extensions = outline.get("pathlab_extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+    extensions["outline_modified_by_user"] = True
+    outline["pathlab_extensions"] = extensions
+
+
+def _append_outline_edit_stage_log(manifest, *, approved: bool) -> None:
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.outlining.value,
+            "status": "user_edited",
+            "ts": now,
+            "started_at": now,
+            "finished_at": now,
+            "duration_ms": 0,
+            "message": "User edited outline and approved it." if approved else "User edited outline.",
+        }
+    )
+    manifest.artifact_index["drafts/大纲.md"] = {
+        "status": "ready",
+        "visibility": "public",
+        "downloadable": True,
+        "label": "大纲",
+        "content_type": "text/markdown",
+    }
 
 
 def _int_value(value: object, default: int) -> int:
@@ -356,6 +434,121 @@ def _append_required_key(paths: PaperRunPaths, key: str) -> None:
     _atomic_write_json(paths.outline_json, outline)
 
 
+_CITE_COMMAND_RE = re.compile(r"(\\cite[a-zA-Z*]*(?:\[[^\]]*\])*)\{([^{}]+)\}")
+_BARE_CITATION_KEY_RE = re.compile(r"[A-Z][A-Za-z0-9:-]*\d{4}_[A-Za-z0-9_:-]+")
+
+
+def _cleanup_citation_spacing(text: str) -> str:
+    text = re.sub(r"[（(]\s*[）)]", "", text)
+    text = re.sub(r"[ \t]+([,.;:!?])", r"\1", text)
+    text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", text)
+    return text
+
+
+def _remove_citation_key_from_text(text: str, key: str) -> str:
+    changed = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        prefix = match.group(1)
+        raw_keys = [part.strip() for part in match.group(2).split(",") if part.strip()]
+        if key not in raw_keys:
+            return match.group(0)
+        changed = True
+        remaining = [part for part in raw_keys if part != key]
+        return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
+
+    next_text = _CITE_COMMAND_RE.sub(repl, text)
+    if key in next_text:
+        changed = True
+        next_text = next_text.replace(key, "")
+    if not changed:
+        return text
+    return _cleanup_citation_spacing(next_text)
+
+
+def _prune_unselected_citation_keys_from_text(text: str, selected_keys: set[str]) -> str:
+    changed = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        prefix = match.group(1)
+        raw_keys = [part.strip() for part in match.group(2).split(",") if part.strip()]
+        if not raw_keys:
+            return match.group(0)
+        remaining = [part for part in raw_keys if part in selected_keys]
+        if len(remaining) == len(raw_keys):
+            return match.group(0)
+        changed = True
+        return f"{prefix}{{{','.join(remaining)}}}" if remaining else ""
+
+    next_text = _CITE_COMMAND_RE.sub(repl, text)
+
+    def bare_repl(match: re.Match[str]) -> str:
+        nonlocal changed
+        key = match.group(0)
+        if key in selected_keys:
+            return key
+        changed = True
+        return ""
+
+    next_text = _BARE_CITATION_KEY_RE.sub(bare_repl, next_text)
+    if not changed:
+        return text
+    return _cleanup_citation_spacing(next_text)
+
+
+def _remove_citation_key_from_sections(paths: PaperRunPaths, key: str) -> list[str]:
+    if not paths.sections_dir.is_dir():
+        return []
+    changed_sections: list[str] = []
+    for path in sorted(paths.sections_dir.glob("*.tex")):
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8")
+        updated = _remove_citation_key_from_text(current, key)
+        if updated == current:
+            continue
+        _atomic_write_text(path, updated)
+        changed_sections.append(path.relative_to(paths.root).as_posix())
+    return changed_sections
+
+
+def _sync_section_citations_to_selected_refs(
+    paths: PaperRunPaths,
+    selected_refs: list[CitationReferenceModel] | None = None,
+) -> list[str]:
+    if not (paths.citations_dir / "selected_refs.json").exists() or not paths.sections_dir.is_dir():
+        return []
+    refs = selected_refs if selected_refs is not None else _load_selected_refs(paths)
+    selected_keys = {ref.key for ref in refs}
+    changed_sections: list[str] = []
+    for path in sorted(paths.sections_dir.glob("*.tex")):
+        if not path.is_file():
+            continue
+        current = path.read_text(encoding="utf-8")
+        updated = _prune_unselected_citation_keys_from_text(current, selected_keys)
+        if updated == current:
+            continue
+        _atomic_write_text(path, updated)
+        changed_sections.append(path.relative_to(paths.root).as_posix())
+    return changed_sections
+
+
+def _mark_citation_section_sync_stale(paths: PaperRunPaths, changed_sections: list[str]) -> list[str]:
+    if not changed_sections:
+        return []
+    try:
+        manifest = load_manifest(paths.paper_id)
+    except FileNotFoundError:
+        return []
+    for rel_path in changed_sections:
+        _register_edited_section(manifest, Path(rel_path).stem, rel_path)
+    stale_artifacts = _mark_downstream_artifacts_stale(manifest)
+    save_manifest(manifest)
+    return stale_artifacts
+
+
 def _append_citation_stage_log(paths: PaperRunPaths, *, status: str, message: str) -> None:
     try:
         manifest = load_manifest(paths.paper_id)
@@ -376,34 +569,82 @@ def _append_citation_stage_log(paths: PaperRunPaths, *, status: str, message: st
     save_manifest(manifest)
 
 
+def _coerce_rerun_stage_for_dev(stage: str, manifest) -> PaperRunStage:
+    if stage == PaperRunStage.failed.value:
+        resolved = latest_failed_stage(manifest)
+        if resolved is not None:
+            return resolved
+    if stage == PaperRunStage.created.value:
+        return PaperRunStage.collecting
+    try:
+        stage_enum = PaperRunStage(stage)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"unknown paper stage {stage!r}") from exc
+    if stage_enum not in _EXECUTABLE_RERUN_STAGES:
+        raise HTTPException(status_code=422, detail=f"stage {stage_enum.value} cannot be rerun")
+    return stage_enum
+
+
+def _has_user_section_edits(manifest) -> bool:
+    return any(
+        entry.get("stage") == PaperRunStage.section_writing.value
+        and str(entry.get("status")) == "user_edited"
+        for entry in manifest.stage_log
+    )
+
+
+def _has_user_citation_edits(manifest) -> bool:
+    return any(
+        entry.get("stage") == PaperRunStage.literature_review.value
+        and str(entry.get("status")) in {"user_added", "user_removed"}
+        for entry in manifest.stage_log
+    )
+
+
+def _validate_rerun_request_for_dev(stage: PaperRunStage, manifest, body: PaperStageRerunRequest) -> JSONResponse | None:
+    if not body.continue_downstream:
+        return _error_response(422, "downstream_required", "Paper stage reruns must continue through downstream stages.")
+    if not body.include_previous_successful_output:
+        return _error_response(422, "history_required", "Paper stage reruns always load previous successful upstream history.")
+    if stage in _OUTLINE_RERUN_STAGES and not body.confirm_regenerate_outline:
+        return _error_response(409, "confirm_regenerate_outline", "Rerunning this stage regenerates the outline.")
+    if stage in _SECTION_OVERWRITE_STAGES and _has_user_section_edits(manifest) and not body.confirm_overwrite_sections:
+        return _error_response(409, "confirm_overwrite_sections", "Rerunning this stage may overwrite edited manuscript sections.")
+    if stage in _CITATION_OVERWRITE_STAGES and _has_user_citation_edits(manifest) and not body.confirm_overwrite_citations:
+        return _error_response(409, "confirm_overwrite_citations", "Rerunning this stage may overwrite user-edited citations.")
+    return None
+
+
+def _append_rerun_queued_for_dev(paths: PaperRunPaths, manifest, stage: PaperRunStage) -> None:
+    now = datetime.now(UTC).isoformat()
+    message = f"Rerun from {stage.value} queued with successful upstream history."
+    manifest.stage_log.append(
+        {
+            "stage": stage.value,
+            "status": "rerun_queued",
+            "ts": now,
+            "started_at": now,
+            "finished_at": None,
+            "duration_ms": None,
+            "message": message,
+        }
+    )
+    append_pipeline_event(
+        paths,
+        manifest,
+        "rerun_queued",
+        stage=stage.value,
+        status="queued",
+        started_at=now,
+        message=message,
+    )
+
+
 def _guard_result_summary(paths: PaperRunPaths, guard: str, rel_path: str) -> GuardResultSummary | None:
     report = _read_json_object(paths.root / rel_path)
     if not report:
         return None
-    raw_issues = report.get("issues") if isinstance(report.get("issues"), list) else []
-    issues = [issue for issue in raw_issues if isinstance(issue, dict)]
-    error_count = sum(1 for issue in issues if str(issue.get("severity") or "error") == "error")
-    warning_count = sum(1 for issue in issues if str(issue.get("severity") or "") == "warning")
-    sample_issues: list[GuardIssueSummary] = []
-    for issue in issues[:_MAX_SAMPLE_ISSUES]:
-        sample_issues.append(
-            GuardIssueSummary(
-                code=str(issue.get("code") or "unknown"),
-                message=str(issue.get("message") or ""),
-                severity=str(issue.get("severity") or "error"),
-                path=issue.get("path") if isinstance(issue.get("path"), str) else None,
-                context=issue.get("context") if isinstance(issue.get("context"), str) else None,
-            )
-        )
-    return GuardResultSummary(
-        guard=str(report.get("guard") or guard),
-        status=str(report.get("status") or ("fail" if error_count else "pass")),
-        issue_count=len(issues),
-        error_count=error_count,
-        warning_count=warning_count,
-        path=rel_path,
-        sample_issues=sample_issues,
-    )
+    return build_guard_result_summary(report, guard, max_sample_issues=_MAX_SAMPLE_ISSUES)
 
 
 def _score_total(score: object) -> float | None:
@@ -662,6 +903,14 @@ def _run_render_export_for_dev(paper_id: str, uploads_dir: Optional[str | Path])
         logger.exception("paper_agent dev_server: render/export background run failed for %s", paper_id)
 
 
+def _run_from_stage_for_dev(paper_id: str, stage: str, uploads_dir: Optional[str | Path]) -> None:
+    configure_uploads_dir(uploads_dir)
+    try:
+        run_from_stage(paper_id, stage, uploads_dir=uploads_dir)
+    except Exception:
+        logger.exception("paper_agent dev_server: rerun from %s failed for %s", stage, paper_id)
+
+
 def _list_papers(*, uploads_dir: Optional[str | Path], limit: int, offset: int) -> PaperRunListResponse:
     configure_uploads_dir(uploads_dir)
     root = papers_root()
@@ -820,8 +1069,23 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
             raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        paths = PaperRunPaths.for_paper(paper_id)
+        source_tasks = []
+        if paths.config.exists():
+            try:
+                config = PaperConfig.model_validate(
+                    json.loads(paths.config.read_text(encoding="utf-8"))
+                )
+                source_tasks = config.source_tasks
+            except Exception as exc:
+                logger.warning(
+                    "paper_generation: failed to parse config for %s: %s",
+                    paper_id,
+                    exc,
+                )
         return PaperRunDetail(
             **summary.model_dump(),
+            source_tasks=source_tasks,
             artifacts=manifest_artifacts(manifest),
             stage_log=manifest.stage_log,
             validation_summary=_validation_summary(PaperRunPaths.for_paper(paper_id)),
@@ -856,6 +1120,103 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
             "current_stage": manifest.current_stage.value,
         }
 
+    async def _queue_stage_rerun_for_dev(
+        paper_id: str,
+        stage: PaperRunStage,
+        body: PaperStageRerunRequest,
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, object] | JSONResponse:
+        try:
+            validate_paper_id(paper_id)
+            paths = PaperRunPaths.for_paper(paper_id)
+            if not paths.manifest.exists():
+                raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+            manifest = load_manifest(paper_id, uploads_dir=uploads_dir)
+        except HTTPException:
+            raise
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        if manifest.status in {PaperRunStatus.pending, PaperRunStatus.running}:
+            return _error_response(409, "run_active", f"stage rerun cannot start while run status is {manifest.status.value}")
+        if manifest.status == PaperRunStatus.awaiting_outline_approval and stage not in _OUTLINE_RERUN_STAGES:
+            return _error_response(409, "outline_approval_required", "Approve the outline before rerunning post-outline stages.")
+        validation_error = _validate_rerun_request_for_dev(stage, manifest, body)
+        if validation_error is not None:
+            return validation_error
+
+        manifest.status = PaperRunStatus.running
+        manifest.current_stage = stage
+        manifest.error_message = None
+        manifest.finished_at = None
+        _append_rerun_queued_for_dev(paths, manifest, stage)
+        save_manifest(manifest, uploads_dir=uploads_dir)
+        background_tasks.add_task(_run_from_stage_for_dev, paper_id, stage.value, uploads_dir)
+        return {
+            "paper_id": paper_id,
+            "status": PaperRunStatus.running.value,
+            "current_stage": stage.value,
+            "message": f"Rerun from {stage.value} queued.",
+        }
+
+    @app.post("/papers/{paper_id}/retry", response_model=None)
+    async def retry_failed_paper_stage(
+        paper_id: str,
+        background_tasks: BackgroundTasks,
+        body: PaperStageRerunRequest | None = None,
+    ) -> dict[str, object] | JSONResponse:
+        try:
+            validate_paper_id(paper_id)
+            paths = PaperRunPaths.for_paper(paper_id)
+            if not paths.manifest.exists():
+                raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+            manifest = load_manifest(paper_id, uploads_dir=uploads_dir)
+        except HTTPException:
+            raise
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if manifest.status != PaperRunStatus.failed:
+            return _error_response(409, "not_failed", "Only failed paper runs can use retry. Choose a stage rerun instead.")
+        stage = latest_failed_stage(manifest)
+        if stage is None:
+            return _error_response(409, "failed_stage_unknown", "Could not determine which stage failed.")
+        return await _queue_stage_rerun_for_dev(
+            paper_id,
+            stage,
+            body or PaperStageRerunRequest(
+                confirm_overwrite_sections=True,
+                confirm_overwrite_citations=True,
+                confirm_regenerate_outline=True,
+            ),
+            background_tasks,
+        )
+
+    @app.post("/papers/{paper_id}/stages/{stage}:rerun", response_model=None)
+    async def rerun_paper_stage(
+        paper_id: str,
+        stage: str,
+        background_tasks: BackgroundTasks,
+        body: PaperStageRerunRequest | None = None,
+    ) -> dict[str, object] | JSONResponse:
+        try:
+            validate_paper_id(paper_id)
+            paths = PaperRunPaths.for_paper(paper_id)
+            if not paths.manifest.exists():
+                raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+            manifest = load_manifest(paper_id, uploads_dir=uploads_dir)
+        except HTTPException:
+            raise
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        stage_enum = _coerce_rerun_stage_for_dev(stage, manifest)
+        return await _queue_stage_rerun_for_dev(paper_id, stage_enum, body or PaperStageRerunRequest(), background_tasks)
+
     @app.put("/papers/{paper_id}/outline")
     async def update_paper_outline(
         paper_id: str,
@@ -881,11 +1242,13 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
                 detail=f"outline cannot be edited at status {manifest.status.value}",
             )
 
-        paths.outline_json.parent.mkdir(parents=True, exist_ok=True)
-        paths.outline_json.write_text(
-            json.dumps(body.outline.model_dump(mode="json"), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        outline_payload = body.outline.model_dump(mode="json")
+        outline_changed = _outline_payload_changed(paths, outline_payload)
+        if outline_changed:
+            _mark_outline_modified_by_user(outline_payload)
+        _write_outline_artifacts(paths, manifest, outline_payload)
+        if outline_changed:
+            _append_outline_edit_stage_log(manifest, approved=body.approve)
 
         if not body.approve:
             manifest.status = PaperRunStatus.awaiting_outline_approval
@@ -965,6 +1328,11 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
         if not paths.sections_dir.is_dir() or not any(paths.sections_dir.glob("*.tex")):
             raise HTTPException(status_code=409, detail="section source has not been generated yet")
 
+        changed_sections = _sync_section_citations_to_selected_refs(paths)
+        _mark_citation_section_sync_stale(paths, changed_sections)
+        if changed_sections:
+            manifest = load_manifest(paper_id, uploads_dir=uploads_dir)
+
         now = datetime.now(UTC)
         manifest.status = PaperRunStatus.running
         manifest.current_stage = PaperRunStage.rendering
@@ -1013,6 +1381,10 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
             raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        changed_sections = _sync_section_citations_to_selected_refs(paths)
+        if changed_sections:
+            _mark_citation_section_sync_stale(paths, changed_sections)
+            manifest = load_manifest(paper_id, uploads_dir=uploads_dir)
         return PaperSectionListResponse(sections=_public_sections(paths, manifest))
 
     @app.put("/papers/{paper_id}/sections/{section_name}", response_model=PaperSectionUpdateResponse)
@@ -1111,6 +1483,8 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
             if not paths.manifest.exists():
                 raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
             selected_refs = _load_selected_refs(paths)
+            changed_sections = _sync_section_citations_to_selected_refs(paths, selected_refs)
+            _mark_citation_section_sync_stale(paths, changed_sections)
             outline = _read_json_object(paths.outline_json)
             return CitationsView(
                 paper_id=paper_id,
@@ -1213,19 +1587,33 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
         ref = next((item for item in selected_refs if item.key == key), None)
         if ref is None:
             return _error_response(404, "not_found", f"Citation {key} not found.")
-        if ref.added_by != "user":
-            return _error_response(403, "not_user_added", "Only user-added citations can be deleted.")
         if key in _collect_required_keys(_read_json_object(paths.outline_json)):
             return _error_response(409, "still_required", f"Citation {key} is still required by the outline.")
 
         remaining = [item for item in selected_refs if item.key != key]
         _write_selected_refs(paths, remaining)
+        changed_sections = sorted(
+            {
+                *_remove_citation_key_from_sections(paths, key),
+                *_sync_section_citations_to_selected_refs(paths, remaining),
+            }
+        )
+        stale_artifacts = _mark_citation_section_sync_stale(paths, changed_sections)
         _append_citation_stage_log(
             paths,
-            status="user_removed",
-            message=f"User removed citation {key}",
+            status="citation_removed",
+            message=(
+                f"Removed citation {key}; removed manuscript cite from "
+                f"{len(changed_sections)} section(s); {len(stale_artifacts)} downstream artifact(s) marked stale."
+            ),
         )
-        return CitationDeleteResponse(deleted=True, key=key)
+        return CitationDeleteResponse(
+            deleted=True,
+            key=key,
+            removed_from_sections=changed_sections,
+            downstream_stale=bool(stale_artifacts),
+            stale_artifacts=stale_artifacts,
+        )
 
     @app.get("/papers/{paper_id}/files")
     async def get_file_by_query(paper_id: str, path: str = Query(...)):
@@ -1255,6 +1643,13 @@ def create_app(*, uploads_dir: Optional[str | Path] = None, auto_run: bool | Non
             raise HTTPException(status_code=404, detail="File not found.")
         if target.is_dir():
             raise HTTPException(status_code=400, detail="Path is a directory.")
-        return FileResponse(target)
+        return FileResponse(
+            target,
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     return app

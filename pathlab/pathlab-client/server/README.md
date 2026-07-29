@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI / TaskWorker** 四个进程，并复用 `backend/` 下的共享模块。
+`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI / TaskWorker** 四个进程，并复用 `backend/` 下的共享模块。生成论文功能的主体实现位于同级 `paper_agent/`，由 Gateway 的 `/papers` 路由和 TaskWorker 的 `paper_generation.*` 描述符桥接调用。
 
 ## 当前启动方式
 
@@ -36,6 +36,7 @@ server/
 │   ├── helpers.py          # 测试工具函数
 │   └── test_*.py           # 路由 / 权限 / 任务 / 存储 / 结果 / AI 回归，完整清单以文件系统为准
 ├── gateway/                # 对外 API 网关
+├── paper_agent/            # Paper Agent 独立 uv 项目：论文生成、模板、引用、校验、PDF 渲染与导出
 ├── backend/
 │   ├── ai/                 # AI 服务与任务实现
 │   ├── auth/               # 认证模型与 FastAPI-Users 配置
@@ -52,10 +53,11 @@ server/
 
 | 服务 | 当前职责 |
 |------|----------|
-| Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置等对外 API |
+| Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置 / 论文生成等对外 API |
 | Preprocessing | WSI 基本信息、图像、缩略图、DZI、瓦片、热图辅助、ROI 提取与部分 COCO 标注导出逻辑 |
 | AI | 训练、推理、特征提取、聚合器 / 分类器注册与模型内部接口 |
-| TaskWorker | 独立消费 Redis 任务描述符，拥有 GPU 任务队列、取消订阅、运行时快照发布与训练恢复 |
+| TaskWorker | 独立消费 Redis 任务描述符，拥有 GPU 任务队列、取消订阅、运行时快照发布、训练恢复，并调度 `paper_generation.*` 论文生成描述符 |
+| Paper Agent | 独立 `uv` 项目，执行论文来源任务采集、大纲、章节、图表、引用、校验、PDF 渲染和导出；不是 `main.py` 直接拉起的常驻 HTTP 服务 |
 
 ## 任务调度边界
 
@@ -65,11 +67,29 @@ TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务�
 
 `/queue` 返回的运行时状态区分两类计数：GPU 队列内部的 `running_count` / `pending_count` / `queue_size`，以及 Redis 描述符队列的 `descriptor_pending_count` / `descriptor_processing_count` / `descriptor_dlq_count`。
 
+## Paper Agent 边界
+
+生成论文功能由 `server/paper_agent/` 提供主体实现。Gateway 通过 `server/gateway/paper_generation/` 挂载 `/papers` API，并继续负责认证、权限、数据库会话和前端兼容路径；TaskWorker 通过 `server/task_worker/jobs/paper_generation.py` 调用 Paper Agent。
+
+当前 paper descriptor 包括：
+
+- `paper_generation.run`
+- `paper_generation.run_until_outline`
+- `paper_generation.run_after_outline`
+- `paper_generation.regenerate_section`
+- `paper_generation.render_export`
+
+论文生成是 CPU / LLM / LaTeX 工作，不进入 GPU 训练队列。数据库只保存 `paper_generation_runs` 的轻量状态与配置；论文重产物位于 `uploads/paper_generation/{paper_id}/`，包括 `evidence/`、`drafts/sections/`、`validation/`、`final/<template>/` 和 `exports/` 等目录。
+
+Paper Agent 的本地模型接口配置位于 `paper_agent/.env`，示例在 `paper_agent/.env.example`。完整运行、引用、校验、PDF 渲染和导出说明见 [Paper Agent README](paper_agent/README.md)。
+
 ## 运行依赖
 
 - PostgreSQL：元数据与业务状态
 - Redis：任务队列、日志、进度与部分缓存
 - `uploads/`：WSI、特征缓存、模型、日志、标注及衍生文件
+- LaTeX 发行版：Paper Agent 渲染 PDF 时需要
+- OpenAI-compatible LLM relay / OpenRouter：Paper Agent 生成大纲、章节、引用综述和优化时需要
 
 默认配置可在 `backend/common/config.py` 中看到，包括：
 
@@ -81,7 +101,9 @@ TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务�
 - `main.py` 中 Preprocessing 允许多 worker，并支持 `PREPROCESSING_MAX_REQUESTS`
 - `main.py` 通过 `multiprocessing.Process` 拉起 3 个 uvicorn 服务和 1 个 TaskWorker，并统一清理子进程
 - Gateway 会在自身生命周期中初始化数据库、Redis 和若干启动期清理逻辑
+- Gateway 挂载 `/papers`，但 Paper Agent 实现保持在 `server/paper_agent/`
 - 任务队列初始化、GPU 探测与训练恢复由独立的 `TaskWorker` 进程负责，Gateway 通过 Redis 消费其发布的运行时快照与心跳
+- Paper Agent 的后台执行由 TaskWorker 的 `paper_generation.*` handler 调用，不占用 GPU 训练队列
 - AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
 - `main.spec` 用于将 sidecar 打包为独立可执行文件
 - `main.py` 会尊重预先设置的 `CUDA_VISIBLE_DEVICES`，否则在启动时自动探测坏卡并收缩可见 GPU 集合
@@ -99,6 +121,10 @@ python -m pytest server/tests/ -v -k "not pretrained"
 
 # 单独运行预训练模型测试（需 GPU，耗时较长）
 python -m pytest server/tests/test_ai_extractors_pretrained.py -v
+
+# 单独运行 Paper Agent 测试
+cd server/paper_agent
+uv run pytest
 ```
 
 安装测试依赖：
@@ -114,6 +140,7 @@ pip install -r server/requirements-test.txt
 - 任务 taxonomy 与调度：`test_task_taxonomy.py`、`test_*_task_taxonomy.py`、`test_training_*`、`test_resume_tasks.py`
 - 存储与数据一致性：`test_storage_*`、`test_uploads_boundary.py`、`test_dataset_repository_namespacing.py`
 - 结果、分析与推理：`test_ai_result_store*.py`、`test_*analysis*.py`、`test_batch_inference.py`、`test_patching_stage.py`
+- Paper Agent 集成边界：`server/paper_agent/tests/` 覆盖论文生成 API、引用、校验、模板渲染和 TaskWorker 桥接
 - AI 模型 smoke：`test_ai_models.py`、`test_fm_segmentation_decoders.py`；`test_ai_extractors_pretrained.py` 需 GPU / HuggingFace token，单独运行
 
 **测试设计要点**
@@ -127,6 +154,7 @@ pip install -r server/requirements-test.txt
 
 - [Permissions README](permissions/README.md)
 - [Gateway README](gateway/README.md)
+- [Paper Agent README](paper_agent/README.md)
 - [Backend Services README](backend/README.md)
 - [Database README](backend/database/README.md)
 - [Storage README](backend/storage/README.md)
