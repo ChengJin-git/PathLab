@@ -4,9 +4,23 @@ import type { OutlineDocument, PaperRunDetail } from '@renderer/api/papers'
 export const PAPER_ID_FIXTURE = 'paper-outline-auto-refresh'
 
 export const outlineDocumentFixture = {
-  plotting_plan: [],
+  plotting_plan: [
+    {
+      figure_id: 'figure_1',
+      kind: 'bar',
+      source: 'evidence/evidence_public.json',
+      design_objective: 'Compare fixture cohorts.',
+      backend: 'matplotlib',
+      plot_spec: {},
+    },
+  ],
   macro_lit_search: [],
-  micro_lit_clusters: [],
+  micro_lit_clusters: [
+    {
+      cluster: 'diagnostic accuracy',
+      queries: ['diagnostic accuracy pathology'],
+    },
+  ],
   section_plan: [
     {
       section: 'introduction',

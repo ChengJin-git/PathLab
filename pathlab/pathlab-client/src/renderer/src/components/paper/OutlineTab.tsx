@@ -351,7 +351,7 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
               {selectedModule === 'sections' ? (
                 <ModuleShell>
                   {activeOutline.section_plan.map((section, index) => (
-                    <div key={`${section.section}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div key={`section-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="text-xs font-semibold text-slate-400">{t('paperAgent.outline.sectionName')}</div>
@@ -399,7 +399,7 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
               {selectedModule === 'figures' ? (
                 <ModuleShell>
                   {activeOutline.plotting_plan.map((figure, index) => (
-                    <div key={`${figure.figure_id}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div key={`figure-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
                           <FieldLabel>{t('paperAgent.outline.figureId')}</FieldLabel>
@@ -435,7 +435,7 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
                     <TextArea value={listToText(activeOutline.macro_lit_search)} editing={editing} rows={5} onChange={(value) => updateDraft((outline) => ({ ...outline, macro_lit_search: textToList(value) }))} />
                   </div>
                   {activeOutline.micro_lit_clusters.map((cluster, index) => (
-                    <div key={`${cluster.cluster}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                    <div key={`cluster-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
                           <FieldLabel>{t('paperAgent.outline.cluster')}</FieldLabel>

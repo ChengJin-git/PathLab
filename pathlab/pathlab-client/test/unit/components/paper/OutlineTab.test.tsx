@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getPaperFileJson, type PaperRunDetail } from '@renderer/api/papers'
@@ -56,6 +57,12 @@ function renderOutlineTab(run: PaperRunDetail = runningOutliningRunFixture) {
   }
 }
 
+async function enterEditMode() {
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('button', { name: 'paperAgent.common.edit' }))
+  return user
+}
+
 describe('OutlineTab', () => {
   beforeEach(() => {
     vi.mocked(getPaperFileJson).mockReset()
@@ -109,6 +116,53 @@ describe('OutlineTab', () => {
 
     expect(await screen.findByText('Explain the auto-refresh regression fixture.')).toBeInTheDocument()
     expect(getPaperFileJson).toHaveBeenCalledTimes(1)
+  })
+
+  it('enters edit mode for a loaded outline', async () => {
+    vi.mocked(getPaperFileJson).mockResolvedValueOnce(outlineDocumentFixture)
+
+    renderOutlineTab(awaitingOutlineApprovalRunFixture)
+    await enterEditMode()
+
+    expect(screen.getByDisplayValue('introduction')).toBeInTheDocument()
+  })
+
+  it('keeps the section name focused while typing', async () => {
+    vi.mocked(getPaperFileJson).mockResolvedValueOnce(outlineDocumentFixture)
+
+    renderOutlineTab(awaitingOutlineApprovalRunFixture)
+    const user = await enterEditMode()
+    const sectionNameInput = screen.getByDisplayValue('introduction')
+
+    await user.type(sectionNameInput, '_updated')
+
+    expect(screen.getByDisplayValue('introduction_updated')).toHaveFocus()
+  })
+
+  it('keeps the figure id focused while typing', async () => {
+    vi.mocked(getPaperFileJson).mockResolvedValueOnce(outlineDocumentFixture)
+
+    renderOutlineTab(awaitingOutlineApprovalRunFixture)
+    const user = await enterEditMode()
+    await user.click(screen.getByRole('button', { name: /paperAgent\.outline\.moduleLabels\.figures/ }))
+    const figureIdInput = screen.getByDisplayValue('figure_1')
+
+    await user.type(figureIdInput, '_updated')
+
+    expect(screen.getByDisplayValue('figure_1_updated')).toHaveFocus()
+  })
+
+  it('keeps the literature cluster focused while typing', async () => {
+    vi.mocked(getPaperFileJson).mockResolvedValueOnce(outlineDocumentFixture)
+
+    renderOutlineTab(awaitingOutlineApprovalRunFixture)
+    const user = await enterEditMode()
+    await user.click(screen.getByRole('button', { name: /paperAgent\.outline\.moduleLabels\.literature/ }))
+    const clusterInput = screen.getByDisplayValue('diagnostic accuracy')
+
+    await user.type(clusterInput, '_updated')
+
+    expect(screen.getByDisplayValue('diagnostic accuracy_updated')).toHaveFocus()
   })
 
   it('loads the outline when the run reaches outline approval without a user click', async () => {
