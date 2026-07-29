@@ -143,6 +143,11 @@ export function OutlineTab({ paperId, run }: OutlineTabProps) {
   const continuingAfterOutline = run.status === 'running' && POST_OUTLINE_STAGES.has(run.current_stage)
   const dirty = outlineSignature(draft) !== outlineSignature(outlineQuery.data)
 
+  useEffect(() => {
+    if (!awaitingApproval || !isMissing) return
+    void outlineQuery.refetch()
+  }, [awaitingApproval, isMissing, outlineQuery.refetch])
+
   const updateDraft = (updater: (outline: OutlineDocument) => OutlineDocument) => {
     setDraft((current) => {
       if (!current) return current
