@@ -8,6 +8,7 @@ import {
 	ClipboardList,
 	Database,
 	FileSpreadsheet,
+	Folder,
 	Share2,
 	History,
 	Loader2,
@@ -18,6 +19,7 @@ import {
 	Paperclip,
 	Plus,
 	Send,
+	ShieldCheck,
 	Sparkles,
 	Square,
 	ThumbsDown,
@@ -4319,16 +4321,17 @@ export default function AIChatPage() {
 							onSubmit={handleSubmit}
 							className="relative group"
 						>
+							<div className="rounded-[28px] bg-gray-100/90 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.08)]">
 							<div
 								className={`
                 relative flex flex-col
-                bg-white/80 backdrop-blur-xl
-                rounded-[28px] shadow-[0_8px_32px_rgba(0,0,0,0.12)]
+                bg-white
+                rounded-[22px] shadow-sm
                 border transition-all duration-300
                 ${
 									voiceSessionActive
-										? "border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)] bg-white/90"
-										: "border-gray-200/50 hover:border-gray-300/80 hover:shadow-[0_8px_40px_rgba(0,0,0,0.15)]"
+										? "border-primary-300 shadow-[0_0_0_4px_rgba(102,126,234,0.15)]"
+										: "border-gray-200/60 hover:border-gray-300/80"
 								}
                 min-h-[56px] py-1.5
               `}
@@ -4588,6 +4591,28 @@ export default function AIChatPage() {
 										)}
 									</div>
 								</div>
+							</div>
+
+							<div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
+								<button
+									type="button"
+									className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600"
+									aria-label={t("aiChat.selectWorkspace")}
+								>
+									<Folder className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
+									{t("aiChat.selectWorkspace")}
+									<ChevronDown className="h-3 w-3 shrink-0 text-gray-400" aria-hidden />
+								</button>
+								<button
+									type="button"
+									className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600"
+									aria-label={t("aiChat.defaultPermission")}
+								>
+									<ShieldCheck className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
+									{t("aiChat.defaultPermission")}
+									<ChevronDown className="h-3 w-3 shrink-0 text-gray-400" aria-hidden />
+								</button>
+							</div>
 							</div>
 						</form>
 
