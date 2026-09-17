@@ -11,8 +11,10 @@ import {
 	FileSpreadsheet,
 	Folder,
 	FolderX,
+	Hammer,
 	Share2,
 	History,
+	Link2,
 	Loader2,
 	Menu,
 	MessageSquare,
@@ -327,18 +329,34 @@ export default function AIChatPage() {
 		name.toLowerCase().includes(workspaceQuery.trim().toLowerCase()),
 	);
 	const composerMenusRef = useRef<HTMLDivElement>(null);
+	const catalogMenuRef = useRef<HTMLDivElement>(null);
+	const [showCatalogMenu, setShowCatalogMenu] = useState(false);
+	const [catalogTab, setCatalogTab] = useState<"experts" | "skills" | "connectors">(
+		"experts",
+	);
 
 	useEffect(() => {
-		if (!composerMenu) return;
+		if (!composerMenu && !showCatalogMenu) return;
 		const onPointerDown = (event: PointerEvent) => {
-			const root = composerMenusRef.current;
-			if (root && !root.contains(event.target as Node)) {
+			const target = event.target as Node;
+			if (
+				composerMenu &&
+				composerMenusRef.current &&
+				!composerMenusRef.current.contains(target)
+			) {
 				setComposerMenu(null);
+			}
+			if (
+				showCatalogMenu &&
+				catalogMenuRef.current &&
+				!catalogMenuRef.current.contains(target)
+			) {
+				setShowCatalogMenu(false);
 			}
 		};
 		document.addEventListener("pointerdown", onPointerDown);
 		return () => document.removeEventListener("pointerdown", onPointerDown);
-	}, [composerMenu]);
+	}, [composerMenu, showCatalogMenu]);
 
 	// Generation lifecycle: single enum replaces 3 independent booleans
 	// idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
@@ -3410,6 +3428,64 @@ export default function AIChatPage() {
 							<Plus className="w-4 h-4" />
 							{t("aiChat.newResearchTask")}
 						</button>
+
+						<div ref={catalogMenuRef} className="relative mt-2">
+							<button
+								type="button"
+								onClick={() => setShowCatalogMenu((open) => !open)}
+								aria-expanded={showCatalogMenu}
+								className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+									showCatalogMenu
+										? "border border-amber-400/80 bg-white text-slate-800 shadow-sm"
+										: "border border-transparent text-slate-700 hover:bg-white/70"
+								}`}
+							>
+								<Sparkles className="h-4 w-4 shrink-0 text-amber-500" />
+								<span className="flex-1 text-left leading-snug">
+									{t("aiChat.sidebar.expertsSkillsConnectors")}
+								</span>
+							</button>
+							{showCatalogMenu && (
+								<div className="absolute left-full top-0 z-50 ml-2 w-52 rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg">
+									{(
+										[
+											{
+												id: "experts" as const,
+												icon: Sparkles,
+												label: t("aiChat.sidebar.experts"),
+											},
+											{
+												id: "skills" as const,
+												icon: Hammer,
+												label: t("aiChat.sidebar.skills"),
+											},
+											{
+												id: "connectors" as const,
+												icon: Link2,
+												label: t("aiChat.sidebar.connectors"),
+											},
+										] as const
+									).map(({ id, icon: Icon, label }) => (
+										<button
+											key={id}
+											type="button"
+											onClick={() => setCatalogTab(id)}
+											className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm ${
+												catalogTab === id
+													? "bg-gray-100 text-gray-900"
+													: "text-gray-700 hover:bg-gray-50"
+											}`}
+										>
+											<Icon className="h-4 w-4 shrink-0 text-gray-500" aria-hidden />
+											<span className="min-w-0 flex-1 truncate">{label}</span>
+											{catalogTab === id && (
+												<Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
+											)}
+										</button>
+									))}
+								</div>
+							)}
+						</div>
 					</div>
 
 					{/* Tools Section */}

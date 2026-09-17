@@ -1811,7 +1811,11 @@
       "analysisLab": "实验记录",
       "autoExperiment": "自动实验",
       "insightsReports": "更多工具",
-      "registerData": "注册数据"
+      "registerData": "注册数据",
+      "expertsSkillsConnectors": "专家 · 技能 · 连接器",
+      "experts": "专家",
+      "skills": "技能",
+      "connectors": "连接器"
     },
     "deleteAllHistory": "删除所有历史记录",
     "newResearchTask": "新建研究任务",

@@ -1811,7 +1811,11 @@
       "analysisLab": "Experiment Records",
       "autoExperiment": "Auto Experiment",
       "insightsReports": "More Tools",
-      "registerData": "Register Data"
+      "registerData": "Register Data",
+      "expertsSkillsConnectors": "Experts · Skills · Connectors",
+      "experts": "Experts",
+      "skills": "Skills",
+      "connectors": "Connectors"
     },
     "deleteAllHistory": "Delete all history",
     "newResearchTask": "New Research Task",
