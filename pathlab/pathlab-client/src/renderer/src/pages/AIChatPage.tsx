@@ -326,6 +326,19 @@ export default function AIChatPage() {
 	const matchedWorkspaces = workspaces.filter((name) =>
 		name.toLowerCase().includes(workspaceQuery.trim().toLowerCase()),
 	);
+	const composerMenusRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!composerMenu) return;
+		const onPointerDown = (event: PointerEvent) => {
+			const root = composerMenusRef.current;
+			if (root && !root.contains(event.target as Node)) {
+				setComposerMenu(null);
+			}
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		return () => document.removeEventListener("pointerdown", onPointerDown);
+	}, [composerMenu]);
 
 	// Generation lifecycle: single enum replaces 3 independent booleans
 	// idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
@@ -4608,7 +4621,10 @@ export default function AIChatPage() {
 								</div>
 							</div>
 
-							<div className="relative flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
+							<div
+								ref={composerMenusRef}
+								className="relative flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2"
+							>
 								<div className="relative">
 									<button
 										type="button"
