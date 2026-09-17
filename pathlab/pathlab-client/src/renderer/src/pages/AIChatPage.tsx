@@ -1,6 +1,7 @@
 import {
 	Beaker,
 	Bot,
+	Check,
 	ChevronDown,
 	ChevronLeft,
 	ChevronRight,
@@ -9,6 +10,7 @@ import {
 	Database,
 	FileSpreadsheet,
 	Folder,
+	FolderX,
 	Share2,
 	History,
 	Loader2,
@@ -318,6 +320,12 @@ export default function AIChatPage() {
 	const [allowFullAccess, setAllowFullAccess] = useState(false);
 	const [showNewWorkspace, setShowNewWorkspace] = useState(false);
 	const [newWorkspaceName, setNewWorkspaceName] = useState("");
+	const [workspaces, setWorkspaces] = useState<string[]>([]);
+	const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(null);
+	const [workspaceQuery, setWorkspaceQuery] = useState("");
+	const matchedWorkspaces = workspaces.filter((name) =>
+		name.toLowerCase().includes(workspaceQuery.trim().toLowerCase()),
+	);
 
 	// Generation lifecycle: single enum replaces 3 independent booleans
 	// idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
@@ -4614,7 +4622,7 @@ export default function AIChatPage() {
 										}
 									>
 										<Folder className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
-										{t("aiChat.selectWorkspace")}
+										{selectedWorkspace || t("aiChat.selectWorkspace")}
 										<ChevronDown
 											className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${
 												composerMenu === "workspace" ? "rotate-180" : ""
@@ -4628,13 +4636,38 @@ export default function AIChatPage() {
 												<Search className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden />
 												<input
 													type="search"
+													value={workspaceQuery}
+													onChange={(e) => setWorkspaceQuery(e.target.value)}
 													placeholder={t("aiChat.searchWorkspace")}
 													className="w-full bg-transparent text-xs text-gray-700 outline-none placeholder:text-gray-400"
 												/>
 											</div>
-											<p className="px-2 py-3 text-center text-xs text-gray-400">
-												{t("aiChat.noMatchingWorkspace")}
-											</p>
+											{matchedWorkspaces.length === 0 ? (
+												<p className="px-2 py-3 text-center text-xs text-gray-400">
+													{t("aiChat.noMatchingWorkspace")}
+												</p>
+											) : (
+												<ul className="max-h-40 overflow-y-auto py-1">
+													{matchedWorkspaces.map((name) => (
+														<li key={name}>
+															<button
+																type="button"
+																className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+																onClick={() => {
+																	setSelectedWorkspace(name);
+																	setComposerMenu(null);
+																}}
+															>
+																<Folder className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
+																<span className="min-w-0 flex-1 truncate">{name}</span>
+																{selectedWorkspace === name && (
+																	<Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
+																)}
+															</button>
+														</li>
+													))}
+												</ul>
+											)}
 											<div className="my-1 border-t border-gray-100" />
 											<button
 												type="button"
@@ -4654,6 +4687,17 @@ export default function AIChatPage() {
 											>
 												<Folder className="h-3.5 w-3.5 text-gray-500" aria-hidden />
 												{t("aiChat.openLocalFolder")}
+											</button>
+											<button
+												type="button"
+												className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+												onClick={() => {
+													setSelectedWorkspace(null);
+													setComposerMenu(null);
+												}}
+											>
+												<FolderX className="h-3.5 w-3.5 text-gray-500" aria-hidden />
+												{t("aiChat.noWorkspace")}
 											</button>
 										</div>
 									)}
@@ -4773,7 +4817,15 @@ export default function AIChatPage() {
 							<button
 								type="button"
 								disabled={!newWorkspaceName.trim()}
-								onClick={() => setShowNewWorkspace(false)}
+								onClick={() => {
+									const name = newWorkspaceName.trim();
+									if (!name) return;
+									setWorkspaces((prev) =>
+										prev.includes(name) ? prev : [...prev, name],
+									);
+									setSelectedWorkspace(name);
+									setShowNewWorkspace(false);
+								}}
 								className="rounded-xl bg-gray-400 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60 enabled:bg-gray-800 enabled:hover:bg-gray-900"
 							>
 								{t("common.confirm")}
