@@ -316,6 +316,8 @@ export default function AIChatPage() {
 		null,
 	);
 	const [allowFullAccess, setAllowFullAccess] = useState(false);
+	const [showNewWorkspace, setShowNewWorkspace] = useState(false);
+	const [newWorkspaceName, setNewWorkspaceName] = useState("");
 
 	// Generation lifecycle: single enum replaces 3 independent booleans
 	// idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
@@ -4637,6 +4639,11 @@ export default function AIChatPage() {
 											<button
 												type="button"
 												className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+												onClick={() => {
+													setComposerMenu(null);
+													setNewWorkspaceName("");
+													setShowNewWorkspace(true);
+												}}
 											>
 												<Plus className="h-3.5 w-3.5 text-gray-500" aria-hidden />
 												{t("aiChat.newWorkspace")}
@@ -4712,6 +4719,69 @@ export default function AIChatPage() {
 					</div>
 				</div>
 			</div>
+
+			{showNewWorkspace && (
+				<div
+					className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="new-workspace-title"
+					onKeyDown={(e) => {
+						if (e.key === "Escape") setShowNewWorkspace(false);
+					}}
+					onClick={() => setShowNewWorkspace(false)}
+				>
+					<div
+						className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div className="mb-3 flex items-start justify-between gap-3">
+							<h3
+								id="new-workspace-title"
+								className="text-base font-semibold text-gray-900"
+							>
+								{t("aiChat.newWorkspace")}
+							</h3>
+							<button
+								type="button"
+								onClick={() => setShowNewWorkspace(false)}
+								className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+								aria-label={t("common.close")}
+							>
+								<X className="h-4 w-4" />
+							</button>
+						</div>
+						<p className="mb-4 text-sm leading-6 text-gray-500">
+							{t("aiChat.newWorkspaceHint")}
+						</p>
+						<input
+							type="text"
+							value={newWorkspaceName}
+							onChange={(e) => setNewWorkspaceName(e.target.value)}
+							placeholder={t("aiChat.workspaceNamePlaceholder")}
+							autoFocus
+							className="mb-5 w-full rounded-xl border-0 bg-gray-100 px-3.5 py-2.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:ring-2 focus:ring-gray-300"
+						/>
+						<div className="flex justify-end gap-2">
+							<button
+								type="button"
+								onClick={() => setShowNewWorkspace(false)}
+								className="rounded-xl bg-gray-100 px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-200"
+							>
+								{t("common.cancel")}
+							</button>
+							<button
+								type="button"
+								disabled={!newWorkspaceName.trim()}
+								onClick={() => setShowNewWorkspace(false)}
+								className="rounded-xl bg-gray-400 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60 enabled:bg-gray-800 enabled:hover:bg-gray-900"
+							>
+								{t("common.confirm")}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 
 			{/* Delete Confirmation Modal */}
 			{deleteConfirmId && (
