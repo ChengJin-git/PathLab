@@ -18,6 +18,7 @@ import {
 	MicOff,
 	Paperclip,
 	Plus,
+	Search,
 	Send,
 	ShieldCheck,
 	Sparkles,
@@ -311,6 +312,10 @@ export default function AIChatPage() {
 		} catch {}
 		return ""
 	});
+	const [composerMenu, setComposerMenu] = useState<"workspace" | "permission" | null>(
+		null,
+	);
+	const [allowFullAccess, setAllowFullAccess] = useState(false);
 
 	// Generation lifecycle: single enum replaces 3 independent booleans
 	// idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
@@ -4593,25 +4598,110 @@ export default function AIChatPage() {
 								</div>
 							</div>
 
-							<div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
-								<button
-									type="button"
-									className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600"
-									aria-label={t("aiChat.selectWorkspace")}
-								>
-									<Folder className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
-									{t("aiChat.selectWorkspace")}
-									<ChevronDown className="h-3 w-3 shrink-0 text-gray-400" aria-hidden />
-								</button>
-								<button
-									type="button"
-									className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600"
-									aria-label={t("aiChat.defaultPermission")}
-								>
-									<ShieldCheck className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
-									{t("aiChat.defaultPermission")}
-									<ChevronDown className="h-3 w-3 shrink-0 text-gray-400" aria-hidden />
-								</button>
+							<div className="relative flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2">
+								<div className="relative">
+									<button
+										type="button"
+										className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600"
+										aria-expanded={composerMenu === "workspace"}
+										aria-label={t("aiChat.selectWorkspace")}
+										onClick={() =>
+											setComposerMenu((m) =>
+												m === "workspace" ? null : "workspace",
+											)
+										}
+									>
+										<Folder className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
+										{t("aiChat.selectWorkspace")}
+										<ChevronDown
+											className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${
+												composerMenu === "workspace" ? "rotate-180" : ""
+											}`}
+											aria-hidden
+										/>
+									</button>
+									{composerMenu === "workspace" && (
+										<div className="absolute bottom-full left-0 z-50 mb-2 w-64 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
+											<div className="flex items-center gap-2 rounded-lg bg-gray-50 px-2.5 py-2">
+												<Search className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden />
+												<input
+													type="search"
+													placeholder={t("aiChat.searchWorkspace")}
+													className="w-full bg-transparent text-xs text-gray-700 outline-none placeholder:text-gray-400"
+												/>
+											</div>
+											<p className="px-2 py-3 text-center text-xs text-gray-400">
+												{t("aiChat.noMatchingWorkspace")}
+											</p>
+											<div className="my-1 border-t border-gray-100" />
+											<button
+												type="button"
+												className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+											>
+												<Plus className="h-3.5 w-3.5 text-gray-500" aria-hidden />
+												{t("aiChat.newWorkspace")}
+											</button>
+											<button
+												type="button"
+												className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
+											>
+												<Folder className="h-3.5 w-3.5 text-gray-500" aria-hidden />
+												{t("aiChat.openLocalFolder")}
+											</button>
+										</div>
+									)}
+								</div>
+
+								<div className="relative">
+									<button
+										type="button"
+										className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600"
+										aria-expanded={composerMenu === "permission"}
+										aria-label={t("aiChat.defaultPermission")}
+										onClick={() =>
+											setComposerMenu((m) =>
+												m === "permission" ? null : "permission",
+											)
+										}
+									>
+										<ShieldCheck className="h-3.5 w-3.5 shrink-0 text-gray-500" aria-hidden />
+										{t("aiChat.defaultPermission")}
+										<ChevronDown
+											className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${
+												composerMenu === "permission" ? "rotate-180" : ""
+											}`}
+											aria-hidden
+										/>
+									</button>
+									{composerMenu === "permission" && (
+										<div className="absolute bottom-full left-0 z-50 mb-2 w-72 rounded-xl border border-gray-200 bg-white p-3 shadow-lg">
+											<p className="text-xs leading-5 text-gray-500">
+												{t("aiChat.defaultPermissionHint")}
+											</p>
+											<div className="my-2.5 border-t border-gray-100" />
+											<div className="flex items-center justify-between gap-3">
+												<span className="text-xs font-medium text-gray-800">
+													{t("aiChat.allowFullAccess")}
+												</span>
+												<button
+													type="button"
+													role="switch"
+													aria-checked={allowFullAccess}
+													onClick={() => setAllowFullAccess((v) => !v)}
+													className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+														allowFullAccess ? "bg-gray-900" : "bg-gray-200"
+													}`}
+												>
+													<span
+														className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+															allowFullAccess ? "translate-x-4" : ""
+														}`}
+													/>
+												</button>
+											</div>
+										</div>
+									)}
+								</div>
 							</div>
 							</div>
 						</form>
