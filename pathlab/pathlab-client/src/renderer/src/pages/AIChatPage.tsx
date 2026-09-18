@@ -418,7 +418,6 @@ export default function AIChatPage() {
 	const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
 	// UI state
-	const [showWelcomeHero, setShowWelcomeHero] = useState(true);
 	const [toastMessage, setToastMessage] = useState<{
 		type: "error" | "success" | "info";
 		message: string;
@@ -1129,7 +1128,6 @@ export default function AIChatPage() {
 		setImageAttachments([]);
 		setFileAttachments([]);
 		setShowHistory(false);
-		setShowWelcomeHero(true);
 		setFeedbacks(new Map());
 		setPendingFeedbackIds(new Set());
 		setHelpfulnessFeedbacks(new Map());
@@ -1249,7 +1247,6 @@ export default function AIChatPage() {
 			setCurrentConversationMeta(conv);
 		setCurrentConversationId(conversationId);
 		setShowHistory(false);
-			setShowWelcomeHero(false);
 			setPendingFeedbackIds(new Set());
 
 			// Update URL to reflect the current conversation (for page refresh support)
@@ -1685,8 +1682,6 @@ export default function AIChatPage() {
 
 	const handleScenarioCardClick = (card: (typeof SCENARIO_CARDS)[number]) => {
 		setInput(t(card.promptKey));
-		setShowWelcomeHero(false);
-		// Focus the textarea
 		setTimeout(() => textareaRef.current?.focus(), 100);
 	};
 
@@ -2300,7 +2295,6 @@ export default function AIChatPage() {
 			timestamp: new Date(),
 		};
 
-		setShowWelcomeHero(false);
 		// Reset scroll lock so auto-scroll follows the new response
 		userScrolledAwayRef.current = false;
 		setHasScrolledAway(false);
@@ -2919,7 +2913,6 @@ export default function AIChatPage() {
 				0,
 				messageIndex,
 			);
-			setShowWelcomeHero(false);
 			userScrolledAwayRef.current = false;
 			setHasScrolledAway(false);
 			setMessages(messagesUpToUser);
@@ -3352,6 +3345,8 @@ export default function AIChatPage() {
 		[],
 	);
 
+	const composerCentered = messages.length === 0;
+
 	return (
 		<section
 			aria-label={t("aiChat.chatRegion")}
@@ -3720,25 +3715,8 @@ export default function AIChatPage() {
 					aria-label={t("aiChat.chatMessages")}
 					aria-live="polite"
 				>
-					<div className="px-4 pb-40 pt-6 sm:px-6 lg:px-8">
+					<div className={`px-4 pt-6 sm:px-6 lg:px-8 ${messages.length === 0 ? "pb-6" : "pb-40"}`}>
 						<div className="mx-auto max-w-4xl space-y-6">
-							{messages.length === 0 && showWelcomeHero && (
-								<div className="flex min-h-[calc(100vh-16rem)] flex-col items-center justify-center space-y-4 pb-12 pt-6 text-center">
-									<div className="space-y-1.5 sm:space-y-2">
-										<div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
-										<div className="flex h-11 w-11 items-center justify-center rounded-[1.35rem] border border-primary-300/60 bg-gradient-to-br from-primary-500 to-primary-700 shadow-[var(--shadow-elevated)] sm:h-12 sm:w-12">
-												<Sparkles className="w-5 h-5 sm:w-7 sm:h-7 text-white" />
-											</div>
-										</div>
-										<h1 className="bg-gradient-to-r from-slate-950 via-slate-700 to-slate-950 bg-clip-text text-xl font-semibold tracking-[-0.04em] text-transparent sm:text-3xl md:text-4xl">
-											{t("aiChat.welcomeTitle")}
-										</h1>
-										<p className="mx-auto max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
-											{t("aiChat.welcomeDescription")}
-										</p>
-									</div>
-								</div>
-							)}
 							{/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
 							{(() => {
 								// Find the index of the last message that contains a TaskConfigCard
@@ -4309,39 +4287,31 @@ export default function AIChatPage() {
 								});
 							})()}
 
-							{/* Live Input Preview Bubble - shows text input or voice transcript in real-time */}
-							{(realtimePartialText || input.trim()) && (
+							{realtimePartialText && (
 								<div className="flex gap-4 flex-row-reverse items-start animate-in fade-in slide-in-from-bottom-2 duration-200 mb-6">
-									{/* Avatar */}
 									<div className="flex-shrink-0">
 										<div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-md ring-2 ring-white">
 											<User className="w-5 h-5 text-white" />
 										</div>
 									</div>
-
-									{/* Message Content */}
 									<div className="flex-1 min-w-0 max-w-[80%] flex flex-col items-end">
-										{/* Message Bubble - slightly transparent for preview effect */}
 										<div className="relative px-5 py-3.5 text-[15px] leading-7 shadow-sm bg-gradient-to-br from-primary-400 to-primary-500 text-white rounded-[20px] rounded-tr-sm selection:bg-white/30 opacity-80 max-h-[120px] overflow-y-auto scrollbar-hide">
 											<div className="whitespace-pre-wrap break-words flex items-center gap-2">
-												<span>{realtimePartialText || input}</span>
-												{/* Show typing indicator only for voice input */}
-												{realtimePartialText && (
-													<span className="inline-flex gap-0.5">
-														<span
-															className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce"
-															style={{ animationDelay: "0ms" }}
-														/>
-														<span
-															className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce"
-															style={{ animationDelay: "150ms" }}
-														/>
-														<span
-															className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce"
-															style={{ animationDelay: "300ms" }}
-														/>
-													</span>
-												)}
+												<span>{realtimePartialText}</span>
+												<span className="inline-flex gap-0.5">
+													<span
+														className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce"
+														style={{ animationDelay: "0ms" }}
+													/>
+													<span
+														className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce"
+														style={{ animationDelay: "150ms" }}
+													/>
+													<span
+														className="w-1.5 h-1.5 bg-white/70 rounded-full animate-bounce"
+														style={{ animationDelay: "300ms" }}
+													/>
+												</span>
 											</div>
 										</div>
 									</div>
@@ -4353,12 +4323,31 @@ export default function AIChatPage() {
 					</div>
 				</div>
 
-				{/* Input Area - Floating Island - Fixed to viewport bottom */}
 				<div
-				className={`fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? "lg:left-[18rem]" : "lg:left-[3.75rem]"}`}
+				className={`z-30 px-4 pointer-events-none transition-[left] duration-300 ease-in-out ${
+					composerCentered
+						? `absolute inset-0 flex flex-col items-center justify-center ${showHistory ? "lg:left-[18rem]" : "lg:left-[3.75rem]"}`
+						: `fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] left-0 right-0 ${showHistory ? "lg:left-[18rem]" : "lg:left-[3.75rem]"}`
+				}`}
 			>
-					<div className="max-w-4xl mx-auto pointer-events-auto relative">
-						{/* Jump to bottom button */}
+					<div className="max-w-4xl w-full mx-auto pointer-events-auto relative">
+						{composerCentered && (
+							<div className="mb-6 space-y-1.5 text-center sm:space-y-2">
+								<div className="mb-1 flex items-center justify-center sm:mb-2">
+									<div className="flex h-11 w-11 items-center justify-center rounded-[1.35rem] border border-primary-300/60 bg-gradient-to-br from-primary-500 to-primary-700 shadow-[var(--shadow-elevated)] sm:h-12 sm:w-12">
+										<Sparkles className="h-5 w-5 text-white sm:h-7 sm:w-7" />
+									</div>
+								</div>
+								<h1 className="bg-gradient-to-r from-slate-950 via-slate-700 to-slate-950 bg-clip-text text-xl font-semibold tracking-[-0.04em] text-transparent sm:text-3xl md:text-4xl">
+									{t("aiChat.welcomeTitle")}
+								</h1>
+								<p className="mx-auto max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
+									{t("aiChat.welcomeDescription")}
+								</p>
+							</div>
+						)}
+
+						{!composerCentered && (
 						<div
 							className={`absolute -top-16 left-1/2 -translate-x-1/2 transition-all duration-300 pointer-events-auto z-40 ${
 								hasScrolledAway ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
@@ -4385,6 +4374,7 @@ export default function AIChatPage() {
 							</button>
 							</Tooltip>
 						</div>
+						)}
 
 						<div className="mb-2 flex items-center gap-1.5 overflow-x-auto scrollbar-hide px-0.5">
 							{SCENARIO_CARDS.map((card) => {
