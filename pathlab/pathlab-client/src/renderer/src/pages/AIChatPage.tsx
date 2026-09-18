@@ -11,10 +11,8 @@ import {
 	FileSpreadsheet,
 	Folder,
 	FolderX,
-	Hammer,
 	Share2,
 	History,
-	Link2,
 	Loader2,
 	Menu,
 	MessageSquare,
@@ -70,7 +68,6 @@ import {
 	updateMessage,
 	type WebSearchResultEvent,
 } from "../api";
-// Extracted modules
 import AssistantMessage, {
 	isInternalOnlyMessage,
 	parseCancelTaskNow,
@@ -90,7 +87,6 @@ import { removeImageRecommendationBlock } from "../components/chat/ImageRecommen
 import { removeMetricConfigBlock } from "../components/chat/MetricCard";
 import { removeModelListBlock } from "../components/chat/ModelListCard";
 import { removeNavigateBlock } from "../components/chat/NavigationCard";
-// Chat component imports still needed by AIChatPage main body
 import { removeOptionsBlock } from "../components/chat/OptionButtons";
 import {
 	parsePatchInferenceConfig,
@@ -110,6 +106,7 @@ import { removeVoiceControlBlock } from "../components/chat/VoiceControlBlock";
 import { AudioVisualizer } from "../components/common/AudioVisualizer";
 import { MULTIMODAL_MODELS } from "../constants/models";
 import { SCENARIO_CARDS } from "../constants/scenarios";
+import { EXPERTS, type Expert } from "../constants/experts";
 import { BEFORE_LOGOUT_EVENT, useAuth } from "../contexts/AuthContext";
 import {
 	isPdfContextMessage,
@@ -329,34 +326,26 @@ export default function AIChatPage() {
 		name.toLowerCase().includes(workspaceQuery.trim().toLowerCase()),
 	);
 	const composerMenusRef = useRef<HTMLDivElement>(null);
-	const catalogMenuRef = useRef<HTMLDivElement>(null);
-	const [showCatalogMenu, setShowCatalogMenu] = useState(false);
+	const [showCatalog, setShowCatalog] = useState(false);
 	const [catalogTab, setCatalogTab] = useState<"experts" | "skills" | "connectors">(
 		"experts",
 	);
+	const [selectedExpert, setSelectedExpert] = useState<Expert | null>(null);
 
 	useEffect(() => {
-		if (!composerMenu && !showCatalogMenu) return;
+		if (!composerMenu) return;
 		const onPointerDown = (event: PointerEvent) => {
 			const target = event.target as Node;
 			if (
-				composerMenu &&
 				composerMenusRef.current &&
 				!composerMenusRef.current.contains(target)
 			) {
 				setComposerMenu(null);
 			}
-			if (
-				showCatalogMenu &&
-				catalogMenuRef.current &&
-				!catalogMenuRef.current.contains(target)
-			) {
-				setShowCatalogMenu(false);
-			}
 		};
 		document.addEventListener("pointerdown", onPointerDown);
 		return () => document.removeEventListener("pointerdown", onPointerDown);
-	}, [composerMenu, showCatalogMenu]);
+	}, [composerMenu]);
 
 	// Generation lifecycle: single enum replaces 3 independent booleans
 	// idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
@@ -1128,6 +1117,8 @@ export default function AIChatPage() {
 		setImageAttachments([]);
 		setFileAttachments([]);
 		setShowHistory(false);
+		setShowCatalog(false);
+		setSelectedExpert(null);
 		setFeedbacks(new Map());
 		setPendingFeedbackIds(new Set());
 		setHelpfulnessFeedbacks(new Map());
@@ -1247,6 +1238,8 @@ export default function AIChatPage() {
 			setCurrentConversationMeta(conv);
 		setCurrentConversationId(conversationId);
 		setShowHistory(false);
+			setShowCatalog(false);
+			setSelectedExpert(null);
 			setPendingFeedbackIds(new Set());
 
 			// Update URL to reflect the current conversation (for page refresh support)
@@ -1680,9 +1673,23 @@ export default function AIChatPage() {
 		// biome-ignore lint/correctness/useExhaustiveDependencies: handleFileSelect intentionally excluded to avoid re-registering paste listener
 	}, [handleFileSelect]);
 
-	const handleScenarioCardClick = (card: (typeof SCENARIO_CARDS)[number]) => {
-		setInput(t(card.promptKey));
+	const fillComposerPrompt = (promptKey: string) => {
+		setInput(t(promptKey));
 		setTimeout(() => textareaRef.current?.focus(), 100);
+	};
+
+	const handleScenarioCardClick = (card: (typeof SCENARIO_CARDS)[number]) => {
+		fillComposerPrompt(card.promptKey);
+	};
+
+	const handleExpertClick = (expert: Expert) => {
+		setSelectedExpert(expert);
+	};
+
+	const summonExpert = (promptKey: string) => {
+		fillComposerPrompt(promptKey);
+		setSelectedExpert(null);
+		setShowCatalog(false);
 	};
 
 	// --- Shared chat generation helpers (DRY handleSubmit / handleRegenerate) ---
@@ -3376,9 +3383,6 @@ export default function AIChatPage() {
 				/>
 			)}
 
-			{/* Gemini-style Sidebar - always rendered, inline on desktop, overlay on mobile */}
-			{/* Mobile: always fixed + translate-x slide (never participates in flex layout) */}
-			{/* Desktop: inline flex child with width animation */}
 			<nav
 				className={`flex flex-col overflow-hidden border-r border-[color:var(--surface-border)] bg-[color:var(--surface-work)]/94 backdrop-blur-xl
           fixed top-16 bottom-0 left-0 z-40 w-72 transition-transform duration-300 ease-in-out
@@ -3388,7 +3392,6 @@ export default function AIChatPage() {
         `}
 				aria-label={t("aiChat.history")}
 			>
-				{/* Sidebar Top Icons - hidden on mobile (header hamburger handles it) */}
 					<div
 						className={getSidebarToggleBarClassName(showHistory)}
 					>
@@ -3409,11 +3412,9 @@ export default function AIChatPage() {
 					</Tooltip>
 				</div>
 
-				{/* Expanded sidebar content - always rendered, fade in/out with opacity */}
 				<div
 					className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out ${showHistory ? "opacity-100" : "opacity-0 pointer-events-none"}`}
 				>
-					{/* New Research Task Button */}
 					<div className="px-3 pb-3 pt-4 lg:pt-3">
 						<button
 							type="button"
@@ -3424,63 +3425,24 @@ export default function AIChatPage() {
 							{t("aiChat.newResearchTask")}
 						</button>
 
-						<div ref={catalogMenuRef} className="relative mt-2">
-							<button
-								type="button"
-								onClick={() => setShowCatalogMenu((open) => !open)}
-								aria-expanded={showCatalogMenu}
-								className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
-									showCatalogMenu
-										? "border border-amber-400/80 bg-white text-slate-800 shadow-sm"
-										: "border border-transparent text-slate-700 hover:bg-white/70"
-								}`}
-							>
-								<Sparkles className="h-4 w-4 shrink-0 text-amber-500" />
-								<span className="flex-1 text-left leading-snug">
-									{t("aiChat.sidebar.expertsSkillsConnectors")}
-								</span>
-							</button>
-							{showCatalogMenu && (
-								<div className="absolute left-full top-0 z-50 ml-2 w-52 rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg">
-									{(
-										[
-											{
-												id: "experts" as const,
-												icon: Sparkles,
-												label: t("aiChat.sidebar.experts"),
-											},
-											{
-												id: "skills" as const,
-												icon: Hammer,
-												label: t("aiChat.sidebar.skills"),
-											},
-											{
-												id: "connectors" as const,
-												icon: Link2,
-												label: t("aiChat.sidebar.connectors"),
-											},
-										] as const
-									).map(({ id, icon: Icon, label }) => (
-										<button
-											key={id}
-											type="button"
-											onClick={() => setCatalogTab(id)}
-											className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm ${
-												catalogTab === id
-													? "bg-gray-100 text-gray-900"
-													: "text-gray-700 hover:bg-gray-50"
-											}`}
-										>
-											<Icon className="h-4 w-4 shrink-0 text-gray-500" aria-hidden />
-											<span className="min-w-0 flex-1 truncate">{label}</span>
-											{catalogTab === id && (
-												<Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden />
-											)}
-										</button>
-									))}
-								</div>
-							)}
-						</div>
+						<button
+							type="button"
+							onClick={() => {
+								setShowCatalog(true);
+								setCatalogTab("experts");
+							}}
+							aria-pressed={showCatalog}
+							className={`mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+								showCatalog
+									? "border border-amber-400/80 bg-white text-slate-800 shadow-sm"
+									: "border border-transparent text-slate-700 hover:bg-white/70"
+							}`}
+						>
+							<Sparkles className="h-4 w-4 shrink-0 text-amber-500" />
+							<span className="flex-1 text-left leading-snug">
+								{t("aiChat.sidebar.expertsSkillsConnectors")}
+							</span>
+						</button>
 					</div>
 
 					{/* Tools Section */}
@@ -3706,6 +3668,211 @@ export default function AIChatPage() {
 
 			{/* Main Chat Area */}
 			<div className="relative z-10 flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0.04)_100%)]">
+				{showCatalog && (
+					<div className="absolute inset-0 z-20 overflow-y-auto bg-white">
+						<div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 lg:px-8">
+							<div className="mb-6 flex gap-1 rounded-full bg-gray-100 p-1 w-fit">
+								{(
+									[
+										{ id: "experts" as const, label: t("aiChat.sidebar.experts") },
+										{ id: "skills" as const, label: t("aiChat.sidebar.skills") },
+										{
+											id: "connectors" as const,
+											label: t("aiChat.sidebar.connectors"),
+										},
+									] as const
+								).map(({ id, label }) => (
+									<button
+										key={id}
+										type="button"
+										onClick={() => setCatalogTab(id)}
+										className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+											catalogTab === id
+												? "bg-gray-900 text-white"
+												: "text-gray-600 hover:text-gray-900"
+										}`}
+									>
+										{label}
+									</button>
+								))}
+							</div>
+
+							{catalogTab === "experts" ? (
+								<>
+									<h2 className="mb-3 text-sm font-semibold text-gray-900">
+										{t("aiChat.experts.featuredScenes")}
+									</h2>
+									<div className="mb-8 flex gap-3 overflow-x-auto pb-1 scrollbar-hide">
+										{EXPERTS.map((expert) => {
+											const Icon = expert.icon;
+											return (
+												<button
+													key={`scene-${expert.id}`}
+													type="button"
+													onClick={() => setSelectedExpert(expert)}
+													className={`min-w-[200px] flex-1 rounded-2xl bg-gradient-to-br p-4 text-left ${expert.sceneClass}`}
+												>
+													<p className="text-sm font-semibold text-gray-900">
+														{t(expert.sceneKey)}
+													</p>
+													<div className="mt-3 flex items-center gap-2">
+														<div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/80">
+															<Icon
+																className={`h-3.5 w-3.5 ${expert.iconColor}`}
+																aria-hidden
+															/>
+														</div>
+														<span className="truncate text-xs text-gray-700">
+															{t(expert.titleKey)}
+														</span>
+													</div>
+												</button>
+											);
+										})}
+									</div>
+
+									<h2 className="mb-4 text-lg font-semibold text-gray-900">
+										{t("aiChat.sidebar.experts")}
+									</h2>
+									<div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+										{EXPERTS.map((expert) => {
+											const Icon = expert.icon;
+											return (
+												<button
+													key={expert.id}
+													type="button"
+													onClick={() => handleExpertClick(expert)}
+													className="flex flex-col items-start rounded-2xl border border-gray-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-gray-300 hover:bg-gray-50"
+												>
+													<div className="flex w-full items-start gap-3">
+														<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-50">
+															<Icon
+																className={`h-5 w-5 ${expert.iconColor}`}
+																aria-hidden
+															/>
+														</div>
+														<span className="min-w-0">
+															<span className="block text-sm font-semibold text-gray-900">
+																{t(expert.titleKey)}
+															</span>
+															<span className="mt-1 block text-xs leading-5 text-gray-500 line-clamp-2">
+																{t(expert.descriptionKey)}
+															</span>
+														</span>
+													</div>
+													<div className="mt-3 flex flex-wrap gap-1.5">
+														{expert.tagKeys.map((tagKey) => (
+															<span
+																key={tagKey}
+																className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600"
+															>
+																{t(tagKey)}
+															</span>
+														))}
+													</div>
+												</button>
+											);
+										})}
+									</div>
+								</>
+							) : (
+								<p className="py-16 text-center text-sm text-gray-400">
+									{t("aiChat.sidebar.catalogEmpty")}
+								</p>
+							)}
+						</div>
+
+						{selectedExpert && (
+							<div
+								className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+								role="dialog"
+								aria-modal="true"
+								aria-labelledby="expert-detail-title"
+								onClick={() => setSelectedExpert(null)}
+								onKeyDown={(e) => {
+									if (e.key === "Escape") setSelectedExpert(null);
+								}}
+							>
+								<div
+									className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl"
+									onClick={(e) => e.stopPropagation()}
+								>
+									<div className="flex items-start gap-3">
+										{(() => {
+											const Icon = selectedExpert.icon;
+											return (
+												<div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gray-50">
+													<Icon
+														className={`h-6 w-6 ${selectedExpert.iconColor}`}
+														aria-hidden
+													/>
+												</div>
+											);
+										})()}
+										<div className="min-w-0 flex-1">
+											<h3
+												id="expert-detail-title"
+												className="text-base font-semibold text-gray-900"
+											>
+												{t(selectedExpert.titleKey)}
+											</h3>
+											<p className="mt-1 text-sm leading-6 text-gray-600">
+												{t(selectedExpert.descriptionKey)}
+											</p>
+										</div>
+										<button
+											type="button"
+											onClick={() => setSelectedExpert(null)}
+											className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+											aria-label={t("common.close")}
+										>
+											<X className="h-4 w-4" />
+										</button>
+									</div>
+
+									<div className="mt-3 flex flex-wrap gap-1.5">
+										{selectedExpert.tagKeys.map((tagKey) => (
+											<span
+												key={tagKey}
+												className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600"
+											>
+												{t(tagKey)}
+											</span>
+										))}
+									</div>
+
+									<button
+										type="button"
+										onClick={() => summonExpert(selectedExpert.promptKey)}
+										className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
+									>
+										<Send className="h-4 w-4" />
+										{t("aiChat.experts.summon")}
+									</button>
+
+									<div className="mt-5">
+										<p className="mb-2 text-sm font-medium text-gray-900">
+											{t("aiChat.experts.canHelpWith")}
+										</p>
+										<div className="space-y-2">
+											{selectedExpert.helpKeys.map((helpKey) => (
+												<button
+													key={helpKey}
+													type="button"
+													onClick={() => summonExpert(helpKey)}
+													className="flex w-full items-center gap-2 rounded-xl bg-gray-50 px-3 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-100"
+												>
+													<span className="min-w-0 flex-1">{t(helpKey)}</span>
+													<MessageSquare className="h-4 w-4 shrink-0 text-gray-400" />
+												</button>
+											))}
+										</div>
+									</div>
+								</div>
+							</div>
+						)}
+					</div>
+				)}
 				<div
 					ref={messagesContainerRef}
 					data-chat-messages-container
@@ -4323,6 +4490,7 @@ export default function AIChatPage() {
 					</div>
 				</div>
 
+				{!showCatalog && (
 				<div
 				className={`z-30 px-4 pointer-events-none transition-[left] duration-300 ease-in-out ${
 					composerCentered
@@ -4828,6 +4996,7 @@ export default function AIChatPage() {
 						</div>
 					</div>
 				</div>
+				)}
 			</div>
 
 			{showNewWorkspace && (

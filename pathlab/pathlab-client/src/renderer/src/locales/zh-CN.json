@@ -1815,7 +1815,54 @@
       "expertsSkillsConnectors": "专家 · 技能 · 连接器",
       "experts": "专家",
       "skills": "技能",
-      "connectors": "连接器"
+      "connectors": "连接器",
+      "catalogEmpty": "即将推出"
+    },
+    "experts": {
+      "featuredScenes": "精选场景",
+      "canHelpWith": "专家可以帮助你",
+      "summon": "召唤专家",
+      "trainingAdvisor": {
+        "title": "训练顾问",
+        "description": "推荐架构与训练配置，并协助提交训练任务。",
+        "scene": "模型训练",
+        "tag1": "训练",
+        "tag2": "架构",
+        "help1": "我有已注册的 WSI 数据集，用于肿瘤与正常分类，请推荐训练配置。",
+        "help2": "这个队列做 MIL 应该用哪种特征提取器和聚合器？",
+        "help3": "请帮我为病理数据集提交一个合理默认参数的训练任务。"
+      },
+      "validationOperator": {
+        "title": "验证操作员",
+        "description": "使用已训练模型进行推理或外部验证。",
+        "scene": "验证与测试",
+        "tag1": "推理",
+        "tag2": "外部验证",
+        "help1": "我有已训练模型，想在 hold-out 集上做推理。",
+        "help2": "如何在另一个数据集上做外部验证？",
+        "help3": "请帮我判断该用批量推理还是外部评估。"
+      },
+      "slideAnalyst": {
+        "title": "切片分析师",
+        "description": "浏览已注册的 WSI 或 patch，并做热图或 patch 分析。",
+        "scene": "切片审阅",
+        "tag1": "WSI",
+        "tag2": "热图",
+        "help1": "帮我浏览已注册的 WSI，并打开需要审阅的切片。",
+        "help2": "我想对预测切片做热图可视化。",
+        "help3": "对附上的病理图像做 patch 级分析。"
+      },
+      "literatureScout": {
+        "title": "文献侦察",
+        "description": "检索病理 AI 相关论文与方法。",
+        "scene": "文献调研",
+        "tag1": "论文",
+        "tag2": "方法",
+        "prompt": "我需要针对某个病理 AI 任务的文献与方法。请检索近期论文，并总结适合我的数据集和目标的方法。",
+        "help1": "查找 WSI MIL 分类的近期论文，并总结常见设置。",
+        "help2": "病理切片生存预测有哪些常用方法？",
+        "help3": "检索计算病理中外部验证的实践与文献。"
+      }
     },
     "deleteAllHistory": "删除所有历史记录",
     "newResearchTask": "新建研究任务",

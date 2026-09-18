@@ -1,8 +1,3 @@
-/**
- * Scenario cards for the AI Chat guided experience.
- *
- * Extracted from AIChatPage.tsx to reduce file size.
- */
 import { Rocket, Database, FlaskConical, Microscope } from 'lucide-react'
 
 export const SCENARIO_CARDS = [

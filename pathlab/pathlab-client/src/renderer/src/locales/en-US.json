@@ -1815,7 +1815,54 @@
       "expertsSkillsConnectors": "Experts · Skills · Connectors",
       "experts": "Experts",
       "skills": "Skills",
-      "connectors": "Connectors"
+      "connectors": "Connectors",
+      "catalogEmpty": "Coming soon"
+    },
+    "experts": {
+      "featuredScenes": "Featured Scenes",
+      "canHelpWith": "Expert can help with",
+      "summon": "Summon Expert",
+      "trainingAdvisor": {
+        "title": "Training Advisor",
+        "description": "Recommend architecture and training config, then submit a training task.",
+        "scene": "Model Training",
+        "tag1": "Training",
+        "tag2": "Architecture",
+        "help1": "I have a registered WSI dataset for tumor vs normal classification. Recommend a training config.",
+        "help2": "Which feature extractor and aggregator should I use for MIL on this cohort?",
+        "help3": "Help me submit a training task with sensible defaults for my pathology dataset."
+      },
+      "validationOperator": {
+        "title": "Validation Operator",
+        "description": "Run inference or external validation with a trained model.",
+        "scene": "Validation & Testing",
+        "tag1": "Inference",
+        "tag2": "External validation",
+        "help1": "I have a trained model and want to run inference on a hold-out set.",
+        "help2": "How do I run external validation on a different dataset?",
+        "help3": "Help me pick between batch inference and external evaluation for my goal."
+      },
+      "slideAnalyst": {
+        "title": "Slide Analyst",
+        "description": "Browse registered WSIs or patches and run heatmap or patch analysis.",
+        "scene": "Slide Review",
+        "tag1": "WSI",
+        "tag2": "Heatmap",
+        "help1": "Help me browse registered WSIs and open the right slides for review.",
+        "help2": "I want a heatmap visualization for a predicted slide.",
+        "help3": "Run patch-level analysis on an attached pathology image."
+      },
+      "literatureScout": {
+        "title": "Literature Scout",
+        "description": "Search papers and methods for a pathology AI question.",
+        "scene": "Literature",
+        "tag1": "Papers",
+        "tag2": "Methods",
+        "prompt": "I need literature and methods for a pathology AI task. Search recent papers and summarize approaches that fit my dataset and goal.",
+        "help1": "Find recent papers on MIL classification for WSIs and summarize the common setups.",
+        "help2": "What methods work well for survival prediction from pathology slides?",
+        "help3": "Search literature for external validation practices in computational pathology."
+      }
     },
     "deleteAllHistory": "Delete all history",
     "newResearchTask": "New Research Task",
