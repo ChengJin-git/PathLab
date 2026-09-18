@@ -3722,10 +3722,8 @@ export default function AIChatPage() {
 				>
 					<div className="px-4 pb-40 pt-6 sm:px-6 lg:px-8">
 						<div className="mx-auto max-w-4xl space-y-6">
-							{/* Gemini-style Welcome Hero with Scenario Cards */}
 							{messages.length === 0 && showWelcomeHero && (
 								<div className="flex min-h-[calc(100vh-16rem)] flex-col items-center justify-center space-y-4 pb-12 pt-6 text-center">
-									{/* Hero Title */}
 									<div className="space-y-1.5 sm:space-y-2">
 										<div className="flex items-center justify-center gap-2 mb-1 sm:mb-2">
 										<div className="flex h-11 w-11 items-center justify-center rounded-[1.35rem] border border-primary-300/60 bg-gradient-to-br from-primary-500 to-primary-700 shadow-[var(--shadow-elevated)] sm:h-12 sm:w-12">
@@ -3738,37 +3736,6 @@ export default function AIChatPage() {
 										<p className="mx-auto max-w-xl text-sm leading-7 text-slate-500 sm:text-base">
 											{t("aiChat.welcomeDescription")}
 										</p>
-									</div>
-
-									{/* Scenario Cards */}
-									<div className="mt-2 grid w-full max-w-2xl grid-cols-2 gap-2 sm:gap-3">
-										{SCENARIO_CARDS.map((card) => {
-											const Icon = card.icon;
-											return (
-												<button
-													type="button"
-													key={card.id}
-													onClick={() => handleScenarioCardClick(card)}
-													className={`${card.bgColor} group rounded-[1.35rem] border border-white/70 p-3 text-left shadow-[var(--shadow-soft)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-elevated)] sm:p-4`}
-												>
-													<div className="flex items-start gap-2.5 sm:gap-3">
-														<div
-														className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/80 bg-white/90 shadow-[var(--shadow-soft)] transition-shadow group-hover:shadow-[var(--shadow-elevated)] sm:h-9 sm:w-9`}
-														>
-															<Icon className={`w-4 h-4 ${card.iconColor}`} />
-														</div>
-														<div className="min-w-0">
-															<h3 className="mb-0.5 text-xs font-semibold tracking-[-0.02em] text-slate-950 sm:text-sm">
-																{t(card.titleKey)}
-															</h3>
-															<p className="text-xs leading-snug text-slate-600">
-																{t(card.descriptionKey)}
-															</p>
-														</div>
-													</div>
-												</button>
-											);
-										})}
 									</div>
 								</div>
 							)}
@@ -4417,6 +4384,23 @@ export default function AIChatPage() {
 								)}
 							</button>
 							</Tooltip>
+						</div>
+
+						<div className="mb-2 flex items-center gap-1.5 overflow-x-auto scrollbar-hide px-0.5">
+							{SCENARIO_CARDS.map((card) => {
+								const Icon = card.icon;
+								return (
+									<button
+										type="button"
+										key={card.id}
+										onClick={() => handleScenarioCardClick(card)}
+										className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-gray-200/80 bg-white/95 px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition-colors hover:bg-white hover:text-gray-900"
+									>
+										<Icon className={`h-3.5 w-3.5 ${card.iconColor}`} aria-hidden />
+										{t(card.titleKey)}
+									</button>
+								);
+							})}
 						</div>
 
 						<form
