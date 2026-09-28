@@ -4494,7 +4494,7 @@ export default function AIChatPage() {
 				<div
 				className={`z-30 px-4 pointer-events-none transition-[left] duration-300 ease-in-out ${
 					composerCentered
-						? `absolute inset-0 flex flex-col items-center justify-center ${showHistory ? "lg:left-[18rem]" : "lg:left-[3.75rem]"}`
+						? "absolute inset-0 flex flex-col items-center justify-center"
 						: `fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] left-0 right-0 ${showHistory ? "lg:left-[18rem]" : "lg:left-[3.75rem]"}`
 				}`}
 			>
