@@ -1,0 +1,138 @@
+# PathLab 1.0.8 - Python Backend Dependencies (2026-11-07)
+# ================================================
+# Compatible direct pins. Upgrade decisions: ../deploy/guides/DEPENDENCIES.md.
+# Exact production migration: ../deploy/guides/MIGRATION.md.
+# This file alone cannot reproduce the custom Python 3.13/NumPy build.
+
+# Web Framework
+# Keep the bundle's browser-use/Laminar OpenTelemetry 1.39 integration compatible.
+fastapi==0.141.1
+uvicorn==0.54.0
+starlette==1.10.0
+anyio==4.16.0
+pydantic==2.14.3
+
+# Authentication
+fastapi-users==15.0.5
+fastapi-users-db-sqlalchemy==7.0.0
+pyjwt==2.15.1
+python-jose[cryptography]==3.5.0
+bcrypt==5.0.0
+email-validator==2.3.0
+
+# Database (PostgreSQL)
+# fastapi-users-db-sqlalchemy 7 requires SQLAlchemy <2.1.
+sqlalchemy==2.0.57
+asyncpg==0.32.0
+
+# Image Processing
+pillow==12.3.0
+numpy==1.26.4
+# OpenCV 4.12+ requires NumPy 2.x on Python 3.12; keep 4.11 with numpy==1.26.4.
+opencv-python==4.11.0.86
+zarr==2.18.7
+
+# WSI Processing
+git+https://github.com/MrPeterJin/ASlide.git@ff82ffeb694aa61f124972e011e5fe4136fa883b#egg=Aslide
+openslide-python==1.4.7
+# Last release supporting the NumPy 1.x slide readers.
+tifffile==2026.3.3
+pycocotools==2.0.11
+
+# AI/ML Core
+# Linux host model ABI; native desktop and sandbox use their own pinned Torch pair.
+torch==2.12.1
+torchvision==0.27.1
+torchaudio==2.11.0
+nvidia-ml-py==13.615.71  # pynvml for system-level GPU memory detection
+timm==1.0.27
+transformers==5.12.1
+huggingface-hub==1.20.1
+safetensors==0.8.0
+git+https://github.com/qubvel-org/segmentation_models.pytorch.git@e8e5607ae00a382f3912a5e13a034c23e19f72ec#egg=segmentation-models-pytorch
+
+# AI Utilities
+einops==0.8.2
+einops-exts==0.0.4
+grad-cam==1.5.7
+# Host metrics/survival pair. Research pickle loading stays in the separate
+# sklearn 1.9.0 sandbox; do not load those artifacts in this host interpreter.
+scikit-learn==1.7.2
+scikit-survival==0.26.0
+joblib==1.6.0
+threadpoolctl==3.8.0
+scipy==1.17.1
+nystrom-attention==0.0.14
+torchmetrics==1.9.0
+omegaconf==2.4.0
+
+# Feature Extractors Dependencies
+open_clip_torch==3.3.0
+# CONCH upstream metadata pins old timm/transformers/tokenizers versions.
+# PathLab keeps modern versions for other extractors and validates CONCH at
+# runtime. Use the verified bundle to retain its validated package metadata.
+git+https://github.com/Mahmoodlab/CONCH.git@141cc09c7d4ff33d8eda562bd75169b457f71a62#egg=conch
+
+# Survival Analysis
+lifelines==0.30.3
+
+# HTTP Client
+httpx==0.28.1
+psutil==7.2.2
+aiohttp==3.14.5
+requests==2.34.2
+websockets==16.1.1
+beautifulsoup4==4.15.0  # HTML parsing for fulltext SOTA extraction
+
+# Utilities
+python-multipart==0.0.33
+h5py==3.16.0
+pandas==2.3.3
+tqdm==4.70.1
+python-dotenv==1.2.4
+PyYAML==6.0.3
+packaging==26.3
+json-repair==0.64.6
+python-docx==1.2.0
+markdown-it-py==4.2.0
+matplotlib==3.11.2
+
+# OpenRouter LLM Integration
+openai==2.54.0
+
+# Voice Recognition (DashScope)
+dashscope==2.0.4
+
+# Redis (in-memory data store for caching, progress tracking, task state)
+redis==8.1.0
+
+# PDF reading and personal file-library RAG (provision weights via deploy/prepare-knowledge.py)
+lancedb==0.41.0
+# PyArrow 26 requires NumPy 2 at import time, beyond its declared metadata.
+pyarrow==24.0.0
+sentence-transformers==6.2.0
+llama-index-core==0.14.25
+jieba==0.42.1
+openpyxl==3.1.5
+PyMuPDF==1.27.2.3
+pypdf==7.0.0
+pymupdf4llm==1.27.2.3
+pymupdf-layout==1.27.2.3
+markdownify==1.2.3
+# PP-OCRv6-small, provisioned with deploy/prepare-ocr.py, runs only on ONNX CPU.
+rapidocr==3.10.0
+onnxruntime==1.31.1
+pyclipper==1.4.0
+shapely==2.2.0
+colorlog==6.12.0
+opencv-python-headless==4.11.0.86
+
+# Email Notifications
+
+# OpenCode V2 runs as a separate executable inside the research sandbox.
+jsonschema==4.26.0
+kaggle==2.2.5
+
+# Logging
+loguru==0.7.3
+coloredlogs==15.0.1

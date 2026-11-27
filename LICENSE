@@ -1,0 +1,65 @@
+PathLab Academic Non-Commercial License
+
+Copyright (c) 2026 The Hong Kong University of Science and Technology.
+All rights reserved.
+
+1. Definitions
+
+   "Software" means the PathLab source code, documentation and other materials in this
+   repository, excluding the third-party components described in Section 6.
+
+   "Non-Commercial Purpose" means research, teaching or personal study carried out by an
+   individual or by an academic, governmental or non-profit institution, where neither the
+   Software nor any output of the Software is sold, licensed for a fee, used to provide a paid
+   service, or used to develop a commercial product.
+
+   "You" means the individual or institution exercising the rights granted by this License.
+
+2. Grant of rights
+
+   Subject to the terms of this License, the copyright holder grants You a worldwide,
+   royalty-free, non-exclusive, non-transferable license to use, reproduce, modify and
+   distribute the Software and modifications of it, solely for Non-Commercial Purposes.
+
+3. Conditions
+
+   (a) Any copy or modified version of the Software that You distribute must include this
+       License and the copyright notice above, and modified files must carry a notice stating
+       that You changed them.
+   (b) Publications that use the Software or results produced with it must cite the PathLab
+       manuscript listed in the README and CITATION.cff.
+   (c) You may not use the names of the copyright holder, the authors or their institutions to
+       endorse or promote products derived from the Software without prior written permission.
+
+4. Commercial use
+
+   Any use that is not a Non-Commercial Purpose, including use by or on behalf of a for-profit
+   entity, requires a separate written license. Contact Prof. Hao Chen, The Hong Kong University
+   of Science and Technology (jhc@ust.hk).
+
+5. Not for clinical use
+
+   The Software is a research tool. It has not been cleared or approved by any regulatory
+   authority and must not be used to make or support diagnostic or treatment decisions for
+   patients.
+
+6. Third-party components
+
+   The Software depends on and includes third-party components (for example the packages listed
+   in app/server/requirements.txt and app/package.json, and the skill collections under
+   app/server/backend/autoresearch/skill_library/). Each is governed by its own license. Model
+   weights are not distributed with the Software; their use is governed by the terms of their
+   publishers, which You must accept separately.
+
+7. Disclaimer of warranty and limitation of liability
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+   BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+   NON-INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+8. Termination
+
+   This License terminates automatically if You breach any of its terms. Sections 5 to 7 survive
+   termination.

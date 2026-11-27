@@ -1,0 +1,5 @@
+# Optional per-session survival metrics environment, separate from persisted
+# sklearn 1.9 research predictors in the base SIF. Install into a session venv.
+numpy==1.26.4
+scikit-learn==1.7.2
+scikit-survival==0.26.0

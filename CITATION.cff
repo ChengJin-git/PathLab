@@ -1,0 +1,72 @@
+cff-version: 1.2.0
+message: "If you use PathLab, please cite the paper below."
+title: "PathLab"
+type: software
+repository-code: "https://github.com/ChengJin-git/PathLab"
+url: "https://pathlab.cse.ust.hk"
+license-url: "https://github.com/ChengJin-git/PathLab/blob/main/LICENSE"
+authors:
+  - family-names: Ma
+    given-names: Jiabo
+  - family-names: Jin
+    given-names: Cheng
+  - family-names: Wang
+    given-names: Yihui
+  - family-names: Chen
+    given-names: Hao
+    email: jhc@ust.hk
+    affiliation: "The Hong Kong University of Science and Technology"
+preferred-citation:
+  type: article
+  title: "Democratizing and accelerating AI-driven pathology research through agentic intelligence"
+  journal: "arXiv preprint arXiv:2606.20677"
+  year: 2026
+  url: "https://arxiv.org/abs/2606.20677"
+  identifiers:
+    - type: other
+      value: "arXiv:2606.20677"
+  authors:
+    - family-names: Ma
+      given-names: Jiabo
+    - family-names: Jin
+      given-names: Cheng
+    - family-names: Wang
+      given-names: Yihui
+    - family-names: Jiang
+      given-names: Hao
+    - family-names: Liang
+      given-names: Ling
+    - family-names: Xu
+      given-names: Yingxue
+    - family-names: Hou
+      given-names: Junlin
+    - family-names: Guo
+      given-names: Zhengrui
+    - family-names: Zhang
+      given-names: Zhengyu
+    - family-names: Xia
+      given-names: Yifei
+    - family-names: Wang
+      given-names: Hongyi
+    - family-names: Zhou
+      given-names: Fengtao
+    - family-names: Xu
+      given-names: Zhe
+    - family-names: Zhou
+      given-names: Huajun
+    - family-names: Ouyang
+      given-names: Jiarui
+    - family-names: Zeng
+      given-names: Qian
+    - family-names: Tang
+      given-names: On Ki
+    - family-names: Park
+      given-names: Eunhyang
+    - family-names: Glass
+      given-names: Carolyn
+    - family-names: Chan
+      given-names: Ronald Cheong Kin
+    - family-names: Liang
+      given-names: Li
+    - family-names: Chen
+      given-names: Hao

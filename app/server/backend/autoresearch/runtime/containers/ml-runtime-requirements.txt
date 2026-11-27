@@ -1,0 +1,33 @@
+# Shared Apptainer / Docker model runtime. Torch is pinned by the image recipe.
+# sklearn and the NumPy 1.x reader ABI must match existing research artifacts.
+numpy==1.26.4
+scikit-learn==1.9.0
+pillow==13.0.0
+opencv-python-headless==4.11.0.86
+openslide-python==1.4.7
+openslide-bin==4.0.1.2
+tifffile==2026.3.3
+h5py==3.16.0
+pandas==2.3.3
+scipy==1.17.1
+tabulate==0.10.0
+tqdm==4.70.1
+timm==1.0.30
+transformers==5.12.1
+huggingface-hub==1.33.0
+safetensors==0.8.0
+einops==0.8.2
+einops-exts==0.0.4
+nystrom-attention==0.0.14
+torchmetrics==1.9.0
+omegaconf==2.4.0
+open_clip_torch==3.3.0
+lifelines==0.30.3
+kaggle==2.2.5
+requests==2.34.2
+httpx==0.28.1
+python-dotenv==1.2.4
+nvidia-ml-py==13.615.71
+segmentation-models-pytorch==0.6.0
+matplotlib==3.11.2
+seaborn==0.13.2

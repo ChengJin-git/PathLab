@@ -1,0 +1,456 @@
+/**
+ * DataSelectionStep Component
+ *
+ * Step 2: Dataset and file selection for training.
+ * This is a complex step with dataset grid, file table, and split configuration.
+ */
+
+import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
+import { Card } from '../ui/card'
+import {
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  FolderOpen,
+  Plus,
+  FileText,
+  ArrowRight,
+  Check,
+  Eye,
+} from 'lucide-react'
+import { TaskType, SplitStrategy, isAnnotationTask, isSurvivalTask } from '../../constants/training'
+import { KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
+import { DatasetSummary } from '../../api'
+import { WSIDataTable } from './WSIDataTable'
+import { DataSplitConfig } from './DataSplitConfig'
+
+export interface DataSelectionStepProps {
+  // Task type
+  taskType: TaskType
+  dataLevel: 'wsi' | 'patch'
+
+  // Dataset list
+  datasets: DatasetSummary[]
+  datasetsLoading: boolean
+
+  // Selected dataset
+  selectedDatasetId: string | null
+  selectedDatasetName: string
+  onSelectDataset: (id: string | null, name: string) => void
+  onBackToDatasets: () => void
+
+  // Dataset-level selection (lazy file loading)
+  filesExpanded: boolean
+  onCollapseFiles: () => void
+  isWholeDatasetSelected: boolean
+  selectedDatasetFileCount: number
+
+  // File list
+  items: WSIItem[]
+  loading: boolean
+
+  // Selection
+  selectedIds: Set<string>
+  toggleSelection: (id: string) => void
+  allPageSelected: boolean
+  allFilteredSelected: boolean
+  handleSelectPage: () => void
+  handleSelectAllFiltered: () => void
+
+  // Case grouping
+  hasMultiSlideCases: boolean
+  groupedByCaseId: [string, WSIItem[]][]
+  expandedCases: Set<string>
+  toggleCaseExpansion: (caseId: string) => void
+  paginatedCases: [string, WSIItem[]][] | null
+  isPatchDataset: boolean
+  totalCases: number
+
+  // Pagination
+  currentPage: number
+  setCurrentPage: (page: number) => void
+  pageSize: number
+  setPageSize: (size: number) => void
+  totalPages: number
+  pageSlides: WSIItem[]
+  setSelectedIds: (ids: Set<string>) => void
+
+  // Search
+  searchQuery: string
+  setSearchQuery: (query: string) => void
+
+  // Split strategy
+  splitStrategy: SplitStrategy
+  setSplitStrategy: (strategy: SplitStrategy) => void
+  kFoldSplits: number
+  setKFoldSplits: (k: number) => void
+  stratified: boolean
+  setStratified: (value: boolean) => void
+  kFoldValidation: KFoldValidation
+  randomSplitValidation: RandomSplitValidation
+  hasPreDefinedSplits: boolean
+  predefinedSplitCounts: { train: number; val: number; test: number }
+
+  // Actions
+  onEditClick: (item: WSIItem) => void
+  onDeleteClick: (wsiId: string, label?: string, filename?: string) => void
+  onBatchEditClick: () => void
+  onBatchDeleteClick: () => void
+
+  // Helpers
+  formatFileSize: (bytes: number) => string
+  getFileType: (fileExtension: string | null, size: number | null, authoritativeDataType?: 'wsi' | 'patch' | null) => 'WSI' | 'Patch'
+
+  // Navigation
+  canProceed: boolean
+  onBack: () => void
+  onNext: () => void
+}
+
+export function DataSelectionStep(props: DataSelectionStepProps) {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const {
+    taskType,
+    dataLevel,
+    datasets,
+    datasetsLoading,
+    selectedDatasetId,
+    selectedDatasetName,
+    onSelectDataset,
+    onBackToDatasets,
+    filesExpanded,
+    onCollapseFiles,
+    isWholeDatasetSelected,
+    selectedDatasetFileCount,
+    items,
+    loading,
+    selectedIds,
+    toggleSelection,
+    allPageSelected,
+    allFilteredSelected,
+    handleSelectPage,
+    handleSelectAllFiltered,
+    hasMultiSlideCases,
+    groupedByCaseId,
+    expandedCases,
+    toggleCaseExpansion,
+    paginatedCases,
+    isPatchDataset,
+    totalCases,
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
+    totalPages,
+    pageSlides,
+    setSelectedIds,
+    searchQuery,
+    setSearchQuery,
+    formatFileSize,
+    getFileType,
+    splitStrategy,
+    setSplitStrategy,
+    kFoldSplits,
+    setKFoldSplits,
+    stratified,
+    setStratified,
+    kFoldValidation,
+    randomSplitValidation,
+    hasPreDefinedSplits,
+    predefinedSplitCounts,
+    onEditClick,
+    onDeleteClick,
+    onBatchEditClick,
+    onBatchDeleteClick,
+    canProceed,
+    onBack,
+    onNext,
+  } = props
+
+  return (
+    <>
+      <Card className="p-3 sm:p-6 border-gray-100 shadow-sm">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 sm:mb-6">
+          <div className="flex-1 min-w-0">
+            {selectedDatasetId && filesExpanded ? (
+              <DatasetSelectedHeader
+                selectedDatasetName={selectedDatasetName}
+                selectedCount={selectedIds.size}
+                onBack={onCollapseFiles}
+              />
+            ) : (
+              <DatasetSelectHeader selectedCount={isWholeDatasetSelected ? selectedDatasetFileCount : selectedIds.size} />
+            )}
+          </div>
+          <div className="flex shrink-0">
+            <button
+              onClick={() => navigate('/upload')}
+              className="w-full sm:w-auto px-4 py-2 sm:py-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 transition-all text-xs sm:text-sm font-bold shadow-md shadow-primary-500/20 flex items-center justify-center gap-2 group"
+            >
+              <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform duration-300" />
+              {t('training.dataSelection.registerFiles')}
+            </button>
+          </div>
+        </div>
+
+        {/* Dataset Selection Grid (always shown when files not expanded) */}
+        {!filesExpanded && (
+        <DatasetGrid
+          datasetsLoading={datasetsLoading}
+          datasets={datasets}
+          taskType={taskType}
+          selectedDatasetId={selectedDatasetId}
+          onSelectDataset={onSelectDataset}
+          formatFileSize={formatFileSize}
+        />
+        )}
+
+        {/* File Selection View (only when user explicitly expands files) */}
+        {selectedDatasetId && filesExpanded && (
+          <WSIDataTable
+            taskType={taskType}
+            loading={loading}
+            filteredItems={items}
+            pageSlides={pageSlides}
+            selectedIds={selectedIds}
+            toggleSelection={toggleSelection}
+            setSelectedIds={setSelectedIds}
+            allPageSelected={allPageSelected}
+            allFilteredSelected={allFilteredSelected}
+            handleSelectPage={handleSelectPage}
+            handleSelectAllFiltered={handleSelectAllFiltered}
+            hasMultiSlideCases={hasMultiSlideCases}
+            paginatedCases={paginatedCases}
+            expandedCases={expandedCases}
+            toggleCaseExpansion={toggleCaseExpansion}
+            isPatchDataset={isPatchDataset}
+            totalCases={totalCases}
+            currentPage={currentPage}
+            setCurrentPage={setCurrentPage}
+            pageSize={pageSize}
+            handleEditClick={onEditClick}
+            handleDeleteClick={onDeleteClick}
+            getFileType={getFileType}
+          />
+        )}
+      </Card>
+
+      {/* Data Split Strategy - show when dataset selected (whole or with specific files) */}
+      {selectedDatasetId && (selectedIds.size > 0 || isWholeDatasetSelected) && (
+        <DataSplitConfig
+          taskType={taskType}
+          splitStrategy={splitStrategy}
+          setSplitStrategy={setSplitStrategy}
+          kFoldSplits={kFoldSplits}
+          setKFoldSplits={setKFoldSplits}
+          stratified={stratified}
+          setStratified={setStratified}
+          kFoldValidation={kFoldValidation}
+          randomSplitValidation={randomSplitValidation}
+          hasPreDefinedSplits={hasPreDefinedSplits}
+          predefinedSplitCounts={predefinedSplitCounts}
+          selectedDatasetId={selectedDatasetId}
+          selectedDatasetName={selectedDatasetName}
+          isWholeDatasetSelected={isWholeDatasetSelected}
+        />
+      )}
+
+      {/* Bottom Navigation Buttons */}
+      <div className="mt-8 sm:mt-12 flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-gray-100">
+        <button
+          onClick={onBack}
+          className="w-full sm:w-auto px-6 py-2.5 border border-gray-200 text-gray-600 rounded-xl hover:bg-gray-50 transition-all font-bold text-xs sm:text-sm flex items-center justify-center gap-2"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          {t('training.dataSelection.backToParameters')}
+        </button>
+        <button
+          onClick={onNext}
+          disabled={!canProceed}
+          className="w-full sm:w-auto px-8 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl shadow-lg shadow-primary-500/20 transition-all font-bold text-xs sm:text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          {dataLevel === 'patch' ? t('training.dataSelection.nextModelConfig') : t('training.dataSelection.nextPreprocessing')}
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </>
+  )
+}
+
+/** Dataset grid for selection */
+function DatasetGrid({
+  datasetsLoading,
+  datasets,
+  taskType,
+  selectedDatasetId,
+  onSelectDataset,
+  formatFileSize,
+}: {
+  datasetsLoading: boolean
+  datasets: DatasetSummary[]
+  taskType: TaskType
+  selectedDatasetId: string | null
+  onSelectDataset: (id: string | null, name: string) => void
+  formatFileSize: (bytes: number) => string
+}) {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const isSurvival = isSurvivalTask(taskType)
+  const isSegmentation = isAnnotationTask(taskType)
+
+  if (datasetsLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-3" />
+        <p className="text-sm text-gray-500 font-medium">{t('training.dataSelection.loadingDatasets')}</p>
+      </div>
+    )
+  }
+
+  if (datasets.length === 0) {
+    return (
+      <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
+        <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+        <p className="text-base sm:text-lg font-bold text-gray-700">
+          {isSurvival
+            ? t('training.dataSelection.noSurvivalDatasets')
+            : isSegmentation
+              ? t('training.dataSelection.noSegmentationDatasets')
+              : t('training.dataSelection.noClassificationDatasets')}
+        </p>
+        <p className="text-xs sm:text-sm text-gray-500 mt-1">
+          {isSurvival
+            ? t('training.dataSelection.registerSurvivalHint')
+            : isSegmentation
+              ? t('training.dataSelection.registerSegmentationHint')
+              : t('training.dataSelection.registerClassificationHint')}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 px-0.5">
+      {datasets.map((dataset) => {
+        const isSelected = selectedDatasetId === dataset.dataset_id
+        const isUnavailable = dataset.availability?.status === 'unavailable'
+        return (
+          <div
+            key={dataset.dataset_id ?? dataset.dataset_name}
+            onClick={() => !isUnavailable && onSelectDataset(isSelected ? null : dataset.dataset_id, isSelected ? '' : dataset.dataset_name)}
+            className={`p-4 sm:p-5 rounded-xl transition-all cursor-pointer group relative overflow-hidden ${
+              isUnavailable
+                ? 'bg-gray-50 border border-gray-200 opacity-60 cursor-not-allowed'
+                : isSelected
+                  ? 'bg-primary-50 border-2 border-primary-500 shadow-md shadow-primary-500/10'
+                  : 'bg-white border border-gray-200 hover:border-primary-400 hover:shadow-lg hover:shadow-primary-600/5'
+            }`}
+          >
+            {/* Selected checkmark */}
+            {isSelected && (
+              <div className="absolute top-2 right-2">
+                <div className="w-5 h-5 bg-primary-600 rounded-full flex items-center justify-center">
+                  <Check className="w-3 h-3 text-white" strokeWidth={3} />
+                </div>
+              </div>
+            )}
+            {!isSelected && !isUnavailable && (
+              <div className="absolute top-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <ArrowRight className="w-4 h-4 text-primary-500" />
+              </div>
+            )}
+            {isUnavailable && (
+              <div className="absolute top-2 right-2">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                  {t('training.dataSelection.unavailable')}
+                </span>
+              </div>
+            )}
+            <div className="flex items-start gap-3 sm:gap-4">
+              <div className={`shrink-0 p-2 sm:p-2.5 rounded-xl transition-colors ${
+                isUnavailable
+                  ? 'bg-gray-100'
+                  : isSelected ? 'bg-primary-100' : 'bg-primary-50 group-hover:bg-primary-100'
+              }`}>
+                <FolderOpen className={`w-5 h-5 sm:w-6 sm:h-6 ${
+                  isUnavailable ? 'text-gray-400' : isSelected ? 'text-primary-700' : 'text-primary-600'
+                }`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className={`font-bold truncate transition-colors text-sm sm:text-base ${
+                  isUnavailable
+                    ? 'text-gray-500'
+                    : isSelected ? 'text-primary-800' : 'text-gray-900 group-hover:text-primary-700'
+                }`}>{dataset.dataset_name}</h4>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 sm:mt-2">
+                  <span className={`text-[10px] sm:text-xs font-semibold flex items-center gap-1 ${
+                    isUnavailable
+                      ? 'text-gray-400'
+                      : isSelected ? 'text-primary-600' : 'text-gray-500'
+                  }`}>
+                    <FileText className="w-3 h-3" />
+                    {t(dataset.data_type === 'patch' ? 'training.dataSelection.filesCount' : 'training.dataSelection.slidesCount', { count: dataset.file_count })}
+                  </span>
+                  <span className={`hidden sm:inline w-1 h-1 rounded-full ${isSelected ? 'bg-primary-300' : 'bg-gray-300'}`}></span>
+                   <span className={`text-[10px] sm:text-xs font-semibold ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>{formatFileSize(dataset.total_size)}</span>
+                </div>
+                {/* View Files button for selected dataset */}
+                {isSelected && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigate('/datasets', { state: { dataset_id: dataset.dataset_id } }) }}
+                    className="mt-2.5 text-[10px] sm:text-xs font-semibold text-primary-600 hover:text-primary-800 flex items-center gap-1 transition-colors"
+                  >
+                    <Eye className="w-3 h-3" />
+                    {t('training.dataSelection.viewFiles')}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Header when no dataset selected */
+function DatasetSelectHeader({ selectedCount }: { selectedCount: number }) {
+  const { t } = useTranslation()
+  return (
+    <>
+      <h3 className="text-base sm:text-lg font-bold text-gray-900">{t('training.dataSelection.selectDataset')}</h3>
+      <p className="text-[11px] sm:text-sm text-gray-500 mt-1">
+        {t('training.dataSelection.chooseSource')}
+        {selectedCount > 0 && <span className="ml-2 text-primary-600 font-bold">({t('training.dataSelection.filesSelected', { count: selectedCount })})</span>}
+      </p>
+    </>
+  )
+}
+
+/** Header when dataset is selected */
+function DatasetSelectedHeader({
+  selectedDatasetName,
+  selectedCount,
+  onBack,
+}: {
+  selectedDatasetName: string
+  selectedCount: number
+  onBack: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-1.5">
+        <button onClick={onBack} className="text-xs sm:text-sm text-primary-600 hover:text-primary-700 font-semibold flex items-center gap-1 transition-colors">
+          <ChevronLeft className="w-3.5 h-3.5" />
+          {t('training.dataSelection.backToDatasets')}
+        </button>
+      </div>
+      <h3 className="text-base sm:text-lg font-bold text-gray-900 truncate">{t('training.dataSelection.datasetName', { name: selectedDatasetName })}</h3>
+      <p className="text-[11px] sm:text-sm text-gray-500 mt-1">{t('training.dataSelection.selectSlides', { count: selectedCount })}</p>
+    </>
+  )
+}

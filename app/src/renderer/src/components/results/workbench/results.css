@@ -1,0 +1,14 @@
+.results-workbench .border,
+.results-workbench .border-t,
+.results-workbench .border-b {
+  border-color: var(--surface-border);
+}
+
+.results-workbench table th,
+.results-workbench table td {
+  border-color: var(--surface-border);
+}
+
+.results-workbench table tbody tr:hover {
+  background: color-mix(in srgb, var(--surface-muted) 45%, transparent);
+}

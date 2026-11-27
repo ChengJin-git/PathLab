@@ -1,0 +1,212 @@
+def test_cache_defaults_unknown_for_missing_entry(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+
+    status = availability.get_wsi_availability("wsi-1")
+
+    assert status["status"] == "unknown"
+    assert status["reason"] is None
+
+
+def test_snapshot_reuses_json_but_detects_another_process_replacement(tmp_path, monkeypatch):
+    import json
+    from unittest.mock import Mock
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    target = tmp_path / availability.CACHE_FILE_NAME
+    target.write_text(json.dumps({"wsi": {"a": {"status": "available"}}}))
+    load = Mock(wraps=json.load)
+    monkeypatch.setattr(availability.json, "load", load)
+    assert availability.get_wsi_availability("a")["status"] == "available"
+    result = availability.get_wsi_availability_batch(["a", "missing"])
+    result["a"]["status"] = "unavailable"
+    assert availability.get_wsi_availability("a")["status"] == "available"
+    assert result["missing"]["status"] == "unknown"
+    assert load.call_count == 1
+    replacement = target.with_suffix('.new')
+    replacement.write_text(json.dumps({"wsi": {"a": {"status": "unavailable"}}}))
+    replacement.replace(target)
+    assert availability.get_wsi_availability("a")["status"] == "unavailable"
+    assert load.call_count == 2
+
+
+def test_cache_persists_unavailable_and_dataset_rollup(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    availability.record_wsi_availability(
+        "wsi-1",
+        status="unavailable",
+        reason="External storage not responding",
+        checked_by="admin_scan",
+    )
+
+    status = availability.get_wsi_availability("wsi-1")
+    assert status["status"] == "unavailable"
+    assert status["reason"] == "External storage not responding"
+    assert status["checked_by"] == "admin_scan"
+
+    rollup = availability.roll_up_dataset_availability(["wsi-1", "wsi-2"])
+    assert rollup["status"] == "unavailable"
+    assert rollup["unavailable_count"] == 1
+    assert rollup["total_count"] == 2
+
+
+def test_dataset_rollup_loads_cache_once(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    availability.record_many_from_scan(
+        {
+            "available": [
+                {"wsi_id": "wsi-ok-1", "dataset_id": "ds-external"},
+                {"wsi_id": "wsi-ok-2", "dataset_id": "ds-external"},
+            ],
+            "unavailable": [
+                {"wsi_id": "wsi-bad", "dataset_id": "ds-external", "reason": "File not found"}
+            ],
+        }
+    )
+
+    original_load_cache = availability._load_cache
+    load_calls = []
+
+    def _count_load():
+        load_calls.append(True)
+        return original_load_cache()
+
+    monkeypatch.setattr(availability, "_load_cache", _count_load)
+
+    rollup = availability.roll_up_dataset_availability(
+        ["wsi-ok-1", "wsi-ok-2", "wsi-bad", "wsi-unknown"]
+    )
+
+    assert rollup["status"] == "unavailable"
+    assert rollup["total_count"] == 4
+    assert rollup["available_count"] == 2
+    assert rollup["unavailable_count"] == 1
+    assert rollup["unknown_count"] == 1
+    assert len(load_calls) == 1
+
+
+def test_dataset_batch_rollup_loads_cache_once(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    availability.record_many_from_scan(
+        {
+            "available": [
+                {"wsi_id": "wsi-ok-1", "dataset_id": "ds-a"},
+                {"wsi_id": "wsi-ok-2", "dataset_id": "ds-b"},
+            ],
+            "unavailable": [
+                {"wsi_id": "wsi-bad", "dataset_id": "ds-b", "reason": "File not found"}
+            ],
+        }
+    )
+
+    original_load_cache = availability._load_cache
+    load_calls = []
+
+    def _count_load():
+        load_calls.append(True)
+        return original_load_cache()
+
+    monkeypatch.setattr(availability, "_load_cache", _count_load)
+
+    rollups = availability.roll_up_datasets_availability(
+        {"ds-a": ["wsi-ok-1"], "ds-b": ["wsi-ok-2", "wsi-bad", "wsi-unknown"]}
+    )
+
+    assert rollups["ds-a"]["status"] == "available"
+    assert rollups["ds-b"]["status"] == "unavailable"
+    assert rollups["ds-b"]["total_count"] == 3
+    assert rollups["ds-b"]["unknown_count"] == 1
+    assert len(load_calls) == 1
+
+
+def test_corrupted_cache_is_ignored(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    (tmp_path / ".external_availability_cache.json").write_text(
+        "{broken", encoding="utf-8"
+    )
+
+    assert availability.get_wsi_availability("wsi-1")["status"] == "unknown"
+
+
+def test_unavailable_cooldown_blocks_repeated_open(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    availability.record_wsi_availability(
+        "wsi-1",
+        status="unavailable",
+        reason="File not found",
+        checked_by="open_failure",
+    )
+
+    assert availability.should_short_circuit_open("wsi-1") is True
+
+
+def test_scan_records_dataset_availability_rollup(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+
+    availability.record_many_from_scan(
+        {
+            "available": [
+                {"wsi_id": "wsi-ok", "dataset_id": "ds-external", "status": "available"}
+            ],
+            "unavailable": [
+                {
+                    "wsi_id": "wsi-bad",
+                    "dataset_id": "ds-external",
+                    "status": "unavailable",
+                    "reason": "File not found",
+                }
+            ],
+        }
+    )
+
+    dataset_status = availability.get_dataset_availability("ds-external")
+
+    assert dataset_status["status"] == "unavailable"
+    assert dataset_status["reason"] == "File not found"
+    assert dataset_status["total_count"] == 2
+    assert dataset_status["unavailable_count"] == 1
+    assert availability.get_dataset_availability("missing")["status"] == "unknown"
+
+
+def test_scan_records_availability_in_single_cache_write(tmp_path, monkeypatch):
+    from backend.storage import external_availability as availability
+
+    monkeypatch.setattr(availability.Config, "get_uploads_dir", lambda: tmp_path)
+    original_save_cache = availability._save_cache
+    save_calls = []
+
+    def _count_save(cache):
+        save_calls.append(cache)
+        original_save_cache(cache)
+
+    monkeypatch.setattr(availability, "_save_cache", _count_save)
+
+    availability.record_many_from_scan(
+        {
+            "available": [
+                {"wsi_id": "wsi-ok-1", "dataset_id": "ds-external"},
+                {"wsi_id": "wsi-ok-2", "dataset_id": "ds-external"},
+            ],
+            "unavailable": [
+                {"wsi_id": "wsi-bad", "dataset_id": "ds-external", "reason": "File not found"}
+            ],
+        }
+    )
+
+    assert len(save_calls) == 1
+    assert availability.get_wsi_availability("wsi-bad")["status"] == "unavailable"
+    assert availability.get_dataset_availability("ds-external")["unavailable_count"] == 1

@@ -1,0 +1,32 @@
+import React from 'react'
+import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
+
+interface AutoResearchLayoutProps {
+  children: React.ReactNode
+}
+
+export default function AutoResearchLayout({ children }: AutoResearchLayoutProps) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-gray-50 text-gray-900">
+      <header className="z-40 shrink-0 border-b border-gray-200/70 bg-white/85 shadow-sm backdrop-blur-md">
+        <div className="mx-auto flex h-16 items-center px-4 sm:px-6 lg:px-8">
+          <Link to="/autoresearch/new" className="flex items-center gap-3 transition-opacity hover:opacity-85">
+            <img src="/images/pathlab-logo.png" alt="PathLab" className="h-9 w-auto" />
+            <div className="hidden h-7 w-px bg-gray-200 sm:block" />
+            <div className="flex items-center gap-2">
+              <div className="leading-tight">
+                <p className="text-sm font-bold tracking-tight text-gray-900">{t('autoResearch.title')}</p>
+              </div>
+            </div>
+          </Link>
+        </div>
+      </header>
+
+      <main className="min-h-0 flex-1 overflow-hidden">
+        {children}
+      </main>
+    </div>
+  )
+}

@@ -1,0 +1,80 @@
+name: patch_segmentation
+coarse_task_type: segmentation
+description: >
+  Patch-level semantic segmentation, with UNet-style models as a baseline.
+  Input: image + mask pairs. Output: pixel-level predictions.
+  Implement a runnable workspace script: the bundled segmentation template
+  is a stub, not a working training pipeline. Read available reference code
+  before choosing model, data augmentation and evaluation implementations.
+
+template: patch_segmentation_template.py
+
+task_types: [segmentation]
+
+modifiable_zones:
+  - model       # UNet architecture, backbone, decoder
+  - loss        # DiceLoss, JaccardLoss, combined
+  - hyperparams # lr, epochs, batch_size, scheduler, AMP settings
+  - data_loading
+  - preprocessing
+  - training
+  - evaluation
+  - reporting
+
+environment:
+  extra_packages:
+    - segmentation-models-pytorch
+
+dataset:
+  format: image_mask_pairs
+  structure:
+    images: "{image_id}.png"
+    masks: "{image_id}_mask.png"
+    splits: "splits.json"
+    annotations: "coco_annotations.json"   # optional COCO format
+  splits_schema:
+    required_keys: [train, val, test]
+    labels_type: "none"                     # labels are in masks, not splits
+    split_strategy: "case_level"             # group all derived patches from each patient
+    default_ratios: {train: 0.7, val: 0.15, test: 0.15}
+  csv_format:
+    required_columns: [filename]
+    optional_columns: [split, case_id]
+    example: |
+      filename,split
+      image_001.png,train
+      image_002.png,val
+
+inputs:
+  dataset_manifest: "$PATHLAB_WORKSPACE/datasets/{dataset_id}/manifest.json"
+  images_dir: "Actual image paths from the prepared dataset manifest or supplied dataset description"
+  masks_dir: "Verified real mask/annotation paths matched to those images"
+  splits_file: "Patient-separated split assignments from the manifest or a prepared workspace file"
+
+outputs:
+  metrics: "$OUTPUT_DIR/metrics.json"
+  model: "$OUTPUT_DIR/best_model.pth"
+  progress: "$OUTPUT_DIR/progress.json"
+
+evaluation:
+  primary_metric: iou
+  secondary_metrics: [dice, accuracy, precision, recall]
+
+constraints:
+  - "Read /opt/pathlab/templates/patch_segmentation_template.py to confirm its stub status, then implement runnable workspace code using inspected, available libraries or reference implementations. Do not assume service trainer modules are importable in the sandbox or invent model APIs. Architecture, decoder, loss, loader and training comparisons are allowed within the user's scope and budget."
+  - "Read actual image, mask, annotation and patient identifiers from the prepared manifest and supplied data. Masks may require an explicit supplied annotation source; do not assume the generic slide manifest contains them. Configure paths in the workspace script rather than relying on default mounts or injected dataset environment variables."
+  - "Typical RGB input is (B, 3, H, W) and multi-class logits are (B, C, H, W). For binary segmentation, consistently pair single-channel logits with binary loss/targets or use a two-class formulation. Verify class mapping, background and ignore-index conventions from real annotations."
+  - "Validate image-mask alignment, pixel spacing, magnification and mask values. Apply geometric augmentation identically to image and mask, use nearest-neighbor resampling for categorical masks, and restrict stain/color augmentation to images. Keep evaluation preprocessing deterministic."
+  - "Keep all patches, adjacent or overlapping tiles, and slides from each patient in one split. Verify real case IDs; fit stain normalization and other learned preprocessing using training patients only."
+  - "Use validation patients for architecture selection, loss weights, early stopping, thresholds and postprocessing. Never tune on held-out or external tests. Report per-class Dice/IoU with explicit background, empty-mask and aggregation conventions; use patient-level uncertainty where feasible."
+  - 'Use submit_experiment with a name and command argument array, for example ["python", "train.py"], for training or method comparisons. Use submit_computation for data preparation, standalone inference/evaluation and metrics; end the turn while waiting and inspect actual job outcomes.'
+  - "Jobs run from a read-only frozen source snapshot. Read prior outputs through PATHLAB_WORKSPACE and dataset inputs through their actual manifest paths. Write every new mask prediction, checkpoint, plot and temporary file beneath OUTPUT_DIR, with finite numeric split-specific metrics in metrics.json and progress in progress.json. Update workspace notes from the agent after completion."
+  - "Default to the single assigned GPU through PATHLAB_DEVICE (cuda:0 or cpu); preserve CUDA_VISIBLE_DEVICES and never enumerate host GPUs or select unassigned devices. Use supported mixed precision on CUDA when appropriate, and adjust batch size, patch size or gradient accumulation to available memory."
+  - "For missing Python packages, call install_dependencies with packages and imports after diagnosing the log; for segmentation-models-pytorch the import name is segmentation_models_pytorch. Verify success before retrying. Submit Python jobs with python or python3 for the session environment; config metadata does not inject environment variables."
+  - "Do not generate synthetic images, masks, labels or metrics. If annotations, patient mappings or other real inputs are missing, save diagnostics and use request_help when user input is required."
+
+reference_code:
+  trainer: server/backend/ai/tasks/patch_segmentation/trainer.py
+  dataset: server/backend/ai/utils/segmentation_dataset.py
+
+knowhow_tags: [segmentation, UNet, patch, pixel, mask, dice, iou]

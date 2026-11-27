@@ -1,0 +1,36 @@
+name: Research sandbox image
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build native-architecture CPU research image
+        working-directory: app
+        run: docker build --build-arg TARGETARCH=${{ matrix.arch }} -t pathlab/sandbox:1.0.8-r3-cpu -f deploy/sandbox/Dockerfile .
+      - name: Verify OpenCode and scientific runtime
+        run: |
+          docker run --rm pathlab/sandbox:1.0.8-r3-cpu /opt/opencode --version
+          docker run --rm pathlab/sandbox:1.0.8-r3-cpu python -c 'import torch,sklearn,openslide,docx,pptx; assert (torch.ones(2,2)@torch.ones(2,2)).sum()==8; print(torch.__version__,sklearn.__version__)'
+          python3 app/scripts/check-sandbox-image.py
+      - name: Export image
+        run: docker save pathlab/sandbox:1.0.8-r3-cpu | gzip -1 > pathlab-sandbox-1.0.8-r3-cpu-${{ matrix.arch }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-${{ matrix.arch }}
+          path: pathlab-sandbox-*.tar.gz
+          compression-level: 0
+          retention-days: 7

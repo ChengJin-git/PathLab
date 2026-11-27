@@ -1,0 +1,14 @@
+# PathLab Backend - Test Dependencies
+# =====================================
+# Install: pip install -r requirements-test.txt
+# Run from server/: python -m pytest tests/ -v
+
+pytest==9.2.0
+pytest-asyncio==1.4.1.post1
+httpx==0.28.1
+aiosqlite==0.22.1
+ruff==0.17.4
+tomli==2.5.0; python_version < "3.11"
+typing-extensions==4.16.0; python_version < "3.11"
+python-pptx==1.0.2
+reportlab==5.0.0

@@ -1,0 +1,26 @@
+.legal-dialog-overlay { position: fixed; inset: 0; z-index: 70; background: #1d1d1f73; backdrop-filter: blur(6px); }
+.legal-dialog { position: fixed; top: 50%; left: 50%; z-index: 71; transform: translate(-50%, -50%); width: min(880px, calc(100% - 32px)); max-height: calc(100dvh - 40px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #dedee3; border-radius: 20px; background: #fff; color: #303038; font-family: var(--font-sans); box-shadow: 0 30px 100px #0003; }
+.legal-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 28px; border-bottom: 1px solid #e7e7eb; }
+.legal-dialog-heading h2 { font-size: 19px; font-weight: 600; line-height: 1.5; }
+.legal-dialog-close { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; color: #62626c; cursor: pointer; }
+.legal-dialog-close:hover { background: #f1f1f4; }
+.legal-dialog > .legal-dialog-body { min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; padding: 28px; font-size: 15px; line-height: 1.85; }
+.legal-dialog .legal-dialog-body :is(p, ul, .text-xs) { font-size: 15px; line-height: 1.85; }
+.legal-dialog .legal-dialog-body h4 { font-size: 17px; margin: 30px 0 12px; font-weight: 600; }
+.legal-dialog .legal-dialog-body ul { display: grid; gap: 10px; }
+.legal-dialog .legal-dialog-body .italic { font-style: normal; }
+.legal-dialog .legal-dialog-body a { display: inline; overflow-wrap: anywhere; }
+.legal-dialog .legal-dialog-body a svg { display: inline; margin-inline-start: 3px; }
+.legal-dialog .legal-dialog-meta { font-size: 13px; color: #686870; }
+.legal-dialog .legal-dialog-meta > span { font-size: inherit; }
+.legal-dialog .legal-dialog-footer { flex-shrink: 0; padding: 16px 24px; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; background: #f8f8fa; border-top: 1px solid #e7e7eb; }
+.legal-dialog .legal-dialog-footer button { min-height: 44px; height: auto; white-space: normal; font-size: 14px; cursor: pointer; }
+.legal-dialog :is(button, a, [tabindex]):focus-visible { outline: 3px solid #0071e3; outline-offset: 3px; }
+.legal-dialog-heading h2:focus { outline: none; }
+@media (max-width: 600px) {
+  .legal-dialog { width: calc(100% - 16px); max-height: calc(100dvh - 24px); border-radius: 16px; }
+  .legal-dialog-heading, .legal-dialog > .legal-dialog-body { padding: 18px; }
+  .legal-dialog-heading h2 { font-size: 17px; }
+  .legal-dialog .legal-dialog-footer { padding: 12px; }
+}
+@media (prefers-reduced-transparency: reduce) { .legal-dialog-overlay { background: #333c; backdrop-filter: none; } }

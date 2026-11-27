@@ -1,0 +1,120 @@
+name: mil_classification
+coarse_task_type: classification
+description: >
+  WSI classification using Multiple Instance Learning.
+  A frozen feature extractor produces patch embeddings (N, D).
+  An aggregator computes slide-level logits from each bag of embeddings.
+  Use PathLab reference implementations as starting points for measured
+  architecture, loss, sampling and optimization comparisons.
+
+template: classification_template.py
+template_files:
+  train.py: classification_template.py
+  common/aggregators/__init__.py: common/aggregators/__init__.py
+  common/aggregators/registry.py: common/aggregators/registry.py
+  common/aggregators/base.py: common/aggregators/base.py
+  common/aggregators/abmil.py: common/aggregators/abmil.py
+  common/aggregators/clam.py: common/aggregators/clam.py
+  common/aggregators/dsmil.py: common/aggregators/dsmil.py
+  common/aggregators/transmil.py: common/aggregators/transmil.py
+  common/aggregators/dtfdmil.py: common/aggregators/dtfdmil.py
+  common/aggregators/meanmil.py: common/aggregators/meanmil.py
+  common/aggregators/maxmil.py: common/aggregators/maxmil.py
+
+task_types: [classification]
+
+modifiable_zones:
+  - model       # Aggregator architecture, including method comparisons
+  - loss        # Loss function (CrossEntropy, focal, label smoothing)
+  - hyperparams # lr, epochs, optimizer, scheduler, weight_decay
+  - data_loading
+  - training
+  - evaluation
+  - reporting
+
+environment:
+  extra_packages: []
+
+dataset:
+  format: feature_tensors            # pre-extracted features, not raw images
+  structure:
+    features: "{wsi_id}.pt"          # (N_patches, D) tensor per WSI
+    splits: "splits.json"            # train/val/test partition + labels
+  splits_schema:
+    required_keys: [train, val, test, labels]
+    labels_type: "int"               # class index (0, 1, ...)
+    split_strategy: "case_level"     # patient-grouped; stratify classes where feasible
+    default_ratios: {train: 0.7, val: 0.1, test: 0.2}
+  csv_format:                        # PathLab CSV upload format
+    required_columns: [filename]
+    optional_columns: [label, case_id, split, age, gender]
+    example: |
+      filename,split,label,case_id
+      slide_001.svs,train,Tumor,CASE001
+      slide_002.svs,val,Normal,CASE002
+  feature_dim_by_extractor:
+    ResNet50: 2048
+    UNI: 1024
+    UNI2: 1536
+    CONCH: 512
+    "CONCH 1.5": 512
+    Virchow: 1280
+    Virchow2: 1280
+    Phikon: 1024
+    Phikon2: 1024
+    mSTAR: 1024
+    GPFM: 1024
+    "H-Optimus-0": 1536
+    "H-Optimus-1": 1536
+
+inputs:
+  dataset_manifest: "$PATHLAB_WORKSPACE/datasets/{dataset_id}/manifest.json"
+  features_dir: "Actual feature paths in manifest items[].features, or a completed extraction output"
+  splits_file: "Verified patient-separated splits and labels from the manifest or a prepared workspace file"
+
+outputs:
+  metrics: "$OUTPUT_DIR/metrics.json"
+  model: "$OUTPUT_DIR/best_model.pth"
+  progress: "$OUTPUT_DIR/progress.json"
+
+evaluation:
+  primary_metric: auc
+  secondary_metrics: [accuracy, f1, precision, recall]
+
+constraints:
+  - "Read /opt/pathlab/templates/classification_template.py and common/aggregators before adapting workspace source. Models, loaders, losses, training and evaluation code may be changed for the research question; keep the evaluation protocol comparable and respect explicit user method choices."
+  - "A reference bag H has shape (N_patches, D); attention-based implementations typically return logits (1, num_classes) and attention (N,). Inspect the actual aggregator interface and adapt its caller; do not invent API names or assume every method returns attention."
+  - "Validate D from real tensors and extractor metadata. One WSI bag per step is a useful baseline; padded/masked or packed batching is allowed when bags and labels remain correctly aligned."
+  - "Compare ABMIL, CLAM, DSMIL, TransMIL, DTFD-MIL or other justified implementations within budget; record the actual extractor, aggregator, configuration, seeds and split IDs. Prefer pathology foundation model embeddings, with ImageNet features as a meaningful comparison when relevant."
+  - "Read prepared dataset manifests and their actual item paths, labels, case IDs and splits. Set FEATURES_DIR and SPLITS_FILE explicitly when using reference code, or adapt the loader to manifest items[].features; these paths are not injected automatically."
+  - 'Use submit_experiment with a name and command argument array, for example ["python", "train.py"], for training or method comparisons. Use submit_computation for extraction, standalone evaluation or metrics; end the turn while waiting and inspect the returned job status, logs and artifacts.'
+  - "Jobs start in a read-only frozen source snapshot. Read existing run outputs through Path(os.environ['PATHLAB_WORKSPACE']); write every new artifact, checkpoint and temporary file beneath Path(os.environ['OUTPUT_DIR']). Write finite numeric validation/test metrics with distinct split names to metrics.json and progress to progress.json there. Update workspace notes from the agent after completion."
+  - "Use the single assigned GPU by default via PATHLAB_DEVICE (cuda:0 or cpu). Preserve CUDA_VISIBLE_DEVICES; do not enumerate host GPUs or launch work on unassigned devices."
+  - "For missing Python dependencies, diagnose the job log, call install_dependencies with packages and imports, verify success, then retry the corrected script. Start Python jobs with python or python3 to use the session environment; config metadata does not set environment variables."
+  - "Preserve patient/case separation across train, validation and test, including all slides and patches from each patient. Verify case IDs really identify patients; do not treat missing IDs or per-slide fallbacks as evidence of independence. If splits must be created, group by patient and record the policy."
+  - "Fit class weights, sampling statistics and learned preprocessing using training data only. Choose architectures, hyperparameters, stopping epochs and thresholds on validation data; never tune on held-out or external test outcomes. Report class imbalance, per-class metrics and patient-level uncertainty where feasible."
+  - "Do not generate synthetic features, labels or metrics. Missing real inputs or unresolved patient identity are data-readiness blockers: save diagnostics and use request_help when user input is required."
+
+reference_code:
+  aggregator: server/backend/ai/aggregators/abmil.py
+  trainer: server/backend/ai/tasks/wsi_classification/trainer.py
+  dataset: server/backend/ai/utils/feature_dataset.py
+
+knowhow_tags: [classification, WSI, MIL, attention, ABMIL, TransMIL, CLAM, DSMIL]
+
+upstream_skill: feature_extraction
+
+readiness_guidance:
+  feature_ready_contract:
+    features_dir: "Manifest feature paths or verified prior OUTPUT_DIR artifacts"
+    splits_file: "Actual patient-separated split/label file, if required by the chosen loader"
+  raw_wsi_contract:
+    wsi_dir: "Actual raw slide paths in the prepared dataset manifest"
+    labels_file: "Manifest labels or an explicitly supplied real label table"
+  policy: >
+    Reuse complete, compatible feature tensors. If only raw WSI and labels are
+    available, adapt the feature_extraction references and use submit_computation
+    with device=gpu. Extraction consumes no experiment rounds. After completion,
+    validate UUID-named outputs and call register_features with dataset_id,
+    features_dir and extractor. Train from the actual returned feature paths or
+    completed output under PATHLAB_WORKSPACE, never an assumed mount layout.

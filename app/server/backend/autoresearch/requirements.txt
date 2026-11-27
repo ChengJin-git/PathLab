@@ -1,0 +1,3 @@
+# Complete PathLab runtime includes AutoResearch; use one dependency declaration.
+# For exact verified deployment use deploy/install-runtime.sh, not a fresh solve.
+-r ../../requirements.txt

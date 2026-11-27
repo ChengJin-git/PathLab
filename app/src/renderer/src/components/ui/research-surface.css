@@ -1,0 +1,15 @@
+/* Shared by the real slide workspace and its public product previews. */
+.research-surface {
+  --research-ink: #1d1d1f;
+  --research-secondary: #626267;
+  --research-border: #dedee3;
+  --research-surface: #fff;
+  --research-panel: #f9f9fb;
+  --research-canvas: #f0f1f3;
+  --research-accent: #0066cc;
+  --research-accent-deep: #0055ad;
+  --research-accent-wash: #eaf2fb;
+  --research-control-radius: 10px;
+  --research-panel-radius: 16px;
+  font-family: var(--font-sans);
+}

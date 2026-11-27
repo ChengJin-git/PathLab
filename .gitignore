@@ -1,0 +1,78 @@
+# Local IDE/agent state
+.DS_Store
+.specstory/
+.playwright-mcp/
+**/.codex/
+.codex
+**/.codex
+.worktrees/
+.agents
+
+# Runtime outputs and caches
+__pycache__/
+.pytest_cache/
+**/.vite/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+*.log
+*.pid
+__manifest/_transactions/*.txn
+
+# AutoResearch generated artifacts
+app/data/
+app/logs/
+app/out/
+app/src/renderer/dev-dist/
+app/server/backend/autoresearch/output/
+app/server/backend/autoresearch/sota_cache.json
+# Downloaded sources for scripts/build-landing-assets.py
+app/.cache/
+app/server/gateway/knowledge/chat/training_rag/
+*.orig
+# AutoResearch sandbox build outputs; keep portable recipes tracked.
+app/server/backend/auto_research_old/
+app/.local/autoresearch/
+app/.local/migration/
+app/.local/report-development/
+app/.local/pathlab-opencode-openapi.json
+!app/server/backend/autoresearch/runtime/containers/
+!app/server/backend/autoresearch/runtime/containers/*.def
+
+# Local env and credentials
+*.p12
+*.pfx
+*.p8
+.env
+.env.*
+!.env.example
+kaggle.json
+**/kaggle.json
+*token*.txt
+
+# Large local container images
+*.sif
+
+.worktrees
+.swarm
+docs/
+!app/server/backend/autoresearch/skill_library/**/docs/
+!app/server/backend/autoresearch/skill_library/**/docs/**
+!/docs/
+!/docs/**
+
+# Local model/data artifacts
+app/server/backend/ai/extractors/checkpoints/
+app/server/backend/autoresearch/domain/templates/common/extractors/checkpoints/
+app/uploads/
+app/server/gateway/knowledge/chat/papers/*.pdf

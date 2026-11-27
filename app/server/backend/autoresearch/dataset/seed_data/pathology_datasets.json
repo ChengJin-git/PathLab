@@ -1,0 +1,363 @@
+[
+  {
+    "dataset_id": "zenodo:1214456",
+    "name": "NCT-CRC-HE-100K",
+    "provider": "zenodo",
+    "access": "public",
+    "task_types": [
+      "patch_classification",
+      "feature_extraction"
+    ],
+    "asset_types": [
+      "patch_images"
+    ],
+    "organs": [
+      "colorectal"
+    ],
+    "license": "CC-BY-4.0",
+    "estimated_size_gb": 4.0,
+    "tags": [
+      "histology",
+      "HE",
+      "9-class"
+    ],
+    "source_paper_ids": [
+      "doi:10.1371/journal.pmed.1002730"
+    ],
+    "download": {
+      "kind": "zenodo",
+      "remote_id": "10.5281/zenodo.1214456",
+      "urls": [
+        "https://zenodo.org/records/1214456/files/NCT-CRC-HE-100K.zip"
+      ],
+      "filename": "NCT-CRC-HE-100K.zip"
+    }
+  },
+  {
+    "dataset_id": "hf:1aurent/PatchCamelyon",
+    "name": "PatchCamelyon (PCam)",
+    "provider": "huggingface",
+    "access": "public",
+    "task_types": [
+      "patch_classification"
+    ],
+    "asset_types": [
+      "patch_images"
+    ],
+    "organs": [
+      "breast"
+    ],
+    "license": "CC0-1.0",
+    "estimated_size_gb": 7.0,
+    "tags": [
+      "histology",
+      "HE",
+      "binary",
+      "tumor",
+      "placeholder"
+    ],
+    "source_paper_ids": [
+      "arxiv:1806.03962"
+    ],
+    "download": {
+      "kind": "hf_dataset",
+      "remote_id": "1aurent/PatchCamelyon"
+    }
+  },
+  {
+    "dataset_id": "gigadb:camelyon16",
+    "name": "CAMELYON16",
+    "provider": "direct_http",
+    "access": "manual",
+    "task_types": [
+      "mil_classification",
+      "segmentation"
+    ],
+    "asset_types": [
+      "wsi"
+    ],
+    "organs": [
+      "breast",
+      "lymph_node"
+    ],
+    "license": "CC0-1.0",
+    "estimated_size_gb": 700.0,
+    "tags": [
+      "WSI",
+      "HE",
+      "metastasis",
+      "sentinel_lymph_node",
+      "large"
+    ],
+    "source_paper_ids": [
+      "doi:10.1001/jama.2017.14585"
+    ],
+    "download": {
+      "kind": "manual",
+      "remote_id": "camelyon16",
+      "urls": [
+        "https://camelyon17.grand-challenge.org/Data/"
+      ]
+    }
+  },
+  {
+    "dataset_id": "tcga:BRCA",
+    "name": "TCGA-BRCA Diagnostic Slides",
+    "provider": "tcia",
+    "access": "gated",
+    "task_types": [
+      "mil_classification",
+      "survival_analysis",
+      "feature_extraction"
+    ],
+    "asset_types": [
+      "wsi"
+    ],
+    "organs": [
+      "breast"
+    ],
+    "license": "NIH-GDC-Data-Use",
+    "estimated_size_gb": 1000.0,
+    "tags": [
+      "WSI",
+      "HE",
+      "TCGA",
+      "gated",
+      "large",
+      "size_unknown"
+    ],
+    "source_paper_ids": [],
+    "download": {
+      "kind": "manual",
+      "remote_id": "TCGA-BRCA",
+      "urls": [
+        "https://portal.gdc.cancer.gov/projects/TCGA-BRCA"
+      ]
+    }
+  },
+  {
+    "dataset_id": "tcga:LUAD",
+    "name": "TCGA-LUAD Diagnostic Slides",
+    "provider": "gdc",
+    "access": "gated",
+    "task_types": [
+      "mil_classification",
+      "survival_analysis",
+      "feature_extraction"
+    ],
+    "asset_types": [
+      "wsi"
+    ],
+    "organs": [
+      "lung"
+    ],
+    "license": "NIH-GDC-Data-Use",
+    "estimated_size_gb": 1000.0,
+    "tags": [
+      "WSI",
+      "HE",
+      "TCGA",
+      "gated",
+      "large",
+      "size_unknown",
+      "TCGA-LUAD",
+      "Lung Adenocarcinoma",
+      "LUAD",
+      "adenocarcinoma",
+      "NSCLC"
+    ],
+    "source_paper_ids": [],
+    "download": {
+      "kind": "manual",
+      "remote_id": "TCGA-LUAD",
+      "urls": [
+        "https://portal.gdc.cancer.gov/projects/TCGA-LUAD"
+      ]
+    }
+  },
+  {
+    "dataset_id": "tcga:LUSC",
+    "name": "TCGA-LUSC Diagnostic Slides",
+    "provider": "gdc",
+    "access": "gated",
+    "task_types": [
+      "mil_classification",
+      "survival_analysis",
+      "feature_extraction"
+    ],
+    "asset_types": [
+      "wsi"
+    ],
+    "organs": [
+      "lung"
+    ],
+    "license": "NIH-GDC-Data-Use",
+    "estimated_size_gb": 1000.0,
+    "tags": [
+      "WSI",
+      "HE",
+      "TCGA",
+      "gated",
+      "large",
+      "size_unknown",
+      "TCGA-LUSC",
+      "Lung Squamous Cell Carcinoma",
+      "LUSC",
+      "squamous_cell_carcinoma",
+      "NSCLC"
+    ],
+    "source_paper_ids": [],
+    "download": {
+      "kind": "manual",
+      "remote_id": "TCGA-LUSC",
+      "urls": [
+        "https://portal.gdc.cancer.gov/projects/TCGA-LUSC"
+      ]
+    }
+  },
+  {
+    "dataset_id": "zenodo:3632035",
+    "name": "BACH ICIAR 2018 Breast Cancer Histology",
+    "provider": "direct_http",
+    "access": "manual",
+    "task_types": [
+      "patch_classification"
+    ],
+    "asset_types": [
+      "patch_images"
+    ],
+    "organs": [
+      "breast"
+    ],
+    "license": "CC-BY-NC-4.0",
+    "estimated_size_gb": 10.0,
+    "tags": [
+      "histology",
+      "HE",
+      "4-class",
+      "ICIAR2018",
+      "placeholder"
+    ],
+    "source_paper_ids": [
+      "doi:10.1016/j.media.2019.05.010"
+    ],
+    "download": {
+      "kind": "manual",
+      "remote_id": "bach_iciar2018",
+      "urls": [
+        "https://iciar2018-challenge.grand-challenge.org/Dataset/"
+      ]
+    }
+  },
+  {
+    "dataset_id": "hf:jxie/nct-crc-he-7k",
+    "name": "CRC-VAL-HE-7K",
+    "provider": "huggingface",
+    "access": "public",
+    "task_types": [
+      "patch_classification"
+    ],
+    "asset_types": [
+      "patch_images"
+    ],
+    "organs": [
+      "colorectal"
+    ],
+    "license": "CC-BY-4.0",
+    "estimated_size_gb": 0.3,
+    "tags": [
+      "histology",
+      "HE",
+      "validation",
+      "9-class",
+      "placeholder"
+    ],
+    "source_paper_ids": [
+      "doi:10.1371/journal.pmed.1002730"
+    ],
+    "download": {
+      "kind": "hf_dataset",
+      "remote_id": "jxie/nct-crc-he-7k"
+    }
+  },
+  {
+    "dataset_id": "kaggle:prostate-cancer-grade-assessment",
+    "name": "PANDA \u2014 Prostate cANcer graDe Assessment",
+    "provider": "kaggle",
+    "access": "manual",
+    "task_types": [
+      "mil_classification"
+    ],
+    "asset_types": [
+      "wsi"
+    ],
+    "organs": [
+      "prostate"
+    ],
+    "license": "CC-BY-SA-NC-4.0",
+    "estimated_size_gb": 400.0,
+    "tags": [
+      "WSI",
+      "HE",
+      "ISUP",
+      "gleason",
+      "kaggle"
+    ],
+    "source_paper_ids": [
+      "doi:10.1038/s41591-021-01620-2"
+    ],
+    "download": {
+      "kind": "kaggle_competition",
+      "remote_id": "prostate-cancer-grade-assessment",
+      "urls": [
+        "https://www.kaggle.com/competitions/prostate-cancer-grade-assessment/data"
+      ]
+    }
+  },
+  {
+    "dataset_id": "scidb:83ee1521074742cdaae997cf0b46a7b1",
+    "name": "CG-MIL \u2014 Comprehensive Assessment of Chronic Gastritis on WSI Data",
+    "provider": "scidb",
+    "access": "public",
+    "task_types": [
+      "mil_classification",
+      "feature_extraction"
+    ],
+    "asset_types": [
+      "wsi"
+    ],
+    "organs": [
+      "stomach",
+      "gastric"
+    ],
+    "license": "CC-BY-4.0",
+    "estimated_size_gb": 218.0,
+    "tags": [
+      "WSI",
+      "HE",
+      "SciDB",
+      "chronic_gastritis",
+      "gastritis",
+      "CG-MIL",
+      "inflammation",
+      "activity",
+      "atrophy",
+      "intestinal_metaplasia",
+      "Task1",
+      "Task2",
+      "Task3",
+      "Task4",
+      "Comprehensive Assessment of Chronic Gastritis on WSI Data"
+    ],
+    "source_paper_ids": [
+      "doi:10.57760/sciencedb.19700"
+    ],
+    "download": {
+      "kind": "scidb_dataset",
+      "remote_id": "83ee1521074742cdaae997cf0b46a7b1",
+      "urls": [
+        "https://www.scidb.cn/detail?dataSetId=83ee1521074742cdaae997cf0b46a7b1"
+      ]
+    }
+  }
+]

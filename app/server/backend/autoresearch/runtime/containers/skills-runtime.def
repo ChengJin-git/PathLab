@@ -1,0 +1,43 @@
+Bootstrap: localimage
+From: {{ base_image }}
+
+%files
+    {{ repo_root }}/server/backend/autoresearch/runtime/containers/install-skills-runtime.sh /opt/pathlab/install-skills-runtime.sh
+    {{ repo_root }}/server/backend/autoresearch/runtime/containers/skills-runtime-requirements.txt /opt/pathlab/skills-runtime-requirements.txt
+    {{ repo_root }}/server/backend/autoresearch/runtime/containers/verify-skills-runtime.py /opt/pathlab/verify-skills-runtime.py
+    {{ repo_root }}/server/backend/autoresearch/skill_library /opt/pathlab/skill-library
+
+%labels
+    PathLabSkillsRuntime "1.0.8-2026-11-07"
+
+%environment
+    export PATH=/opt/node/bin:$PATH
+    export NODE_PATH=/opt/node/lib/node_modules
+    export PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+    export PUPPETEER_EXECUTABLE_PATH=$(cat /opt/pathlab/chromium-path)
+    export MPLCONFIGDIR=/tmp/matplotlib
+    export LANG=C.UTF-8
+    export LC_ALL=C.UTF-8
+    export GSETTINGS_BACKEND=memory
+
+%post
+    /bin/sh /opt/pathlab/install-skills-runtime.sh
+
+%test
+    export PATH=/opt/node/bin:$PATH
+    export NODE_PATH=/opt/node/lib/node_modules
+    export PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+    python - <<'PY'
+import importlib
+for name in ['torch','pandas','tabulate','matplotlib','seaborn','docx','pptx','fitz',
+             'pypdf','pdfplumber','pypdfium2','latex2mathml','mammoth','openai',
+             'mcp','toml','lxml','pybliometrics','defusedxml','playwright']:
+    importlib.import_module(name)
+print('Scientific skill Python imports passed')
+PY
+    Rscript -e 'for (p in c("ggplot2","patchwork","ComplexHeatmap","circlize","svglite","ragg","jsonlite","pdftools")) stopifnot(requireNamespace(p, quietly=TRUE)); print("R figure packages passed")'
+    node --version
+    pandoc --version | head -1
+    soffice --version
+    xelatex --version | head -1
+    python /opt/pathlab/verify-skills-runtime.py

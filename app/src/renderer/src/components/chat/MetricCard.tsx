@@ -1,0 +1,226 @@
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { Loader2, TrendingUp, AlertCircle, RefreshCw } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Tooltip } from '../ui/tooltip'
+import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
+import { formatMetricName } from '../../constants/metrics'
+import MetricValues from '../charts/MetricValues'
+
+// Metric value type - can be a simple number or an object with confidence interval
+export type MetricValue = number | { value: number; ci_lower: number; ci_upper: number }
+
+export interface AgentMetricConfig {
+  task_id: string
+  task_name?: string
+  metrics: string[]  // e.g., ['accuracy', 'auc', 'f1', 'precision', 'sensitivity', 'specificity']
+  show_class_metrics?: boolean
+  submitted?: boolean
+}
+
+interface MetricCardProps {
+  config: AgentMetricConfig
+  onError?: (error: string) => void
+}
+
+/**
+ * Parse [METRIC_CONFIG] block from message content
+ */
+export function parseMetricConfig(content: string): AgentMetricConfig | null {
+  const match = content.match(/\[METRIC_CONFIG\]([\s\S]*?)\[\/METRIC_CONFIG\]/)
+  if (!match) return null
+
+  try {
+    const jsonStr = match[1].trim()
+    return JSON.parse(jsonStr)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Remove [METRIC_CONFIG] block from content for display
+ */
+export function removeMetricConfigBlock(content: string): string {
+  return content.replace(/\[METRIC_CONFIG\][\s\S]*?\[\/METRIC_CONFIG\]/g, '').trim()
+}
+
+export function MetricCard({ config, onError }: MetricCardProps) {
+  const { t } = useTranslation()
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string>('')
+  const [metrics, setMetrics] = useState<Record<string, MetricValue>>({})
+  const [classMetrics, setClassMetrics] = useState<Record<string, Record<string, number>>>({})
+  const [taskExists, setTaskExists] = useState(true)
+  const [numSamples, setNumSamples] = useState<number | undefined>()
+  const [classes, setClasses] = useState<string[]>([])
+
+  // Use ref for onError to avoid triggering useEffect on callback changes
+  const onErrorRef = useRef(onError)
+  onErrorRef.current = onError
+
+  // Fetch analysis on mount
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true)
+      setError('')
+
+      try {
+        // First validate task exists
+        const response = await getTrainingTasks()
+        const tasks = Array.isArray(response)
+          ? response
+          : Array.isArray(response?.items)
+            ? response.items
+            : []
+
+        const found = tasks.some(task => task.task_id === config.task_id && task.status === 'completed')
+        
+        if (!found) {
+          setTaskExists(false)
+          setError(t('chatComponents.metricCard.taskNotFoundOrNotCompleted'))
+          return
+        }
+        setTaskExists(true)
+
+        // Fetch quick analysis with specified metrics
+        const result = await getTaskQuickAnalysis(config.task_id, {
+          metrics: config.metrics,
+          runIfMissing: true
+        })
+
+        if (!result.has_analysis) {
+          setError(result.message || t('chatComponents.metricCard.noAnalysisResults'))
+          return
+        }
+
+        setMetrics(result.metrics || {})
+        setClassMetrics(result.class_metrics || {})
+        setNumSamples(result.num_samples)
+        setClasses(result.classes || [])
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : t('chatComponents.metricCard.failedToFetchMetrics')
+        setError(msg)
+        onErrorRef.current?.(msg)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.task_id, config.metrics.join(',')])
+
+  const handleRefresh = () => {
+    setIsLoading(true)
+    setError('')
+    window.location.reload()
+  }
+
+  // Filter and order metrics based on config
+  const displayMetrics = useMemo(() => {
+    const result: Array<{ key: string; value: MetricValue }> = []
+    for (const requestedMetric of config.metrics) {
+      // Try exact match first, then try with macro_ prefix
+      const value = metrics[requestedMetric] ?? metrics[`macro_${requestedMetric}`]
+      if (value !== undefined) {
+        result.push({ key: requestedMetric, value })
+      }
+    }
+    return result
+  }, [metrics, config.metrics])
+
+  if (isLoading) {
+    return (
+      <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-4 sm:p-6">
+        <div className="flex items-center justify-center gap-2">
+          <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+          <span className="text-gray-600 text-sm sm:text-base">{t('chatComponents.metricCard.loadingMetrics')}</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!taskExists || error) {
+    return (
+      <div className="mt-4 w-full max-w-full bg-white border border-red-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-4 sm:px-5 py-3 sm:py-4 bg-red-50 border-b border-red-100">
+          <h3 className="font-semibold text-red-800 flex items-center gap-2 text-sm sm:text-base">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            {t('chatComponents.metricCard.metricsUnavailable')}
+          </h3>
+        </div>
+        <div className="p-4 sm:p-5">
+          <p className="text-red-700 text-sm">{error}</p>
+          <p className="text-gray-500 text-xs mt-2 truncate">{t('chatComponents.metricCard.task')}: {config.task_name || config.task_id}</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-4 w-full max-w-full bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+      {/* Header */}
+      <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-indigo-50 to-blue-50 border-b border-gray-100 flex items-center justify-between">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
+            <TrendingUp className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+            <span className="truncate">{t('chatComponents.metricCard.title')}</span>
+          </h3>
+          <p className="text-xs text-gray-500 mt-1 truncate">
+            {config.task_name || config.task_id}
+            {numSamples && ` • ${t('chatComponents.metricCard.samples', { count: numSamples })}`}
+          </p>
+        </div>
+          <Tooltip content={t('chatComponents.metricCard.refresh')}>
+            <button
+              onClick={handleRefresh}
+              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </Tooltip>
+      </div>
+
+      {/* Metrics Grid */}
+      <div className="p-4 sm:p-5">
+        <MetricValues metrics={Object.fromEntries(displayMetrics.map(({key,value})=>[key,value]))} />
+
+        {/* Class-level metrics (optional) */}
+        {config.show_class_metrics && Object.keys(classMetrics).length > 0 && (
+          <div className="mt-4 sm:mt-5 pt-4 sm:pt-5 border-t border-gray-100">
+            <h4 className="text-xs sm:text-sm font-semibold text-gray-700 mb-2 sm:mb-3">{t('chatComponents.metricCard.perClassMetrics')}</h4>
+            <div className="space-y-2 sm:space-y-3">
+              {Object.entries(classMetrics).map(([className, metrics]) => (
+                <div key={className} className="bg-gray-50 rounded-lg p-2 sm:p-3">
+                  <div className="font-medium text-gray-900 text-sm sm:text-base mb-1.5 sm:mb-2">{className}</div>
+                  <div className="grid grid-cols-3 xs:grid-cols-4 sm:grid-cols-5 md:grid-cols-6 gap-1 sm:gap-1.5">
+                    {Object.entries(metrics)
+                      .filter(([k]) => config.metrics.some(m => k.includes(m)))
+                      .map(([metricKey, metricValue]) => {
+                        // tp, fp, fn, tn, support are counts (integers), not percentages
+                        const isCount = ['tp', 'fp', 'fn', 'tn', 'support'].includes(metricKey)
+                        const displayValue = isCount ? metricValue.toString() : `${(metricValue * 100).toFixed(1)}%`
+                        return (
+                          <div
+                            key={metricKey}
+                            className="bg-white px-1.5 sm:px-2 py-1 sm:py-1.5 rounded border border-gray-200 text-center"
+                          >
+                            <div className="text-[10px] sm:text-xs text-gray-500 font-medium truncate">
+                              {formatMetricName(metricKey)}
+                            </div>
+                            <div className="text-xs sm:text-sm font-semibold text-gray-900">
+                              {displayValue}
+                            </div>
+                          </div>
+                        )
+                      })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

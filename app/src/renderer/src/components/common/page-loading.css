@@ -1,0 +1,225 @@
+.page-loading-full {
+  min-height: 100dvh;
+  display: grid;
+  align-content: center;
+  padding: clamp(24px, 5vw, 72px);
+  background: var(--app-bg, #f5f7fb);
+}
+.page-loading-content {
+  min-height: 50vh;
+}
+.page-loading-full > .data-loading {
+  width: 100%;
+  max-width: 1280px;
+  margin: auto;
+}
+.data-loading {
+  width: 100%;
+  padding: 4px 0 24px;
+}
+.loading-shape {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: #e9edf3;
+  border-radius: 5px;
+}
+.loading-shape::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 15%,
+    #ffffff99 48%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: data-loading-shimmer 1.8s ease-in-out infinite;
+}
+.data-loading-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 30px;
+}
+.data-loading-header > div:first-child {
+  flex: 1;
+}
+.loading-title {
+  width: 138px;
+  height: 24px;
+}
+.loading-subtitle {
+  width: min(300px, 75%);
+  height: 12px;
+  margin-top: 13px;
+}
+.loading-action {
+  width: 102px;
+  height: 36px;
+  border-radius: 9px;
+}
+.data-loading-search {
+  height: 39px;
+  width: min(448px, 100%);
+  background: #edf0f5;
+  border-radius: 9px;
+  margin-bottom: 18px;
+}
+.data-loading-filters {
+  display: flex;
+  gap: 24px;
+  padding: 20px;
+  margin-bottom: 24px;
+  border: 1px solid var(--surface-border, #e5e9ef);
+  background: #fff;
+  border-radius: 12px;
+}
+.data-loading-filters span {
+  height: 16px;
+  width: 25%;
+  max-width: 240px;
+}
+.data-loading-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+}
+.data-loading-card {
+  padding: 22px 20px;
+  border: 1px solid var(--surface-border, #e5e9ef);
+  border-radius: 16px;
+  background: #fff;
+}
+.loading-card-icon {
+  width: 35px;
+  height: 35px;
+  border-radius: 10px;
+  margin-bottom: 22px;
+  background: #eef1f6;
+}
+.loading-card-name {
+  width: 78%;
+  height: 16px;
+}
+.loading-card-detail {
+  width: 52%;
+  height: 11px;
+  margin-top: 12px;
+}
+.loading-card-footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 25px;
+  padding-top: 15px;
+  border-top: 1px solid #f0f2f6;
+}
+.loading-card-footer span {
+  width: 32%;
+  height: 10px;
+}
+.data-loading-table {
+  border: 1px solid var(--surface-border, #e5e9ef);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.data-loading-table > div {
+  display: grid;
+  grid-template-columns: 3fr 1fr 1fr;
+  gap: 30px;
+  padding: 22px;
+  border-bottom: 1px solid #f0f2f6;
+}
+.data-loading-table > div:last-child {
+  border: 0;
+}
+.data-loading-table span {
+  height: 12px;
+  max-width: 240px;
+}
+.upload-loading-form {
+  background: #fff;
+  border: 1px solid var(--surface-border, #e5e9ef);
+  border-radius: 16px;
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  max-width: 920px;
+}
+.loading-field-label {
+  width: 85px;
+  height: 12px;
+  margin-bottom: 13px;
+}
+.loading-field {
+  height: 42px;
+  width: 100%;
+  background: #f0f3f7;
+  border-radius: 9px;
+}
+.page-loading-indicator {
+  display: grid;
+  place-items: center;
+  min-height: 50vh;
+}
+.page-loading-orbit {
+  display: block;
+  width: 30px;
+  height: 30px;
+  border: 2px solid #e3e8f1;
+  border-top-color: #8290ae;
+  border-radius: 50%;
+  animation: page-loading-orbit 0.9s linear infinite;
+}
+@keyframes data-loading-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes page-loading-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 1279px) {
+  .data-loading-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+  }
+}
+@media (max-width: 1023px) {
+  .data-loading-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+@media (max-width: 639px) {
+  .data-loading-grid {
+    grid-template-columns: 1fr;
+  }
+  .data-loading-card:nth-child(n + 4) {
+    display: none;
+  }
+  .data-loading-filters {
+    gap: 14px;
+  }
+  .loading-action {
+    width: 75px;
+  }
+  .data-loading-header {
+    gap: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-shape::after,
+  .page-loading-orbit {
+    animation: none;
+  }
+  .loading-shape::after {
+    display: none;
+  }
+}

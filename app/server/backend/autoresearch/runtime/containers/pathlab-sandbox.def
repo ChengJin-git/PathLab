@@ -1,0 +1,89 @@
+Bootstrap: docker
+From: pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
+
+%files
+    {{ repo_root }}/server/backend/autoresearch/runtime/containers/ml-runtime-requirements.txt /opt/pathlab/ml-runtime-requirements.txt
+
+%labels
+    Author PathLab
+    Description "AutoResearch runtime sandbox for WSI feature extraction and MIL training"
+    Version "1.0.8-2026-11-07"
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export PYTHONNOUSERSITE=1
+    export XFORMERS_DISABLED=1
+    export TORCH_CUDNN_V8_API_DISABLED=1
+    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8}
+    export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-8}
+    export MKL_NUM_THREADS=${MKL_NUM_THREADS:-8}
+    export KAGGLE_CONFIG_DIR=${KAGGLE_CONFIG_DIR:-/kaggle}
+    export MPLCONFIGDIR=${MPLCONFIGDIR:-/var/cache/matplotlib}
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        libglib2.0-0 \
+        libgl1 \
+        libgomp1 \
+        libjpeg-turbo8 \
+        libopenjp2-7 \
+        libopenslide0 \
+        openslide-tools \
+        openssh-client \
+        rsync \
+        wget
+    rm -rf /var/lib/apt/lists/*
+
+    python -m pip install --upgrade --no-cache-dir pip==26.3 setuptools==80.10.2 wheel==0.48.0
+    mkdir -p /opt/pathlab
+    python - <<'PY'
+from importlib.metadata import version, PackageNotFoundError
+from pathlib import Path
+pins = ['numpy==1.26.4', 'scikit-learn==1.9.0', 'transformers==5.12.1']
+for name in ['torch', 'torchvision', 'torchaudio']:
+    try:
+        pins.append(f'{name}=={version(name)}')
+    except PackageNotFoundError:
+        pass
+Path('/opt/pathlab/base-constraints.txt').write_text('\n'.join(pins) + '\n')
+PY
+    python -m pip install --no-cache-dir -c /opt/pathlab/base-constraints.txt \
+        -r /opt/pathlab/ml-runtime-requirements.txt
+
+    python -m pip install --no-cache-dir --no-deps \
+        'git+https://github.com/Mahmoodlab/CONCH.git@141cc09c7d4ff33d8eda562bd75169b457f71a62#egg=conch'
+
+    python -m pip install --no-cache-dir -c /opt/pathlab/base-constraints.txt \
+        'git+https://github.com/MrPeterJin/Aslide.git@6ddc5ef4ca028e1f7eca82e333f75ada80098b72#egg=Aslide'
+
+    mkdir -p /workspace /results /data /kaggle /var/cache/matplotlib
+    chmod 1777 /workspace /results /data /var/cache/matplotlib
+
+%runscript
+    exec python "$@"
+
+%test
+    python - <<'PY'
+import importlib
+import torch
+mods = [
+    'numpy', 'PIL', 'cv2', 'openslide', 'tifffile', 'h5py', 'pandas', 'tabulate',
+    'sklearn', 'scipy', 'tqdm', 'timm', 'transformers', 'huggingface_hub',
+    'safetensors', 'einops', 'torchmetrics', 'omegaconf', 'open_clip'
+]
+for mod in mods:
+    importlib.import_module(mod)
+assert importlib.util.find_spec('kaggle') is not None
+import pandas as pd
+assert 'baseline' in pd.DataFrame({'method': ['baseline']}).to_markdown(index=False)
+print('torch', torch.__version__)
+print('cuda_available', torch.cuda.is_available())
+print('imports_ok')
+PY

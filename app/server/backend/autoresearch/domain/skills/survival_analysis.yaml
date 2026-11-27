@@ -1,0 +1,101 @@
+name: survival_analysis
+coarse_task_type: survival
+description: >
+  WSI survival prediction using Multiple Instance Learning.
+  Start with discrete-time hazard logits, NLL survival loss and concordance
+  index evaluation. Adapt PathLab references to compare survival aggregators,
+  Cox models, time discretizations or other justified methods.
+
+template: survival_template.py
+
+task_types: [survival]
+
+modifiable_zones:
+  - model       # Survival aggregator (attention + hazard head)
+  - loss        # NLLSurvivalLoss, Cox loss, ranking loss
+  - hyperparams # lr, epochs, num_bins, optimizer, scheduler
+  - data_loading
+  - time_binning
+  - training
+  - evaluation
+  - reporting
+
+environment:
+  extra_packages:
+    - lifelines
+
+dataset:
+  format: feature_tensors
+  structure:
+    features: "{wsi_id}.pt"
+    splits: "splits.json"
+  splits_schema:
+    required_keys: [train, val, test, survival_times, event_status]
+    labels_type: "none"               # no class labels, use survival times
+    split_strategy: "case_level"      # patient-grouped; stratify event_status where feasible
+    default_ratios: {train: 0.7, val: 0.1, test: 0.2}
+  csv_format:
+    required_columns: [filename, event_time, event_status]
+    optional_columns: [case_id, split, age, gender]
+    example: |
+      filename,split,event_time,event_status,case_id
+      slide_001.svs,train,24.5,1,CASE001
+      slide_002.svs,val,36.0,0,CASE002
+  feature_dim_by_extractor:
+    ResNet50: 2048
+    UNI: 1024
+    UNI2: 1536
+    CONCH: 512
+    Virchow: 1280
+
+inputs:
+  dataset_manifest: "$PATHLAB_WORKSPACE/datasets/{dataset_id}/manifest.json"
+  features_dir: "Actual feature paths in manifest items[].features or completed extraction output"
+  splits_file: "Verified patient-separated splits with real survival times and event status"
+
+outputs:
+  metrics: "$OUTPUT_DIR/metrics.json"
+  model: "$OUTPUT_DIR/best_model.pth"
+  progress: "$OUTPUT_DIR/progress.json"
+
+evaluation:
+  primary_metric: c_index
+  secondary_metrics: []
+
+constraints:
+  - "Read /opt/pathlab/templates/survival_template.py and relevant common implementations, then adapt workspace code. Aggregators, losses, time binning, loaders, training and evaluation may change for documented method comparisons; respect explicit user choices and maintain a comparable evaluation protocol."
+  - "For the discrete-time baseline, input H has shape (N_patches, D), hazard logits have shape (1, num_bins), and attention is optional. Inspect the actual model/loss interface and whether it expects logits or probabilities. Cox and ranking alternatives need their own consistent outputs, losses and risk definitions."
+  - "Read actual paths, case IDs, event_time and event_status from the prepared dataset manifest or supplied outcome table. Set FEATURES_DIR and SPLITS_FILE explicitly for the reference loader, or adapt it to the manifest. Verify real feature dimensions and outcome-to-patient alignment."
+  - "Confirm the clinical endpoint, time origin, time units and censoring convention; use event_status=1 for observed events and 0 for right censoring after verifying source coding. Do not reinterpret missing follow-up as censored or infer outcomes from filenames."
+  - "Use patient/case-separated splits, keeping all slides from a patient together; verify IDs rather than accepting slide-level fallbacks as patient identity. Check event counts and follow-up coverage in each split. Avoid overweighting patients with multiple slides; define patient-level risk aggregation and evaluation."
+  - "For discrete-time models, choose num_bins on training/validation data and fit bin edges using training outcomes only. Store edges and reuse them unchanged for validation, test and external cohorts. Cox loss needs correct risk sets and tie handling; arbitrary bag minibatches do not reproduce a full-cohort partial likelihood."
+  - "Select architectures, hyperparameters, checkpoints, risk thresholds and calibration with training/validation data only. Never tune using held-out or external test results. Fix and document risk direction for c_index; report censoring/event coverage and patient-level uncertainty where feasible. Do not fabricate c_index when no comparable pairs exist."
+  - 'Use submit_experiment with a name and command argument array, for example ["python", "train.py"], for training or method comparisons. Use submit_computation for extraction, standalone survival evaluation or metrics; end the turn while waiting and inspect actual job logs and artifacts.'
+  - "Jobs start in a read-only frozen source snapshot. Read previous outputs via PATHLAB_WORKSPACE and manifest paths; write all new checkpoints, bin definitions, predictions and temporary files beneath OUTPUT_DIR. Save finite numeric split-specific metrics to metrics.json and progress to progress.json there; document undefined metrics and their reasons separately. Update workspace notes from the agent after completion."
+  - "Use the single assigned GPU by default through PATHLAB_DEVICE (cuda:0 or cpu) and preserve CUDA_VISIBLE_DEVICES. Do not enumerate host GPUs or select unassigned devices."
+  - "If a Python dependency such as lifelines is missing, diagnose the log, call install_dependencies with packages and imports, verify success and retry. Start Python jobs with python or python3 to use the session environment; set needed reference variables explicitly in code or a wrapper, not only in config metadata."
+  - "Do not generate synthetic features, survival times, events, labels or metrics. Missing clinical outcomes, patient mappings or data require diagnostics and request_help when user intervention is needed."
+
+reference_code:
+  trainer: server/backend/ai/tasks/wsi_survival/trainer.py
+  loss: server/backend/ai/tasks/wsi_survival/losses.py
+
+knowhow_tags: [survival, WSI, MIL, prognosis, c_index, hazard, NLL]
+
+upstream_skill: feature_extraction
+
+readiness_guidance:
+  feature_ready_contract:
+    features_dir: "Manifest feature paths or verified prior OUTPUT_DIR artifacts"
+    splits_file: "Actual patient-separated survival split file, if required by the chosen loader"
+    splits_required_keys: [train, val, test, survival_times, event_status]
+  raw_wsi_contract:
+    wsi_dir: "Actual raw slide paths in the prepared dataset manifest"
+    labels_file: "Manifest event_time/event_status or an explicitly supplied real outcome table"
+  policy: >
+    Reuse complete, compatible features. If only raw WSI and real survival
+    outcomes are available, adapt feature_extraction references and submit
+    extraction with submit_computation and device=gpu; it consumes no experiment
+    rounds. Validate outputs and call register_features with dataset_id,
+    features_dir and extractor after completion. Load those actual artifacts
+    through PATHLAB_WORKSPACE, preserving patient and survival outcome mappings.

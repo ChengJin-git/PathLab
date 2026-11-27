@@ -1,0 +1,80 @@
+name: external_test
+coarse_task_type: evaluation
+description: >
+  External testing for a fixed PathLab model artifact. The coding agent
+  loads this skill after training or as a standalone evaluation task, adapts
+  the model/dataset adapter if needed, and reports metrics on an external
+  dataset without changing model weights, preprocessing or decision rules
+  chosen during development. Evaluation is a submit_computation job.
+
+template: external_test_template.py
+template_files:
+  external_test.py: external_test_template.py
+
+task_types: [external_test, external_validation, evaluation]
+
+modifiable_zones:
+  - model_loading
+  - dataset_adapter
+  - metrics
+  - reporting
+
+environment:
+  extra_packages: []
+
+inputs:
+  dataset_manifest: "$PATHLAB_WORKSPACE/datasets/{dataset_id}/manifest.json"
+  external_task_type: "Explicit task matching the frozen model: mil_classification, patch_classification, survival or segmentation"
+  model_path: "Actual fixed checkpoint path from a completed run under PATHLAB_WORKSPACE or supplied model artifact"
+  model_metadata_path: "Saved architecture, extractor, transforms, class mapping and evaluation configuration for that checkpoint"
+  external_features_dir: "Actual external feature paths from the manifest or completed compatible extraction output"
+  external_images_dir: "Actual external slide/patch image paths from the prepared manifest"
+  external_masks_dir: "Actual real external mask/annotation paths matched to images for segmentation"
+  external_predictions_dir: "Verified fixed-model predictions from a completed job, when evaluation is metrics-only"
+  external_splits_file: "Actual external cohort membership and patient IDs from the manifest or supplied split file"
+  external_labels_file: "Actual external labels or survival outcomes with a verified model-compatible mapping"
+
+outputs:
+  metrics: $OUTPUT_DIR/metrics.json
+  predictions: $OUTPUT_DIR/predictions.csv
+  report: $OUTPUT_DIR/external_test_report.json
+  progress: $OUTPUT_DIR/progress.json
+
+evaluation:
+  primary_metric: auc
+  secondary_metrics: [accuracy, f1, precision, recall]
+
+constraints:
+  - "Read /opt/pathlab/templates/external_test_template.py and the selected model's actual training source/configuration before adapting a workspace evaluation script. Implement model/dataset adapters from verified interfaces, not guessed APIs; service trainer modules may not be installed in the sandbox."
+  - "Freeze model weights, encoder, preprocessing, class mapping, calibration, thresholds and postprocessing before external evaluation. Use model.eval() and torch.no_grad() or torch.inference_mode(); do not train, fine-tune, update normalization statistics or select checkpoints using external outcomes."
+  - "Use prepared dataset manifests and their actual file paths, labels and patient IDs. Verify external patients and duplicate slides/patches are absent from every original development split, including internal test. Missing or per-slide fallback case IDs do not prove patient independence."
+  - "Set external_task_type to mil_classification, patch_classification, survival or segmentation consistently with the saved model. Reuse the training label mapping and feature extractor/checkpoint/transforms; validate actual tensor dimensions and class coverage instead of independently reindexing external labels."
+  - "Reference-specific AUTORESEARCH_MODEL_PATH, AUTORESEARCH_MODEL_METADATA_PATH, AUTORESEARCH_EXTERNAL_TASK_TYPE and applicable EXTERNAL_* variables are not injected by PathLab. If using that reference, populate its documented variables explicitly in a Python wrapper before importing it, or adapt the script to explicit paths/arguments. Config metadata does not set environment variables."
+  - "Use submit_computation with a name and command argument array for standalone external inference, evaluation and metrics; set device=gpu when inference needs the assigned GPU, or device=cpu for CPU-only metrics. This consumes no experiment rounds. Actual model-training or planned method-comparison experiments use submit_experiment, with selection based on development validation data, never this external test."
+  - "Check data alignment and inference on a small real subset if needed, without tuning to its outcomes; then run the predeclared full external protocol. Implement a subset limit in the script or set a verified reference variable explicitly. End the turn while waiting and inspect actual job status, logs and artifacts."
+  - "Jobs start in a read-only frozen source snapshot. Resolve previous checkpoints/predictions through PATHLAB_WORKSPACE and data through manifest paths; write all new outputs and temporary files beneath OUTPUT_DIR. Save finite numeric metrics with cohort/task names in metrics.json and progress in progress.json; update workspace notes from the agent after completion."
+  - "Use the single assigned GPU by default via PATHLAB_DEVICE (cuda:0 or cpu) and preserve CUDA_VISIBLE_DEVICES. Do not enumerate host GPUs or choose unassigned devices."
+  - "For missing Python dependencies, inspect the log, call install_dependencies with packages and imports, verify success and retry the original evaluation. Submit Python jobs with python or python3 to use the session environment; Python subprocesses should use sys.executable."
+  - "Report n_external_total, n_external_evaluated, missing_features, missing labels/outcomes and exclusion reasons per cohort. Save one prediction row per evaluated sample with real sample/patient IDs in OUTPUT_DIR/predictions.csv, and a protocol/provenance/coverage report in external_test_report.json. Never silently drop failed samples or invent undefined metrics."
+  - "For classification, report class counts, discrimination and threshold-dependent metrics with the frozen label mapping/thresholds. AUC may be undefined for a single-class cohort; report that limitation instead of a fabricated numeric score. Use patient-clustered uncertainty for correlated samples where feasible."
+  - "For survival, preserve the original endpoint, time units, event coding, training-derived time bins and risk direction. Report c_index, event/censoring and comparable-pair coverage; do not refit binning, risk cutoffs or calibration to external outcomes."
+  - "For segmentation, use a verified inference adapter or existing predictions from the fixed model. Check mask alignment and class/ignore conventions; report Dice and IoU with the same background, empty-mask and aggregation rules used during development. Preserve dense predictions as separate OUTPUT_DIR artifacts referenced by the per-sample table."
+  - "If compatible external features are missing but real images are available, use feature_extraction with submit_computation and the frozen training extractor/transform settings; validate and register_features after completion for the prepared dataset. Do not optimize extraction settings using external labels."
+  - "Do not generate synthetic data, labels, outcomes, predictions or metrics. Missing checkpoints, real labels/masks, patient mappings or inputs are blockers: save diagnostics and use request_help when user intervention is required."
+
+dataset:
+  format: task_specific_external_validation
+  structure:
+    features: "{wsi_id}.pt"
+    wsis: "{wsi_id}.{svs,ndpi,tif,tiff,mrxs}"
+    images: "{patch_id}.{png,jpg,tif}"
+    masks: "{sample_id}.{png,npy,pt}"
+    predictions: "{sample_id}.{png,npy,pt}"
+    splits: "splits.json"
+  splits_schema:
+    classification_required_keys: [test, labels]
+    survival_required_keys: [test, survival_times, event_status]
+    segmentation_required_keys: [test]
+    labels_type: "int_or_string"
+
+knowhow_tags: [external_validation, external_test, evaluation, MIL, WSI, patch_classification, survival, segmentation]
